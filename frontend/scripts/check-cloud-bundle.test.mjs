@@ -29,5 +29,12 @@ test('checker rejects an old backend bundle and validates retained static artifa
     assert.ok(checkCloudBundle(root).some(s => /public config/.test(s)), 'metadata alone does not prove compiled config')
     write('dist/assets/main.js', 'firestore.googleapis.com; "key"; "domain"; "project"; "app"')
     assert.deepEqual(checkCloudBundle(root), [])
+    // Vite 8 emits these simple public values as template literals in a real build.
+    write('dist/assets/main.js', 'firestore.googleapis.com; `key`; `domain`; `project`; `app`')
+    assert.deepEqual(checkCloudBundle(root), [], 'compiled template literals carry the configured values')
+    write('dist/assets/main.js', 'firestore.googleapis.com; `key-extra`; `domain`; `project`; `app`')
+    assert.ok(checkCloudBundle(root).some(s => /public config/.test(s)), 'a substring is not the configured literal')
+    write('dist/assets/main.js', 'firestore.googleapis.com; `key${suffix}`; `domain`; `project`; `app`')
+    assert.ok(checkCloudBundle(root).some(s => /public config/.test(s)), 'interpolated text is not a static configured literal')
   } finally { rmSync(root, { recursive: true, force: true }) }
 })

@@ -3,6 +3,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkCopy, filesUnder } from './check-mobile-bundle.mjs'
 
+// Vite/Rolldown may print simple public config strings as template literals.
+// Keep exact delimiters; interpolated or merely matching substrings are not evidence.
+const containsConfig = (code, value) => code.includes(JSON.stringify(value))
+  || (/^[A-Za-z0-9._:/-]+$/.test(value) && code.includes('`' + value + '`'))
 export function checkCloudBundle(root) {
   const dist = join(root, 'dist'), problems = checkCopy(dist, { mobile: false })
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -27,7 +31,7 @@ export function checkCloudBundle(root) {
     const build = JSON.parse(readFileSync(metadata, 'utf8')), keys = ['apiKey', 'authDomain', 'projectId', 'appId']
     if (build.demo) problems.push('demo artifact is not ordinary cloud/local build evidence')
     if (!['local', 'firebase'].includes(build.mode)) problems.push('invalid build mode')
-    if (build.mode === 'firebase' && keys.some(k => typeof build.firebase?.[k] !== 'string' || !build.firebase[k].trim() || !code.includes(JSON.stringify(build.firebase[k]))))
+    if (build.mode === 'firebase' && keys.some(k => typeof build.firebase?.[k] !== 'string' || !build.firebase[k].trim() || !containsConfig(code, build.firebase[k])))
       problems.push('Firebase public config missing from compiled artifact')
     if (build.mode === 'local' && Object.keys(build.firebase || {}).length) problems.push('incomplete Firebase public config; supply all four values or none')
   }
