@@ -176,15 +176,12 @@ into both native projects — re-run it after every web-code change before build
 ## App icons & splash screens
 
 `frontend/resources/icon.svg` is the 1024×1024 source (the app's dumbbell glyph on the
-app background). Generate all platform assets from it on a machine with the tooling:
+app background). The generated PWA and native icons and splash screens are committed
+to the repository and used directly by builds. Preserve these assets when building.
 
-```sh
-cd frontend
-npx @capacitor/assets generate --iconBackgroundColor '#0c0e12' --splashBackgroundColor '#0c0e12'
-```
-
-(If the generator won't take the SVG directly, export it to `resources/icon.png` at
-1024×1024 first — any image tool can do it.)
+For future artwork changes, export the source with an image editor and update the
+platform assets in a separate change. The manual asset generator is no longer a
+project dependency.
 
 ## Distribution — deliberately no app stores
 
