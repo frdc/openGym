@@ -21,6 +21,7 @@
     "@capacitor/filesystem": "^7.1.8",
     "@capacitor/local-notifications": "^7.0.7",
     "@capacitor/share": "^7.0.4",
+    "firebase": "12.19.0",
     "jsqr": "^1.4.0",
     "lean-qr": "^2.7.3",
     "react": "^19.2.7",
@@ -38,5 +39,10 @@
     "linkedom": "^0.18.13",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "@firebase/firestore@4.17.2": {
+      "@grpc/grpc-js": "1.13.6"
+    }
   }
 }
