@@ -555,8 +555,8 @@ const laterDel = (v, cur) => {
   const x = Number(v) || 0, y = Number(cur) || 0
   return Math.abs(x) > Math.abs(y) || (Math.abs(x) === Math.abs(y) && x < y)
 }
-/** Both copies' records of removals: per entry, the later stamp. */
-export function mergeDeletions(a, b) {
+/** Both copies' removals: per entry, the later stamp. Cloud records opt out of the legacy cap. */
+export function mergeDeletions(a, b, { retainAllDeletions = false } = {}) {
   const out = {}
   for (const f of Object.keys(DEL_LISTS)) {
     const x = isMap(a?.[f]) ? a[f] : {}, y = isMap(b?.[f]) ? b[f] : {}
@@ -565,7 +565,7 @@ export function mergeDeletions(a, b) {
     // clocks were lifted from the same stamp can record an Undo and a removal at the same time,
     // and a first-wins tie kept a different record on each side (QA 2026-10-06).
     for (const [k, v] of Object.entries(y)) if (!(k in m) || laterDel(v, m[k])) m[k] = v
-    if (Object.keys(m).length) out[f] = capStamps(m)
+    if (Object.keys(m).length) out[f] = retainAllDeletions ? m : capStamps(m)
   }
   return Object.keys(out).length ? out : null
 }
@@ -709,7 +709,7 @@ function applyEdits(out, n, o) {
 // `prefer` names the side whose settings, plan and per-exercise config win regardless of `_ts`:
 // on sign-in the server's profile is the truth and the device only contributes the entries it
 // logged while signed out. Without it the newer copy decides, as for a conflict between devices.
-export function mergeStates(a0, b0, { prefer } = {}) {
+export function mergeStates(a0, b0, { prefer, retainAllDeletions = false } = {}) {
   if (!a0) return b0 ? clone(b0) : b0
   if (!b0) return clone(a0)
   let a = a0, b = b0
@@ -818,7 +818,8 @@ export function mergeStates(a0, b0, { prefer } = {}) {
   // With `prefer` only the preferred side's removals count: a guest's are about the guest's own
   // entries, and keyed by day (weigh-ins) or exercise (favourites) they also named the account's
   // weigh-in of that day and its favourite, which the guest never had.
-  const deleted = prefer ? mergeDeletions(prefer === 'a' ? a.deleted : b.deleted, null) : mergeDeletions(a.deleted, b.deleted)
+  const deletionOptions = { retainAllDeletions }
+  const deleted = prefer ? mergeDeletions(prefer === 'a' ? a.deleted : b.deleted, null, deletionOptions) : mergeDeletions(a.deleted, b.deleted, deletionOptions)
   for (const w of applyDeletions(out, deleted)) {
     const k = String(workoutKey(w))
     const by = [n, o].filter(S => Number(S.deleted?.workouts?.[k]) > 0).map(S => S.exWeights)
