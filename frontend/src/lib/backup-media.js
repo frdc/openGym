@@ -9,9 +9,8 @@
  *   README.txt               what this is and how to bring it back
  *
  * "Import backup" takes either. From a zip, only files the backup's state refers to are taken,
- * and each one only after its type, its size cap and its sha256 agree with its name; they go into
- * the local store as pending, and the usual sync sends them to the server once the imported state
- * is pushed. A file that fails a check is skipped, and its exercise shows the fallback tile until
+ * and each one only after its type, its size cap and its sha256 agree with its name; they stay
+ * in the captured owner local store with no upload debt. A file that fails a check is skipped, and its exercise shows the fallback tile until
  * someone adds the picture again.
  *
  * A backup file is someone else's data as much as a plan file is: the imported state's media refs
@@ -21,7 +20,6 @@ import { zipStore, readZip, looksLikeZip } from './zip.js'
 import { referencedFiles, normalizeMediaRef, workoutMediaOf, cleanUrl, MEDIA_MIMES } from './media-refs.js'
 import { sniffKind } from './media-sniff.js'
 import { sha256Hex } from './sha256.js'
-import { mediaStore } from './media-store.js'
 import { DEFAULT_LIMITS, MB } from './media-limits.js'
 import { t } from './i18n-core.js'
 
@@ -60,19 +58,12 @@ export function sanitizeCustomMedia(state) {
   return state
 }
 
-/**
- * The zip for "Export with photos & videos": { blob, included, missing }. Each file comes from the
- * local store, or — signed in — is fetched into it first (`fetchOne`, lib/media-sync.js
- * fetchToStore). `missing` counts those that could not be had; the export goes ahead without them.
- */
-export async function exportBackupZip(S, { media = mediaStore, fetchOne = null, now } = {}) {
+/** Export only locally readable files from the supplied owner store; count absent originals. */
+export async function exportBackupZip(S, { media, now } = {}) {
   const entries = [{ name: BACKUP_JSON, blob: new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }) }]
   let missing = 0
   for (const f of referencedFiles(S)) {
-    let rec = await media.get(f.hash)
-    if (!rec && fetchOne) {
-      try { await fetchOne(f.hash, f); rec = await media.get(f.hash) } catch { /* counted below */ }
-    }
+    const rec = await media.get(f.hash)
     if (!rec || !MEDIA_MIMES[rec.mime]) { missing++; continue }
     entries.push({ name: `media/${f.hash}.${MEDIA_MIMES[rec.mime].ext}`, blob: rec.blob })
   }
@@ -127,22 +118,25 @@ export async function readBackupFile(file) {
 
 /**
  * Checks and keeps a backup's media files: each must sniff as a stored type, stay under that
- * kind's cap, and hash to its name. Kept as pending — the server has not seen them from this
- * device. Resolves { stored, skipped }.
+ * kind's cap, and hash to its name. Kept locally with no cloud debt. Resolves { stored, skipped }.
  */
-export async function storeBackupMedia(files, { media = mediaStore, limits = DEFAULT_LIMITS } = {}) {
+export async function storeBackupMedia(files, { media, limits = DEFAULT_LIMITS, current = () => true } = {}) {
   let stored = 0, skipped = 0
   const cap = { image: limits.imageMB, gif: limits.gifMB, video: limits.videoMB }
   for (const { hash, entry } of files) {
+    if (!current()) break
+    let bytes, sniffed
     try {
       const head = new Uint8Array(await entry.blob.slice(0, 64).arrayBuffer())
-      const s = sniffKind(head)
-      if (!s || !MEDIA_MIMES[s.mime] || entry.size > (cap[s.kind] || 0) * MB) throw new Error('refused')
-      const bytes = new Uint8Array(await entry.blob.arrayBuffer())
+      sniffed = sniffKind(head)
+      if (!sniffed || !MEDIA_MIMES[sniffed.mime] || entry.size > (cap[sniffed.kind] || 0) * MB) throw new Error('refused')
+      bytes = new Uint8Array(await entry.blob.arrayBuffer())
       if ((await sha256Hex(bytes)) !== hash) throw new Error('tampered')
-      await media.put(hash, new Blob([bytes], { type: s.mime }), { mime: s.mime, pending: true })
-      stored++
-    } catch { skipped++ }
+    } catch { skipped++; continue }
+    if (!current()) break
+    // Destination IO failure remains retryable; previously written owner bytes are retained.
+    await media.put(hash, new Blob([bytes], { type: sniffed.mime }), { mime: sniffed.mime, pending: false })
+    stored++
   }
   return { stored, skipped }
 }

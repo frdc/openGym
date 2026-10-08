@@ -1,28 +1,9 @@
-/* The one local store for the photos, GIFs and videos of custom exercises.
- *
- * Every mode shows media from here: a signed-in browser, a paired phone, a phone in local mode, a
- * guest and the demo. A file gets here either from the editor (picked on this device) or from the
- * server (lib/media-sync.js fetchToStore, checked against its sha256 first); it is then shown from
- * here, offline included. That one path is also what lets a paired phone show a file at all — an
- * <img src> cannot carry the phone's Authorization header, a fetch can.
- *
- * Backends: IndexedDB in a browser (media-store-idb.js), the app's own folder on a phone
- * (media-store-fs.js), and memory — for the tests, and for display only when IndexedDB is
- * blocked (a private window in some browsers). The store says which through `persistent`: the
- * editor refuses new files when nothing here would outlive the tab.
- *
- * A record is { hash, mime, size, putAt, shownAt, pending, rejected }:
- *   pending   the server has not confirmed it holds the file (picked here, or imported)
- *   rejected  the server refused it for good (too large, wrong type): it stays here, still
- *             pending, and is not offered again until someone asks (Settings → Photos & videos)
- *   shownAt   when it was last displayed, written at most once an hour — what eviction reads
- *
- * url(hash) hands out an object URL (browser) or a file URL (phone), counted per hash: each
- * caller releases it when done, and an object URL is revoked 30 s after the last release, so a
- * list scrolling back and forth does not decode the same file again and again. Object URLs are
- * only ever made from `new Blob([blob], { type })` with the stored, allowlisted media type: a
- * blob: URL typed text/html would run as this origin if anyone navigated to it.
+/* Account-local photos, GIFs, videos and posters. Owner stores use separate durable
+ * namespaces. The original unowned pool is accessible only for explicit recovery.
+ * No upload/download transport participates in ingest, playback or backups.
+ * URLs are reference-counted; editors hold drafts until save/discard.
  */
+import { validateOwnerKey } from './cloud/offline-store.js'
 import { MEDIA_MIMES } from './media-refs.js'
 import { MOBILE } from './mobile.js'
 import { idbBackend } from './media-store-idb.js'
@@ -81,12 +62,12 @@ export function createMediaStore(backend, {
     if (!opening) {
       opening = (async () => {
         let ok = false
-        try { ok = await be.open() } catch { ok = false }
+        ok = await be.open()
         if (!ok) { be = fallback(); persistent = false; await be.open() }
         else persistent = !!be.persistent
-        try { for (const r of await be.all()) index.set(r.hash, r) } catch { /* an empty index then */ }
+        for (const r of await be.all()) index.set(r.hash, r)
         emit()
-      })()
+      })().catch(error => { opening = null; throw error })
     }
     return opening
   }
@@ -126,13 +107,13 @@ export function createMediaStore(backend, {
       await ready()
       const r = index.get(hash)
       if (!r) return null
-      const blob = await be.getBlob(hash).catch(() => null)
+      const blob = await be.getBlob(hash)
       if (!blob) return null
       return { blob, mime: r.mime, size: r.size, pending: !!r.pending, rejected: !!r.rejected }
     },
     /** Keeps `blob` under `hash`. The same hash is the same bytes, so a second put only updates
      *  the record — `pending` as the caller says: false when the server has just sent it. */
-    async put(hash, blob, { mime, pending = true } = {}) {
+    async put(hash, blob, { mime, pending = false } = {}) {
       if (!MEDIA_MIMES[mime]) throw new Error('media-store: not a media type: ' + mime)
       await ready()
       const t = now()
@@ -211,26 +192,14 @@ export function createMediaStore(backend, {
     async remove(hash) {
       await ready()
       if (!index.has(hash)) return
+      await be.remove(hash)
       revokeNow(hash)
       index.delete(hash)
-      await be.remove(hash).catch(() => {})
       emit()
     },
-    /** Deletes every record not in `keep`, except those put at or after `keepPutAfter` — a file
-     *  picked meanwhile in an editor that is still open, or by another tab. */
-    async retainOnly(keep, { keepPutAfter = now() } = {}) {
-      await ready()
-      let removed = 0
-      for (const [hash, r] of [...index]) {
-        if (keep.has(hash) || (r.putAt || 0) >= keepPutAfter) continue
-        revokeNow(hash)
-        index.delete(hash)
-        await be.remove(hash).catch(() => {})
-        removed++
-      }
-      if (removed) emit()
-      return removed
-    },
+    // No attachment/deletion lock spans state archives, editors and peer tabs. Automatic
+    // cleanup must defer physical deletion, including reset, rather than race an attachment.
+    async retainOnly() { await ready(); return 0 },
     async clearAll() {
       await ready()
       for (const hash of [...urls.keys()]) revokeNow(hash)
@@ -247,7 +216,7 @@ export function createMediaStore(backend, {
     },
     async pendingHashes() { await ready(); return store.pendingNow() },
     /** The pending hashes as the index holds them right now — empty before it has loaded. For
-     *  the sign-out check (lib/media-owed.js), which cannot wait. */
+     *  inspection of legacy records. New local files have no upload debt. */
     pendingNow() { return new Set([...index.values()].filter(r => r.pending).map(r => r.hash)) },
     /** The rejected hashes, for Settings to say what the server would not take. */
     rejectedNow() { return new Set([...index.values()].filter(r => r.rejected).map(r => r.hash)) }
@@ -256,25 +225,18 @@ export function createMediaStore(backend, {
 }
 const t0 = v => (typeof v === 'number' ? v : 0)
 
-let shared = null
-/** The app's store: the phone's folder in the mobile build, IndexedDB everywhere else. Made on
- *  first use, so importing this module opens nothing. */
-export function getMediaStore() {
-  if (!shared) shared = createMediaStore(MOBILE ? fsBackend() : idbBackend())
-  return shared
+const stores = new Map()
+const LEGACY = 'legacy-unowned'
+/** Owner stores never fall back to the original unowned pool. */
+export function getMediaStore(ownerKey) {
+  validateOwnerKey(ownerKey)
+  if (!stores.has(ownerKey)) stores.set(ownerKey, createMediaStore(MOBILE ? fsBackend({ ownerKey }) : idbBackend({ ownerKey })))
+  return stores.get(ownerKey)
 }
-/** Whether anything in this session has used the store (the sync at start, the editor, a
- *  thumbnail) and so made and opened it. */
-export const mediaStoreInUse = () => shared !== null
-/** Tests only: swap the shared store (null makes a fresh one on next use). */
-export function _setMediaStore(s) { shared = s }
-
-/** The shared store under the name the rest of the app uses. A thin forwarder, so that importing
- *  it is free and a test can swap what it forwards to (_setMediaStore). */
-export const mediaStore = new Proxy({}, {
-  get(_, key) {
-    const s = getMediaStore()
-    const v = s[key]
-    return typeof v === 'function' ? v.bind(s) : v
-  }
-})
+// Recovery-only source. Never use this as a display/picker fallback.
+export function legacyMediaStore() {
+  if (!stores.has(LEGACY)) stores.set(LEGACY, createMediaStore(MOBILE ? fsBackend() : idbBackend()))
+  return stores.get(LEGACY)
+}
+export const mediaStoreInUse = () => stores.size > 0
+export function _setMediaStore(s, ownerKey = LEGACY) { if (s === null) stores.clear(); else stores.set(ownerKey, s) }

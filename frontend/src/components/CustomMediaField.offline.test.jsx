@@ -13,7 +13,15 @@ vi.mock('../lib/media-ingest.js', () => {
   if (h.offline) throw new TypeError('Failed to fetch dynamically imported module')
   return { ingestMediaFile: async () => ({ blobs: [], warnings: [], media: { kind: 'image', hash: 'h' } }) }
 })
-vi.mock('../lib/media-store.js', () => ({ mediaStore: { ready: async () => {}, persistent: true, put: async () => {} } }))
+const runtimeFixture = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const { createUIStoreFixture } = await import('../store/ui-test-runtime.js')
+  runtimeFixture.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: runtimeFixture.fixture.useStore }
+})
+import { createMediaStore, memoryBackend, _setMediaStore } from '../lib/media-store.js'
+
 vi.mock('../store/useUI.js', () => {
   const useUI = sel => sel({ toast: h.toast })
   useUI.getState = () => ({ toast: h.toast })
@@ -25,7 +33,9 @@ const { useMediaPicker, mediaErrorText } = await import('./CustomMediaField.jsx'
 let host, root, picker
 function Probe() { picker = useMediaPicker(); return null }
 
-beforeEach(() => {
+beforeEach(async () => {
+  const store = await runtimeFixture.fixture.prepare()
+  _setMediaStore(createMediaStore({ ...memoryBackend(), persistent: true }), store.getState().ownerKey)
   h.offline = true
   h.toast.mockReset()
   host = document.createElement('div')
@@ -33,7 +43,7 @@ beforeEach(() => {
   root = createRoot(host)
   act(() => root.render(<Probe />))
 })
-afterEach(() => { act(() => root.render(null)); host.remove() })
+afterEach(async () => { act(() => root.unmount()); host.remove(); _setMediaStore(null); await runtimeFixture.fixture.close() })
 
 describe('picking a photo with the ingest not loaded', () => {
   it('says the device is offline, not that the file is bad', async () => {

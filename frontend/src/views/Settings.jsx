@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation, Navigate } from 'react-router-dom'
 import { useStore, DEF, hasData } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
@@ -19,10 +19,8 @@ import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, isAndroid, shareExport, shareExportBlob, syncReminder } from '../lib/mobile.js'
 import { NUDGE_COPY, NUDGE_TONES, toneOf } from '../lib/nudge.js'
 import { referencedFiles } from '../lib/media-refs.js'
-import { mediaStore } from '../lib/media-store.js'
-import { syncMedia, fetchToStore } from '../lib/media-sync.js'
-import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
-import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
+import { mediaErrorText } from '../components/CustomMediaField.jsx'
+import { captureMediaContext, localMediaGc } from '../lib/local-media.js'
 import { setRestAccent } from '../lib/rest-alert.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { REST_MAX, REST_PAUSE_MIN, REST_PAUSE_MAX, fmtRest, fmtDuration } from '../lib/duration.js'
@@ -184,19 +182,21 @@ export default function Settings({ page = null, find = null, via = null }) {
     toast(t('Backup exported'))
   }
   // "Export with photos & videos": the same JSON plus every file the state refers to, in a zip
-  // (lib/backup-media.js). Signed in, a file this device never downloaded is fetched for it; one
-  // nobody has is left out and counted. The sign-out sheet offers it while media are waiting.
+  // (lib/backup-media.js). Only local files are included; absent originals are counted.
   const doExportZip = async () => {
+    const captured = captureMediaContext(useStore)
+    if (!captured) return
+    const state = useStore.getState().S
     const { exportBackupZip } = await import('../lib/backup-media.js')
-    const st = useStore.getState()
-    const signedIn = !!(st.user && st.config?.media)
+    if (!captured.current()) return
     let out
-    try { out = await exportBackupZip(st.S, { fetchOne: signedIn ? fetchToStore : null }) }
-    catch { toast(t('Something went wrong')); return }
+    try { out = await exportBackupZip(state, { media: captured.media }) }
+    catch { if (captured.current()) toast(t('Something went wrong')); return }
     const name = 'opengym-backup-' + todayISO() + '.zip'
+    if (!captured.current()) return
     if (out.missing) toast(tn('{0} file could not be included', '{0} files could not be included', out.missing))
     if (MOBILE) {
-      try { await shareExportBlob(out.blob, name); if (!out.missing) toast(t('Backup exported')) } catch (e) { /* share sheet dismissed */ }
+      try { await shareExportBlob(out.blob, name); if (captured.current() && !out.missing) toast(t('Backup exported')) } catch (e) { /* share sheet dismissed */ }
       return
     }
     const a = document.createElement('a'); a.href = URL.createObjectURL(out.blob); a.download = name; a.click()
@@ -207,6 +207,8 @@ export default function Settings({ page = null, find = null, via = null }) {
   // files go into the local store only once the import is confirmed, each checked against its
   // name first; the state's media refs and links pass the usual gates (lib/backup-media.js).
   const doImport = async ev => {
+    const captured = captureMediaContext(useStore)
+    if (!captured) return
     const f = ev.target.files[0]; if (!f) return
     ev.target.value = ''
     let read
@@ -215,23 +217,33 @@ export default function Settings({ page = null, find = null, via = null }) {
       read = await readBackupFile(f)
     } catch (e) {
       const { backupImportError } = await import('../lib/backup-media.js')
-      toast(backupImportError(e)); return
+      if (captured.current()) toast(backupImportError(e)); return
     }
+    if (!captured.current()) return
     const apply = async mergeWith => {
-      if (read.files.length) {
-        const { storeBackupMedia } = await import('../lib/backup-media.js')
-        await storeBackupMedia(read.files, { limits: limitsFrom(useStore.getState().config) })
-      }
-      importBackup(read.state, { mergeWith })
-      // The photos it brought are pending here and maybe gone from the server (a reset): sent now,
-      // not after the ten-minute dedupe of the run before the reset.
-      if (read.files.length) syncMedia({ force: true })
-      toast(t('Backup imported'))
+      if (!captured.current()) return
+      try {
+        if (read.files.length) {
+          await captured.media.ready()
+          if (!captured.current()) return
+          if (!captured.media.persistent) { toast(t('This browser cannot store photos or videos here.')); return }
+          const { storeBackupMedia } = await import('../lib/backup-media.js')
+          if (!captured.current()) return
+          await storeBackupMedia(read.files, { media: captured.media, current: captured.current })
+        }
+        if (!captured.current()) return
+        await importBackup(read.state, { mergeWith })
+        if (!captured.current()) return
+        toast(t('Backup imported'))
+      } catch (error) { if (captured.current()) toast(mediaErrorText(error)) }
     }
     // Signed in, the server is asked first: a workout logged since the backup was made, or on
     // another device meanwhile, would be deleted from the profile by the replace — said, with the
     // choice to merge those in instead (useStore importConflict / importBackup).
-    const conflict = await importConflict(read.state)
+    let conflict
+    try { conflict = await importConflict(read.state) }
+    catch { if (captured.current()) toast(t('Something went wrong')); return }
+    if (!captured.current()) return
     if (conflict) {
       const n = conflict.workouts
       menuSheet({
@@ -274,7 +286,7 @@ export default function Settings({ page = null, find = null, via = null }) {
       await resetAll()
       if (!current()) return
       nav('/home'); toast(t('All data reset'))
-      clearMediaAfterReset(!!user, current).catch(() => {})
+      clearMediaAfterReset(current).catch(() => {})
     },
     })
   }
@@ -982,45 +994,16 @@ function EquipmentCard({ S, update }) {
 // display names are free text and need not be unique. copyText also reaches the clipboard on a
 // plain-http LAN address, where the Clipboard API is missing and password sign-in (#118) is the
 // usual way in; where no copy works at all the id is still on screen to read out.
-// Media cleanup remains staged for the local-media adapter. Preserve recovery references and
-// recheck the initiating account after each await before touching the device media store.
-async function clearMediaAfterReset(signedIn, current) {
+// Reset shares the fail-closed local retention collector; physical removal remains deferred.
+async function clearMediaAfterReset(current) {
   if (!current()) return
-  const st = useStore.getState()
-  if (signedIn && typeof st.pushState === 'function') {
-    await st.pushState()
-    if (!current()) return
-  }
-  const keep = typeof st.stashedMediaHashes === 'function' ? await st.stashedMediaHashes() : new Set()
-  if (!current()) return
-  await mediaStore.retainOnly(keep)
+  const captured = captureMediaContext(useStore)
+  if (captured) await localMediaGc(captured.ownerKey, { appStore: useStore })
 }
 
-/* Settings → Data → "Photos & videos": how much of the server's space they take and what is still
-   waiting to go up; a tap sends what is waiting now, offers again what the server refused, and
-   lets a device that showed a file as missing ask for it again. On a device without a server that
-   stores media, it says they are kept here only. */
 function MediaRow() {
-  const S = useStore(s => s.S)
-  const user = useStore(s => s.user)
-  const config = useStore(s => s.config)
-  const status = useSyncExternalStore(subscribeMediaStatus, getMediaStatus)
-  // Signed in, the files go to the server unless it has said it stores none. A config not known
-  // yet — a phone started without a network; it is not kept between starts — is not that answer:
-  // what is waiting is counted as waiting (and goes up once the server answers), not called
-  // local-only as a guest's files are.
-  const remote = !!user && (config == null || !!config.media)
-  useEffect(() => { if (remote) syncMedia() }, [remote])
-  const pending = remote ? pendingRefCount(S) : 0
-  const u = status.usage
-  const usage = remote && u && u.quotaBytes > 0
-    ? t('{0} of {1} MB used on your server', fmtMB((u.bytes || 0) / MB), fmtMB(Math.round(u.quotaBytes / MB)))
-    : null
-  const sub = remote
-    ? [usage, pending ? t('{0} waiting to upload', pending) : null].filter(Boolean).join(' · ') || undefined
-    : t('Kept on this device only. Export with photos & videos keeps a copy.')
-  return <Row icon="image" iconTint="var(--teal)" title={t('Photos & videos')} subtitle={sub}
-    onClick={remote ? () => syncMedia({ force: true, retryRejected: true }) : undefined} />
+  return <Row icon="image" iconTint="var(--teal)" title={t('Photos & videos')}
+    subtitle={t('Kept on this device only. Export with photos & videos keeps a copy.')} />
 }
 
 function AccountIdRow({ id }) {

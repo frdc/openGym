@@ -8,7 +8,8 @@ import { sanitizeAccent } from '../lib/accent.js'
 import { RTL_LANGS } from '../lib/i18n-core.js'
 import { localTZ } from '../lib/format.js'
 import { MOBILE, nativeLoadLegacyStrict, onAppActive, syncReminder, writeAutoBackup } from '../lib/mobile.js'
-import { referencedHashes } from '../lib/media-refs.js'
+import { referencedHashes, referencedFiles } from '../lib/media-refs.js'
+import { getMediaStore, legacyMediaStore } from '../lib/media-store.js'
 import { createOfflineStorage } from '../lib/cloud/offline-store.js'
 import { createLegacyReader, migrateLegacy } from '../lib/cloud/legacy-migration.js'
 import { makeOwner, makeEnvelope, recoverableBy, trainingState } from '../lib/cloud/model.js'
@@ -163,6 +164,33 @@ export function createWorkoutStore(options = {}) {
       }
       if (target.token === epoch) await completeTransition(target)
     }
+    async function copyRecoveryMedia(copy) {
+      const context = get().getContext()
+      const assertCurrent = () => { if (stopped || !get().localReady || get().ownerKey !== context.ownerKey || epoch !== context.epoch) throw failure('stale-context') }
+      assertCurrent()
+      if (!copy || !recoverableBy(copy, transition.owner)) throw failure('recovery-owner-mismatch')
+      const files = referencedFiles(copy.state)
+      if (!files.length) return { copied: 0, missing: 0 }
+      // Legacy sources remain unowned until this explicit decision; raw Node UID and matching
+      // hashes never select a Firebase owner. Guest adoption uses its known source namespace.
+      const source = copy.sourceId && copy.recoveryId.startsWith('legacy-') ? legacyMediaStore()
+        : copy.ownerKey ? getMediaStore(copy.ownerKey) : null
+      if (!source) throw failure('media-source-unknown')
+      const target = getMediaStore(context.ownerKey)
+      if (source === target) return { copied: 0, missing: 0 }
+      await source.ready(); assertCurrent()
+      if (!source.persistent) throw failure('media-storage-unavailable')
+      await target.ready(); assertCurrent()
+      if (!target.persistent) throw failure('media-storage-unavailable')
+      const result = { copied: 0, missing: 0 }
+      for (const file of files) {
+        const value = await source.get(file.hash); assertCurrent()
+        if (!value) { result.missing++; continue } // absent original retains its reference
+        await target.put(file.hash, value.blob, { mime: value.mime, pending: false }); assertCurrent()
+        result.copied++
+      }
+      return result
+    }
     function lifecycle() {
       if (options.lifecycle === false || typeof window === 'undefined') return
       const flush = () => { void get().flushLocal().catch(localFailure) }
@@ -223,8 +251,13 @@ export function createWorkoutStore(options = {}) {
         const next = localData(draft)
         next._ts = stampChange(previous, next, Date.now())
         record(next, push, kind)
-        if (MOBILE && next.autoBackup && JSON.stringify(next.workouts?.map(w => w.media)) !== JSON.stringify(previous.workouts?.map(w => w.media))) {
-          clearTimeout(backupTimer); backupTimer = setTimeout(() => { void get().autoBackupNow().catch(localFailure) }, 2000)
+        const beforeMedia = referencedHashes({ workouts: previous.workouts })
+        if (MOBILE && next.autoBackup && [...referencedHashes({ workouts: next.workouts })].some(hash => !beforeMedia.has(hash))) {
+          const captured = get().getContext()
+          clearTimeout(backupTimer)
+          backupTimer = setTimeout(() => {
+            if (!stopped && get().localReady && get().ownerKey === captured.ownerKey && epoch === captured.epoch) void get().autoBackupNow().catch(localFailure)
+          }, 2000)
         }
       },
       saveHistoryEdit() { let saved; get().update(s => { saved = saveWorkoutEdit(s) }, true, { kind: 'history-edit' }); return saved },
@@ -289,13 +322,20 @@ export function createWorkoutStore(options = {}) {
         if (get().user || get().ownerKey !== guest.ownerKey || !get().localReady) throw failure('stale-context')
         return { ...left, ...(left.owed ? { stashed: true } : {}) }
       },
-      resolveAdoption(choice) { requireReady(); return bridge.resolveAdoption(choice) },
+      async resolveAdoption(choice) {
+        requireReady()
+        const context = get().getContext()
+        const media = choice === 'add' && envelope?.adoptionDecision?.status === 'pending' ? await copyRecoveryMedia(envelope.recoveryCopies.find(c => c.recoveryId === envelope.adoptionDecision.recoveryId)) : null
+        if (!get().localReady || context.ownerKey !== get().ownerKey || context.epoch !== epoch) throw failure('stale-context')
+        await bridge.resolveAdoption(choice)
+        return { media }
+      },
       adoptProfile(ask) {
         if (adopting) return adopting
         const key = get().ownerKey, answerEpoch = epoch, decision = envelope?.adoptionDecision
         if (decision?.status !== 'pending') return Promise.resolve(null)
         const copy = envelope.recoveryCopies.find(c => c.recoveryId === decision.recoveryId)
-        adopting = (async () => { const add = await ask(localExtras(copy?.state || DEF, get().S)); if (key !== get().ownerKey || answerEpoch !== epoch) throw failure('stale-context'); await bridge.resolveAdoption(add ? 'add' : 'keep'); return add })().finally(() => { adopting = null })
+        adopting = (async () => { const add = await ask(localExtras(copy?.state || DEF, get().S)); if (key !== get().ownerKey || answerEpoch !== epoch) throw failure('stale-context'); await get().resolveAdoption(add ? 'add' : 'keep'); return add })().finally(() => { adopting = null })
         return adopting
       },
       async resumeAdoption(ask) { if (!ask) ask = (await import('../sheets.jsx')).askAddDeviceData; return get().adoptProfile(ask) },
@@ -309,11 +349,38 @@ export function createWorkoutStore(options = {}) {
         if (!copy || !recoverableBy(copy, transition.owner)) throw failure('recovery-owner-mismatch')
         return trainingState(copy.state)
       },
-      resolveRecovery(recoveryId, choice) { requireReady(); return bridge.resolveRecovery(recoveryId, choice) },
+      async resolveRecovery(recoveryId, choice) {
+        requireReady()
+        const context = get().getContext()
+        const copy = envelope?.recoveryCopies.find(c => c.recoveryId === recoveryId)
+        if (!copy || !recoverableBy(copy, transition.owner)) throw failure('recovery-owner-mismatch')
+        const media = choice === 'add' && !copy.decision ? await copyRecoveryMedia(copy) : null
+        if (!get().localReady || context.ownerKey !== get().ownerKey || context.epoch !== epoch) throw failure('stale-context')
+        await bridge.resolveRecovery(recoveryId, choice)
+        return { media }
+      },
       async keptChanges() { return (envelope?.recoveryCopies || []).filter(c => c.ownerKey === get().ownerKey).map(c => ({ server: projectId, uid: desiredUser?.uid || null, recoveryId: c.recoveryId, at: c.state?._ts || 0 })) },
       async keptState(server, uid) { if (server !== projectId || uid !== (desiredUser?.uid || null) || !get().localReady) return null; return clone(departures.get(get().ownerKey)?.state || envelope?.recoveryCopies.find(c => c.ownerKey === get().ownerKey)?.state || null) },
+      async mediaRetentionSnapshot() {
+        requireReady()
+        const context = get().getContext(), revision = envelope.localRevision
+        const assertCurrent = () => {
+          if (stopped || !get().localReady || epoch !== context.epoch || get().ownerKey !== context.ownerKey || envelope?.localRevision !== revision) throw failure('stale-context')
+        }
+        const confirmed = await storage.read(context.ownerKey); assertCurrent()
+        if (!confirmed || confirmed.localRevision !== revision) throw failure('stale-context')
+        const retained = typeof storage.readRecoveryEnvelopes === 'function' ? await storage.readRecoveryEnvelopes(context.ownerKey) : []
+        assertCurrent()
+        const sources = [{ ownerKey: context.ownerKey, state: clone(get().S) }]
+        for (const value of [confirmed, ...retained]) {
+          if (value.ownerKey !== context.ownerKey) throw failure('owner-mismatch')
+          sources.push({ ownerKey: value.ownerKey, state: clone(value.state) })
+          for (const copy of value.recoveryCopies) sources.push({ ownerKey: copy.ownerKey || null, sourceId: copy.sourceId || null, state: clone(copy.state) })
+        }
+        return { ...context, localRevision: revision, sources }
+      },
       async stashedMediaHashes() { requireReady(); return new Set((envelope?.recoveryCopies || []).flatMap(c => [...referencedHashes(c.state)])) },
-      async autoBackupNow() { const key = get().ownerKey, S = clone(get().S); await get().flushLocal(); if (MOBILE && get().localReady && get().ownerKey === key && S.autoBackup) return writeAutoBackup(S) },
+      async autoBackupNow() { const context = get().getContext(), S = clone(get().S); if (!context.localReady) return; await get().flushLocal(); if (MOBILE && !stopped && get().localReady && get().ownerKey === context.ownerKey && epoch === context.epoch && S.autoBackup) return writeAutoBackup(S) },
       loadConfig: async () => get().config, refreshConfig: async () => get().config,
       async dispose() { stopped = true; ++epoch; session?.stop(); for (const stop of disposers.splice(0)) stop(); clearTimeout(backupTimer); if (bridge) await bridge.unbindAuth().catch(() => {}); hide() },
     }

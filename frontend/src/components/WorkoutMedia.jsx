@@ -1,14 +1,8 @@
 // The photos and videos of a logged workout — a progress photo, a form-check clip — on the finish
 // screen and in the workout's detail sheet, and the full-screen viewer they open in.
 //
-// The same machinery as a custom exercise's picture, on purpose: a pick runs through the same
-// ingest and lands in the same local store as pending (useMediaPicker), the list is written to
-// the saved workout through lib/workout-media.js (stamped, so the sync keeps the version edited
-// last), the same sync uploads it and counts it as owed until the server has it, and thumbnails
-// and the viewer show from the local store exactly as CustomMedia does — posters only in the
-// grid, a main file only once it is opened (or made local by the sync), nothing ever loaded from
-// a server URL. They are the owner's own: no Coach payload, MCP tool, plan file or "Copy as text"
-// reads `media`; only the zip backup carries the files.
+// Own originals/posters live in the owner's local store. Only refs enter the local workout
+// overlay; a ZIP carries the files. Picker results remain bound to their initiating session.
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
@@ -16,7 +10,7 @@ import { t } from '../lib/i18n.js'
 import { workoutMediaOf, WORKOUT_MEDIA_MAX } from '../lib/media-refs.js'
 import { addWorkoutMedia, removeWorkoutMedia } from '../lib/workout-media.js'
 import { sameWorkout } from '../lib/workout-date.js'
-import { syncMedia } from '../lib/media-sync.js'
+import { captureMediaContext } from '../lib/local-media.js'
 import { useMediaPicker } from './CustomMediaField.jsx'
 import { CustomThumb, MediaView } from './CustomMedia.jsx'
 import { Button } from './ui.jsx'
@@ -49,38 +43,35 @@ export const serverTakesWorkoutMedia = (user, config) => !user || !config || !co
 export default function WorkoutMediaSection({ w, hint = false }) {
   const rec = useRecord(w)
   const update = useStore(s => s.update)
-  const user = useStore(s => s.user)
-  const config = useStore(s => s.config)
   const { pick, busy, warning, note, storable, showAdd: pickerShowsAdd, canAdd: pickerCanAdd } = useMediaPicker()
   const fileRef = useRef(null)
   if (!rec) return null
   const list = workoutMediaOf(rec)
   const room = WORKOUT_MEDIA_MAX - list.length
-  const showAdd = pickerShowsAdd && serverTakesWorkoutMedia(user, config)
+  const showAdd = pickerShowsAdd
   const canAdd = pickerCanAdd && showAdd
   if (!list.length && !(showAdd && storable)) return null
 
   const onFiles = async ev => {
+    const captured = captureMediaContext(useStore)
+    if (!captured) return
     const picked = [...(ev.target.files || [])]
     ev.target.value = ''   // picking the same file again still fires onChange
     // Only as many as still fit go through the ingest: a batch of twelve on a phone would
     // otherwise re-encode (and store as pending) six files nothing will ever name.
     const now = useStore.getState().S.workouts?.find(x => x && sameWorkout(x, w))
     const files = picked.slice(0, Math.max(0, WORKOUT_MEDIA_MAX - workoutMediaOf(now).length))
-    let added = 0
     let full = files.length < picked.length
     for (const file of files) {
       const got = await pick(file)
+      if (!captured.current()) return
       if (!got) continue
       let res
       update(s => { res = addWorkoutMedia(s, w, got) })
-      if (res === 'added') added++
-      else if (res === 'full') { full = true; break }
+      if (res === 'full') { full = true; break }
       else if (res === 'gone') { toast(t('Workout deleted')); full = false; break }
     }
     if (full) toast(t('Up to {0} photos or videos per workout.', WORKOUT_MEDIA_MAX))
-    // Straight up, like an exercise's picture on save: the state push waits for its debounce.
-    if (added) syncMedia({ force: true })
   }
 
   return <div className="wmedia">

@@ -25,7 +25,7 @@ describe('export with photos & videos', () => {
     const out = await exportBackupZip(S, { media, fetchOne: async h => { fetched.push(h); throw new Error('404') } })
     expect(out.missing).toBe(1)
     expect(out.included).toBe(3)
-    expect(fetched).toEqual(['f'.repeat(64)])
+    expect(fetched).toEqual([])
     const entries = await readZip(out.blob)
     expect(entries.map(e => e.name)).toEqual([BACKUP_JSON, `media/${main.poster.hash}.png`, `media/${main.hash}.jpg`, `media/${vid.hash}.mov`, 'README.txt'])
     expect(JSON.parse(await entries[0].blob.text())).toEqual(JSON.parse(JSON.stringify(S, null, 2)))
@@ -33,7 +33,7 @@ describe('export with photos & videos', () => {
 })
 
 describe('import', () => {
-  it('a zip brings its state and, once stored, its files as pending', async () => {
+  it('a zip brings its state and, once stored, its files without cloud debt', async () => {
     const photo = jpeg()
     const main = await refFor(photo, 'image/jpeg')
     const S = stateWith([{ id: 'a', n: 'a', media: main, url: 'youtu.be/x' }])
@@ -44,7 +44,7 @@ describe('import', () => {
     expect(read.files.map(f => f.hash)).toEqual([main.hash])   // only what the state refers to
     const media = createMediaStore(memoryBackend())
     expect(await storeBackupMedia(read.files, { media })).toEqual({ stored: 1, skipped: 0 })
-    expect(await media.get(main.hash)).toMatchObject({ mime: 'image/jpeg', pending: true })
+    expect(await media.get(main.hash)).toMatchObject({ mime: 'image/jpeg', pending: false })
   })
 
   it('a tampered file is skipped, and so is one over its cap or of a type that is not stored', async () => {
@@ -130,6 +130,12 @@ describe('a workout\'s photos and videos in the zip', () => {
     expect(read.files.map(f => f.hash).sort()).toEqual([p.hash, v.hash].sort())
     const into = createMediaStore(memoryBackend())
     expect(await storeBackupMedia(read.files, { media: into })).toEqual({ stored: 2, skipped: 0 })
-    expect(await into.get(v.hash)).toMatchObject({ mime: 'video/mp4', pending: true })
+    expect(await into.get(v.hash)).toMatchObject({ mime: 'video/mp4', pending: false })
   })
+})
+
+it('reports a local storage failure instead of counting it as a malformed ZIP entry', async () => {
+  const bytes = jpeg(), hash = await sha256Hex(bytes)
+  const media = createMediaStore({ ...memoryBackend(), put: async () => { throw new Error('ENOSPC') } })
+  await expect(storeBackupMedia([{ hash, entry: { size: bytes.length, blob: new Blob([bytes]) } }], { media })).rejects.toThrow('ENOSPC')
 })

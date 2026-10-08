@@ -16,7 +16,7 @@ import Media, { Thumb } from './components/Media.jsx'
 import CustomMediaField from './components/CustomMediaField.jsx'
 import WorkoutMediaSection, { workoutMediaCount } from './components/WorkoutMedia.jsx'
 import { mediaOf, normalizeMediaRef, cleanUrl, workoutMediaOf } from './lib/media-refs.js'
-import { syncMedia } from './lib/media-sync.js'
+import { captureMediaContext } from './lib/local-media.js'
 import LineChart from './components/LineChart.jsx'
 import Stepper from './components/Stepper.jsx'
 import { durationSheet } from './components/DurationWheel.jsx'
@@ -1016,6 +1016,7 @@ export const addToRoutineSheet = ex => ui().openSheet(close => <AddToRoutine ex=
 // guide, are optional (components/CustomMediaField.jsx): the state keeps a small reference to the
 // file, never the file itself, and the link is cleaned on save and again whenever it is opened.
 function CustomExForm({ existing, prefill, onDone, close }) {
+  const origin = useRef(captureMediaContext(useStore))
   const nameRef = useRef(null)
   const onNameFocus = useSheetKeyboard(nameRef)
   const [n, setN] = useState(existing ? existing.n : (prefill || ''))
@@ -1031,6 +1032,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
   const [mediaTouched, setMediaTouched] = useState(false)
   const [url, setUrl] = useState(existing && typeof existing.url === 'string' ? existing.url : '')
   const onMedia = patch => {
+    if (!origin.current?.current()) return
     if ('media' in patch) { setMedia(patch.media); setMediaTouched(true) }
     if ('url' in patch) setUrl(patch.url)
   }
@@ -1056,6 +1058,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
   }
   const toggleSecondary = value => setSecondaries(current => current.includes(value) ? current.filter(m => m !== value) : [...current, value])
   const save = () => {
+    if (!origin.current?.current()) return
     const name = n.trim()
     if (!name) { toast(t('Give it a name')); return }
     if (!bp) { toast(t('Pick a body part')); return }
@@ -1098,7 +1101,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
     }
     // The file goes to the server now rather than after the state's own debounce: another device
     // that sees the reference first shows a tile until it arrives.
-    if (ref) syncMedia({ force: true })
+
     close()
     toast(existing ? t('Saved') : t('“{0}” created', name))
     onDone && onDone(EXIDX[id])

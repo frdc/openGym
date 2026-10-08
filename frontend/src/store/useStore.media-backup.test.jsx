@@ -30,7 +30,9 @@ vi.mock('@capacitor/app', () => ({ App: { addListener: () => ({ remove() {} }) }
 vi.mock('@capacitor/core', () => ({ Capacitor: { getPlatform: () => 'android', isNativePlatform: () => true }, registerPlugin: () => ({}) }))
 vi.mock('./useUI.js', () => ({ useUI: { getState: () => ({ toast: () => {} }) } }))
 
-import { DEF, useStore } from './useStore.js'
+import { DEF } from './useStore.js'
+import { runtime } from './cloud-test-runtime.js'
+let useStore
 import { addWorkoutMedia, removeWorkoutMedia } from '../lib/workout-media.js'
 
 const clone = v => JSON.parse(JSON.stringify(v))
@@ -39,11 +41,11 @@ const W = { id: 'w1', d: '2026-09-27', start: 1, end: 2, entries: [] }
 const ref = c => ({ kind: 'image', hash: c.repeat(64), mime: 'image/webp', size: 3, width: 8, height: 6, at: 1 })
 const backups = () => [...h.files].filter(([k]) => k.startsWith('DOCUMENTS/')).map(([, v]) => JSON.parse(v))
 
-afterEach(() => { h.files.clear(); useStore.setState({ S: clone(DEF), user: null, ready: false }) })
+afterEach(() => { h.files.clear() })
 
 describe('auto-backup and a workout\'s photos and videos', () => {
   it('a photo added after finishing is in the day\'s backup, one write for two picked together', async () => {
-    useStore.setState({ S: { ...clone(DEF), autoBackup: true, workouts: [clone(W)] }, ready: true })
+    useStore = (await runtime({ initial: { autoBackup: true, workouts: [clone(W)] } })).store
     useStore.getState().update(s => { addWorkoutMedia(s, W, ref('a')) })
     useStore.getState().update(s => { addWorkoutMedia(s, W, ref('b')) })
     await sleep(2300)
@@ -55,7 +57,7 @@ describe('auto-backup and a workout\'s photos and videos', () => {
 
   // Review of 771184c9: a removal wrote the day's backup over the copy that still had the photo.
   it('taking a photo off, or deleting the workout, leaves the day\'s backup as it was', async () => {
-    useStore.setState({ S: { ...clone(DEF), autoBackup: true, workouts: [{ ...clone(W), media: [ref('a'), ref('b')] }] }, ready: true })
+    useStore = (await runtime({ initial: { autoBackup: true, workouts: [{ ...clone(W), media: [ref('a'), ref('b')] }] } })).store
     useStore.getState().update(s => { removeWorkoutMedia(s, W, 'a'.repeat(64)) })
     useStore.getState().update(s => { s.workouts = [] })
     await sleep(2300)
@@ -63,11 +65,23 @@ describe('auto-backup and a workout\'s photos and videos', () => {
   })
 
   it('nothing written for other changes, or with the setting off', async () => {
-    useStore.setState({ S: { ...clone(DEF), autoBackup: true, workouts: [clone(W)] }, ready: true })
+    useStore = (await runtime({ initial: { autoBackup: true, workouts: [clone(W)] } })).store
     useStore.getState().update(s => { s.restSec = 60 })
-    useStore.setState({ S: { ...clone(DEF), autoBackup: false, workouts: [clone(W)] } })
+    useStore.getState().update(s => { s.autoBackup = false; s.workouts = [clone(W)] })
     useStore.getState().update(s => { addWorkoutMedia(s, W, ref('a')) })
     await sleep(2300)
     expect(backups()).toHaveLength(0)
   })
+})
+
+it('a media backup scheduled by A cannot run for B after switching accounts', async () => {
+  const rt = await runtime()
+  await rt.auth('A')
+  useStore = rt.store
+  useStore.getState().update(s => { s.autoBackup = true; s.workouts = [clone(W)] })
+  useStore.getState().update(s => { addWorkoutMedia(s, W, ref('a')) })
+  await rt.auth('B')
+  useStore.getState().update(s => { s.autoBackup = true; s.restSec = 70 })
+  await sleep(2300)
+  expect(backups()).toHaveLength(0)
 })

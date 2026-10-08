@@ -17,11 +17,15 @@ const mocks = vi.hoisted(() => {
   state.snapshot = () => ({ S: state.S, user: null, update: mut => { const next = structuredClone(state.S); mut(next); state.S = next } })
   return state
 })
-vi.mock('../store/useStore.js', () => {
-  const useStore = selector => selector ? selector(mocks.snapshot()) : mocks.snapshot()
-  useStore.getState = mocks.snapshot
-  return { useStore }
+const runtimeFixture = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const { createUIStoreFixture } = await import('../store/ui-test-runtime.js')
+  runtimeFixture.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: runtimeFixture.fixture.useStore }
 })
+import { useStore } from '../store/useStore.js'
+
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
 vi.mock('../sheets.jsx', () => ({ exerciseDetailSheet: vi.fn(), addToRoutineSheet: vi.fn(), customExSheet: vi.fn() }))
 
@@ -31,17 +35,18 @@ function render() {
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(<Library />))
+  act(() => { runtimeFixture.fixture.setFixture(s => Object.assign(s, mocks.S)); root.render(<Library />) })
   return host
 }
 const names = host => [...host.querySelectorAll('.item .tt')].map(el => el.textContent).slice(1)   // drop "Create your own"
 const cssSource = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
-beforeEach(() => {
+beforeEach(async () => {
+  await runtimeFixture.fixture.prepare()
   mocks.S = { unit: 'kg', lang: 'en', routines: [], workouts: [], customEx: [], exWeights: {}, equipProfiles: [], activeEquipId: null, equipFilterOn: false }
   document.body.innerHTML = ''
 })
-afterEach(() => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }) })
+afterEach(async () => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }); await runtimeFixture.fixture.close() })
 
 describe('Library favourites', () => {
   it('puts favourites first, marked with a star, and leaves the rest in catalogue order', () => {

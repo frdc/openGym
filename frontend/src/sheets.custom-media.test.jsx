@@ -11,6 +11,13 @@ import { createRoot } from 'react-dom/client'
 const h = vi.hoisted(() => ({ ingest: null }))
 vi.mock('./lib/media-ingest.js', () => ({ ingestMediaFile: (...a) => h.ingest(...a) }))
 
+const runtimeFixture = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const { createUIStoreFixture } = await import('./store/ui-test-runtime.js')
+  runtimeFixture.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: runtimeFixture.fixture.useStore }
+})
 import { registerCustom } from './lib/exercises.js'
 import { DEF, useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -59,29 +66,30 @@ async function pick(form, file = new File(['x'], 'IMG_0042.HEIC', { type: 'image
 }
 const custom = (over = {}) => ({ id: 'cm1', n: 'Sandbag carry', bp: 'back', eq: 'barbell', custom: true, desc: '', tg: '', sm: [], primaries: [], secondaries: [], muscleGroups: [], ...over })
 function seed(ex) {
-  useStore.setState(s => ({ S: { ...s.S, customEx: [ex] } }))
+  runtimeFixture.fixture.setFixture(s => { s.customEx = [ex] })
   registerCustom([ex])
 }
 
 let media
-beforeEach(() => {
+beforeEach(async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   useUI.setState({ sheets: [], toastMsg: '' })
-  useStore.setState({ S: structuredClone(DEF), user: null, config: null })
+  await runtimeFixture.fixture.prepare(DEF)
   registerCustom([])
   _setLangState('en', null, null, null)
   document.body.innerHTML = ''
   media = createMediaStore({ ...memoryBackend(), persistent: true, name: 'test' }, { objectURL: { createObjectURL: () => 'blob:t/1', revokeObjectURL() {} } })
-  _setMediaStore(media)
+  _setMediaStore(media, useStore.getState().ownerKey)
   h.ingest = vi.fn(async () => ({
     media: REF,
     blobs: [{ hash: HASH, blob: new Blob(['main']), mime: 'image/webp' }, { hash: POSTER, blob: new Blob(['poster']), mime: 'image/webp' }],
     warnings: []
   }))
 })
-afterEach(() => {
+afterEach(async () => {
   act(() => { mounted.splice(0).forEach(root => root.unmount()) })
   _setMediaStore(null)
+  await runtimeFixture.fixture.close()
   registerCustom([])
 })
 
@@ -104,7 +112,8 @@ describe('custom exercise photo, GIF or video, and link', () => {
     expect(form.textContent).toContain('0.2 MB')
     expect(form.textContent).toContain('Change')
     // The files are in the local store, waiting for the server, before the form is even saved.
-    expect([...media.pendingNow()].sort()).toEqual([HASH, POSTER])
+    expect([...media.pendingNow()]).toEqual([])
+    expect((await media.list()).map(r => r.hash).sort()).toEqual([HASH, POSTER])
     act(() => type(form.querySelector('input[type="url"]'), '  youtu.be/dQw4w9WgXcQ '))
     click(form, 'button', 'Create exercise')
     const c = S().customEx.find(x => x.n === 'Sandbag carry')
@@ -185,7 +194,7 @@ describe('custom exercise photo, GIF or video, and link', () => {
     expect(form.querySelector('.cmf-thumb')).toBeNull()
   })
 
-  it('says a guest keeps it on this device only, and hides Add on a server that stores no media', async () => {
+  it('says a guest keeps it on this device only, and offers Add regardless of the old server media capability', async () => {
     customExSheet(null)
     let form = renderTop()
     await settle()
@@ -196,8 +205,8 @@ describe('custom exercise photo, GIF or video, and link', () => {
     customExSheet(null)
     form = renderTop()
     await settle()
-    expect(form.textContent).toContain('Your server does not store photos and videos yet.')
-    expect([...form.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add')).toBe(false)
+    expect(form.textContent).toContain('Kept on this device only')
+    expect([...form.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add')).toBe(true)
     expect(form.querySelector('input[type="url"]')).toBeTruthy()   // the link still works
     // A guest in the browser is on that same server: what it picked would never reach it either.
     act(() => { mounted.splice(0).forEach(root => root.unmount()) })
@@ -206,13 +215,13 @@ describe('custom exercise photo, GIF or video, and link', () => {
     customExSheet(null)
     form = renderTop()
     await settle()
-    expect(form.textContent).toContain('Your server does not store photos and videos yet.')
-    expect([...form.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add')).toBe(false)
+    expect(form.textContent).toContain('Kept on this device only')
+    expect([...form.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add')).toBe(true)
   })
 
   it('where this browser cannot keep files, Add is there but off, and says why', async () => {
     const blocked = createMediaStore({ name: 'idb', persistent: true, open: async () => false })
-    _setMediaStore(blocked)
+    _setMediaStore(blocked, useStore.getState().ownerKey)
     customExSheet(null)
     const form = renderTop()
     await settle()
