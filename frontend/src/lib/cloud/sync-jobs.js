@@ -7,6 +7,13 @@ const clone = value => structuredClone(value)
 const fail = code => { throw Object.assign(new Error(code), { code: code.split(':')[0] }) }
 const key = id => btoa(Array.from(new TextEncoder().encode(id), n => String.fromCharCode(n)).join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const bytes = value => new TextEncoder().encode(JSON.stringify(value)).length
+export function blockedImportError(job) {
+  const [code, ...rest] = (job.blockedReason || '').split(':')
+  const path = rest.join(':')
+  return job.kind === 'import' && ['invalid-path', 'invalid-document', 'document-too-large'].includes(code)
+    && job.parts?.some(part => part.paths.includes(path))
+    ? Object.assign(new Error(job.blockedReason), { code, path }) : null
+}
 export const MAX_PART_BYTES = 700 * 1024
 
 /** The source and parts are durable locally; only jobManifest is a remote parent. */
@@ -241,9 +248,13 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
     for (const original of ordered) {
       if (['reset','cleanup'].includes(original.kind) || !ctx.envelope.pendingJobs.some(j => j.jobId === original.jobId)) continue
       let job = original
-      if (job.blockedReason) fail(job.blockedReason)
       if (job.generation !== profile.control.generation) {
         await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.filter(j => j.jobId !== job.jobId), recoveryCopies: [...value.recoveryCopies, { recoveryId: job.jobId, reason: 'generation-mismatch', job: clone(job) }] })); continue
+      }
+      if (job.blockedReason) {
+        if (!blockedImportError(job)) fail(job.blockedReason)
+        if (job.options.sourceVersion !== profile.control.unitVersion) fail('unit-version-mismatch')
+        return profile
       }
       if (job.kind === 'unit' && !manifests.some(j => j.jobId === job.jobId)) {
         if (job.options.sourceVersion < profile.control.unitVersion) {
@@ -272,10 +283,20 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
         job = { ...planned, jobId: job.jobId, options: { ...planned.options, stamp: job.options.stamp } }
         await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.map(j => j.jobId === job.jobId ? job : j) }))
       }
-      await remote.beginJob(ctx.owner, job); current(ctx)
-      for (const part of job.parts) {
-        await remote.commitJobPart(ctx.owner, job, part); current(ctx)
-        await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.map(j => j.jobId === job.jobId ? { ...j, parts: j.parts.map(p => p.partId === part.partId ? { ...p, status: 'complete' } : p) } : j) }))
+      try {
+        await remote.beginJob(ctx.owner, job); current(ctx)
+        for (const part of job.parts) {
+          await remote.commitJobPart(ctx.owner, job, part); current(ctx)
+          await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.map(j => j.jobId === job.jobId ? { ...j, parts: j.parts.map(p => p.partId === part.partId ? { ...p, status: 'complete' } : p) } : j) }))
+        }
+      } catch (error) {
+        current(ctx)
+        const blockedReason = `${error.code}:${error.path}`
+        if (error.importSource !== true || !blockedImportError({ ...job, blockedReason })) throw error
+        if (job.options.sourceVersion !== profile.control.unitVersion) fail('unit-version-mismatch')
+        if (profile.control.activeUnitJob) fail('unit-job-active')
+        await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.map(j => j.jobId === job.jobId ? { ...j, status: 'blocked', blockedReason } : j) }))
+        return profile
       }
       await remote.finishJob(ctx.owner, job); current(ctx)
       await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.filter(j => j.jobId !== job.jobId) }))

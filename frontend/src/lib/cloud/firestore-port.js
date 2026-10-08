@@ -9,6 +9,16 @@ const grouped = new Set('routines workouts bodyweight customEx equipProfiles gym
 const settings = new Set(Object.keys(FIELD_POLICY).filter(k => FIELD_POLICY[k] === 'sync' && !grouped.has(k)))
 const clone = value => structuredClone(value)
 const fail = (code, path) => { throw Object.assign(new Error(path ? `${code}:${path}` : code), { code, ...(path ? { path } : {}) }) }
+// Attribute only validation of the caller's import source. The same codes from
+// remote profile/control/transaction reads must still stop the whole attempt.
+function importSourceValidation(job, validate) {
+  try { return validate() }
+  catch (error) {
+    if (job.kind === 'import' && ['invalid-path', 'invalid-document', 'document-too-large'].includes(error.code)
+      && job.parts?.some(part => part.paths.includes(error.path))) error.importSource = true
+    throw error
+  }
+}
 const map = v => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype
 const integer = v => Number.isSafeInteger(v) && v >= 0
 const nullableId = v => v === null || (typeof v === 'string' && v.length > 0 && v.length <= 1500)
@@ -163,7 +173,7 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
   async function beginJob(owner, input) {
     const job = clone(input); checkJob(owner, job)
     if (job.parts?.length !== job.totalParts) fail('invalid-job')
-    for (const part of job.parts) checkPart(job, part)
+    for (const part of job.parts) importSourceValidation(job, () => checkPart(job, part))
     const jobPath = `jobs/${job.jobId}`
     await sdk.runTransaction(client.db, async tx => {
       const c = await tx.get(ref(owner)), existing = await tx.get(ref(owner, jobPath)); root(owner)
@@ -228,7 +238,7 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
     if (job.kind === 'import') {
       let requestBytes = 16384
       for (const path of part.paths) {
-        validateRecord(path, job.payloads?.[path])
+        importSourceValidation(job, () => validateRecord(path, job.payloads?.[path]))
         requestBytes += 2 * new TextEncoder().encode(JSON.stringify(job.payloads[path]) + JSON.stringify(profile.documents[path] || {})).length + 4096
         if (requestBytes > 8 * 1024 * 1024) fail('job-part-too-large', path)
       }

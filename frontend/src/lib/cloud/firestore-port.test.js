@@ -5,6 +5,9 @@ import * as codec from './codec.js'
 import { fixtureState, fakeRemote } from './test-fixtures.js'
 import { makeOwner } from './model.js'
 import { stampChange } from '../sync-merge.js'
+import { createSyncBridge } from './sync-bridge.js'
+import { createFsStorage } from './offline-fs.js'
+import { fakeFilesystem } from './test-fixtures.js'
 
 const owner = makeOwner('demo-opengym', 'A')
 const initialControl = () => ({ schemaVersion: 1, generation: 1, dataRevision: 0, unitVersion: 1, activeUnitJob: null, lastResetOpId: null })
@@ -45,6 +48,83 @@ function operation() {
   return codec.prepareOperation(before, after, { ownerKey: owner.ownerKey, opId: 'op-1', generation: 1, unitVersion: 1, kind: 'finish-workout' })
 }
 const context = profile => ({ expectedControl: profile.control, domainContext: { remoteProfile: profile, remoteState: codec.decodeState(profile.documents) } })
+
+describe('blocked import isolation through the actual port and native envelope backend', () => {
+  for (const kind of ['invalid-path', 'document-too-large']) it(`${kind} retains its source across reopen while independent writes progress`, async () => {
+    const h = harness(), filesystem = fakeFilesystem()
+    let storage = createFsStorage(filesystem), status, bridge
+    async function open() {
+      bridge = createSyncBridge({ storage, remote: h.remote, onStatus: value => { status = value } })
+      await bridge.bindAuth({ owner, user: { uid: owner.uid }, authEpoch: 1 }); await bridge.syncNow()
+    }
+    await open()
+    const badId = kind === 'invalid-path' ? 'b'.repeat(1126) : 'huge'
+    const backup = fixtureState({ routines: [{ id: 'neighbor', name: 'Retained neighbor', ex: [] }], workouts: [{ id: badId, d: '2026-10-08', entries: [], note: kind === 'document-too-large' ? 'x'.repeat(930000) : 'Retained full source' }] })
+    await bridge.importBackup(backup, { mode: 'merge' })
+    const imported = await storage.read(owner.ownerKey), jobId = imported.pendingJobs[0].jobId
+    const path = `workouts/${Buffer.from(badId).toString('base64url')}`
+    async function edit(change) {
+      const previous = (await storage.read(owner.ownerKey)).state, next = structuredClone(previous)
+      change(next); next._ts = stampChange(previous, next, Date.now())
+      await bridge.recordChange({ previous, next, scheduleRemote: false })
+    }
+    // A write overlap and an explicitly injected read dependency must both wait.
+    await edit(s => { s.routines[0].name = 'Pending dependent edit' })
+    await edit(s => { s.accentCustom = '#123456' })
+    await storage.commit(owner.ownerKey, value => ({ ...value, pendingOperations: value.pendingOperations.map(op => op.paths.includes('settings/accentCustom') ? { ...op, readPaths: ['routines/bmVpZ2hib3I'] } : op) }))
+    await edit(s => { s.accentCustom = '#abcdef' }) // Must not overtake the preceding blocked read.
+    await edit(s => { s.bodyweight.push({ d: '2026-10-08', w: 83.2 }); s.classicChime = true })
+    const footprint = imported.pendingJobs[0].parts.flatMap(part => part.paths)
+    expect(footprint).not.toContain('settings/accentCustom')
+    expect(footprint).not.toContain('settings/classicChime')
+    expect(footprint).not.toContain('bodyweight/2026-10-08')
+    await bridge.syncNow()
+    expect(h.rows.get(`${root}/bodyweight/2026-10-08`)?.payload.w).toBe(83.2)
+    expect(h.rows.get(`${root}/settings/classicChime`)?.payload.value).toBe(true)
+    expect(h.rows.has(`${root}/settings/accentCustom`)).toBe(false)
+    expect(status).toMatchObject({ local: 'saved', cloud: 'blocked', cloudError: { code: kind, path } })
+    let saved = await storage.read(owner.ownerKey)
+    expect(saved.pendingOperations).toHaveLength(3)
+    expect(saved.pendingJobs[0]).toMatchObject({ jobId, status: 'blocked', blockedReason: `${kind}:${path}` })
+    expect(saved.pendingJobs[0].source.workouts[0]).toMatchObject(backup.workouts[0])
+    expect(saved.pendingJobs[0].parts.every(part => part.status === 'pending')).toBe(true)
+    const retained = structuredClone(saved.pendingJobs[0]), debt = saved.pendingOperations.map(op => op.opId)
+    await bridge.unbindAuth(); storage = createFsStorage(filesystem); await open()
+    saved = await storage.read(owner.ownerKey)
+    expect(saved.pendingJobs[0]).toEqual(retained)
+    expect(saved.pendingOperations.map(op => op.opId)).toEqual(debt)
+    expect(status.cloud).toBe('blocked')
+    expect(h.rows.get(`${root}/bodyweight/2026-10-08`)?.payload.w).toBe(83.2)
+    await bridge.unbindAuth()
+  })
+  for (const code of ['invalid-document', 'invalid-control', 'invalid-job', 'permission-denied', 'unavailable', 'generation-mismatch', 'unit-job-active']) it(`does not isolate an unattributed ${code} from remote job processing`, async () => {
+    const h = harness(), storage = createFsStorage(fakeFilesystem())
+    let status
+    const bridge = createSyncBridge({ storage, remote: h.remote, onStatus: value => { status = value } })
+    await bridge.bindAuth({ owner, user: { uid: owner.uid }, authEpoch: 1 }); await bridge.syncNow()
+    h.remote.beginJob = async () => { throw Object.assign(new Error(`${code}:routines/bmVpZ2hib3I`), { code, path: 'routines/bmVpZ2hib3I' }) }
+    await bridge.importBackup(fixtureState({ routines: [{ id: 'neighbor', name: 'Source', ex: [] }] }), { mode: 'merge' })
+    const previous = (await storage.read(owner.ownerKey)).state, next = { ...previous, bodyweight: [{ d: '2026-10-08', w: 83.2 }] }
+    next._ts = stampChange(previous, next, Date.now())
+    await bridge.recordChange({ previous, next, scheduleRemote: false }); await bridge.syncNow()
+    const saved = await storage.read(owner.ownerKey)
+    expect(saved.pendingJobs[0].blockedReason).toBeUndefined()
+    expect(saved.pendingOperations).toHaveLength(1)
+    expect(h.rows.has(`${root}/bodyweight/2026-10-08`)).toBe(false)
+    expect(status.cloudError.code).toBe(code)
+    await bridge.unbindAuth()
+  })
+  it('never attributes malformed remote records to the import source even at the same path', async () => {
+    const h = harness(), state = fixtureState({ routines: [{ id: 'neighbor', name: 'Valid local source', ex: [] }] })
+    const encoded = codec.encodeState(state, initialControl())
+    const job = jobs.createJob({ ownerKey: owner.ownerKey, generation: 1, kind: 'import', opId: 'corrupt-remote', paths: ['routines/bmVpZ2hib3I'], payloads: encoded.documents, options: { sourceVersion: 1, targetVersion: 1 } })
+    await h.remote.beginJob(owner, job)
+    h.rows.set(`${root}/routines/bmVpZ2hib3I`, { ...encoded.documents['routines/bmVpZ2hib3I'], payload: null })
+    const error = await h.remote.commitJobPart(owner, job, job.parts[0]).catch(value => value)
+    expect(error).toMatchObject({ code: 'invalid-document', path: 'routines/bmVpZ2hib3I' })
+    expect(error.importSource).toBeUndefined()
+  })
+})
 
 describe('isolated Firestore transport', () => {
   it('never initializes control after an unavailable server read', async () => {

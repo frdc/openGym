@@ -1,5 +1,5 @@
 import { prepareLegacyState } from './legacy-migration.js'
-import { createJobCoordinator, reconcileJobUnits } from './sync-jobs.js'
+import { blockedImportError, createJobCoordinator, reconcileJobUnits } from './sync-jobs.js'
 import * as defaultCodec from './codec.js'
 import { makeEnvelope, makeOwner, recoverableBy, trainingState } from './model.js'
 import { DEF } from '../../store/state-defaults.js'
@@ -14,6 +14,17 @@ const errorInfo = (error, op) => {
 const transient = code => ['unavailable', 'deadline-exceeded', 'aborted', 'cancelled', 'resource-exhausted', 'network-request-failed', 'auth/network-request-failed', 'server-required', 'refresh-required', 'domain-context-stale'].includes(code.replace(/^firestore\//, ''))
 const sameControl = (a, b) => a && b && ['generation', 'dataRevision', 'unitVersion', 'activeUnitJob', 'lastResetOpId'].every(k => a[k] === b[k])
 const delays = [1000, 2000, 4000, 8000, 16000, 30000]
+function nextIndependentOperation(envelope) {
+  if (!envelope.pendingJobs.some(blockedImportError)) return envelope.pendingOperations[0]
+  // Subsequent import jobs retain their ordering too. A skipped normal write
+  // adds its footprint so later reads/writes cannot overtake that dependency.
+  const waiting = new Set(envelope.pendingJobs.flatMap(job => job.parts?.flatMap(part => part.paths) || []))
+  for (const op of envelope.pendingOperations) {
+    const footprint = [...op.paths, ...(op.readPaths || [])]
+    if (!footprint.some(path => waiting.has(path))) return op
+    for (const path of footprint) waiting.add(path)
+  }
+}
 const initializeOperation = (op, control) => !op || op.generation !== null || !control ? op : {
   ...op, generation: control.generation,
   payloads: Object.fromEntries(Object.entries(op.payloads).map(([path, record]) => [path, { ...record, generation: control.generation }])) }
@@ -263,13 +274,14 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       emit(ctx, { cloud: 'syncing', cloudError: null, retryAt: null })
       profile = await jobs.run(ctx, profile); assertCurrent(ctx)
       profile = await refresh(ctx); assertCurrent(ctx)
+      if (ctx.envelope.pendingJobs.some(blockedImportError) && (profile.control.activeUnitJob || ctx.envelope.pendingJobs.some(job => job.kind === 'unit'))) throw failure('unit-job-active')
       while (authenticated(ctx)) {
         let latest
         try { latest = await storage.read(ctx.owner.ownerKey) }
         catch (error) { localError(ctx, error); throw error }
         assertCurrent(ctx)
         if (latest) accept(ctx, latest)
-        operation = ctx.envelope.pendingOperations[0]
+        operation = nextIndependentOperation(ctx.envelope)
         if (!operation) break
         if (operation.blockedReason) throw failure(operation.blockedReason)
         if (operation.generation !== profile.control.generation) throw failure('generation-mismatch')
@@ -292,6 +304,8 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       }
       await jobs.runCleanup(ctx); assertCurrent(ctx)
       ctx.attempt = 0; cancelTimer(ctx)
+      const blocked = ctx.envelope.pendingJobs.map(blockedImportError).find(Boolean)
+      if (blocked) { cloudError(ctx, blocked); return }
       emit(ctx, { cloud: 'synced', cloudError: null, retryAt: null })
     } catch (error) { cloudError(ctx, error, operation) }
   }
