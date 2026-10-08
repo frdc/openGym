@@ -2,7 +2,18 @@
 // The session note shipped with a hole in it: buildCompletedWorkout read `active.note` and
 // nothing in the app ever wrote it, so the only way to get one was after the fact — and that
 // path threw the text away unless you happened to tab out of the field first.
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
+import { describe, expect, it, beforeEach, afterEach , vi } from 'vitest'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useStore } from '../store/useStore.js'
@@ -11,14 +22,14 @@ import { sessionNoteSheet, workoutDetailSheet } from '../sheets.jsx'
 import { buildCompletedWorkout } from './finish-workout.js'
 
 const mounted = []
-function render(open) {
+async function render(open) {
   open()
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const type = (el, value) => {
@@ -40,13 +51,13 @@ describe('session note', () => {
   })
   afterEach(unmountAll)
 
-  it('can be written during the workout and survives finishing', () => {
-    useStore.setState(s => ({
+  it('can be written during the workout and survives finishing', async () => {
+    ;await uiRuntime.fixture.applySnapshot(s => ({
       S: { ...s.S, active: { id: 'w1', d: '2026-08-25', start: 1, name: 'Push', entries: [{ id: 'bench', sets: [] }] } },
-    }))
-    const host = render(() => sessionNoteSheet())
-    act(() => { type(host.querySelector('textarea'), 'slept badly, still hit it') })
-    act(() => { [...host.querySelectorAll('button')].find(b => /save/i.test(b.textContent)).click() })
+    }));
+    const host = (await render(() => sessionNoteSheet()))
+    await act(async () => { type(host.querySelector('textarea'), 'slept badly, still hit it'); await uiRuntime.fixture.flush(); })
+    await act(async () => { [...host.querySelectorAll('button')].find(b => /save/i.test(b.textContent)).click(); await uiRuntime.fixture.flush(); })
 
     const A = useStore.getState().S.active
     expect(A.note).toBe('slept badly, still hit it')
@@ -54,19 +65,19 @@ describe('session note', () => {
     expect(buildCompletedWorkout(A, { end: 2 }).note).toBe('slept badly, still hit it')
   })
 
-  it('is kept when the history sheet is dismissed without blurring the field', () => {
-    useStore.setState(s => ({ S: { ...s.S, workouts: [workout()] } }))
-    const host = render(() => workoutDetailSheet(useStore.getState().S.workouts[0]))
-    act(() => { type(host.querySelector('textarea'), 'good session') })
+  it('is kept when the history sheet is dismissed without blurring the field', async () => {
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [workout()] } }))
+    const host = (await render(() => workoutDetailSheet(useStore.getState().S.workouts[0])))
+    await act(async () => { type(host.querySelector('textarea'), 'good session'); await uiRuntime.fixture.flush(); })
     // Escape / Android back / swipe all unmount without a blur.
     unmountAll()
     expect(useStore.getState().S.workouts[0].note).toBe('good session')
   })
 
-  it('clearing it removes the note rather than storing an empty string', () => {
-    useStore.setState(s => ({ S: { ...s.S, workouts: [{ ...workout(), note: 'old' }] } }))
-    const host = render(() => workoutDetailSheet(useStore.getState().S.workouts[0]))
-    act(() => { type(host.querySelector('textarea'), '   ') })
+  it('clearing it removes the note rather than storing an empty string', async () => {
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [{ ...workout(), note: 'old' }] } }))
+    const host = (await render(() => workoutDetailSheet(useStore.getState().S.workouts[0])))
+    await act(async () => { type(host.querySelector('textarea'), '   '); await uiRuntime.fixture.flush(); })
     unmountAll()
     expect(useStore.getState().S.workouts[0].note).toBeUndefined()
   })

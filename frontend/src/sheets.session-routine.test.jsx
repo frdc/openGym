@@ -1,6 +1,17 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -16,13 +27,13 @@ const workout = () => ({
   ],
 })
 
-function renderTop() {
+async function renderTop() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 
@@ -31,29 +42,29 @@ const button = (host, label) => [...host.querySelectorAll('button')].find(b => b
 describe('WorkoutDetail — save as routine', () => {
   let navigated
 
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     navigated = null
     setNav(to => { navigated = to })
     useUI.setState({ sheets: [], toastMsg: '' })
-    useStore.setState(s => ({ S: { ...s.S, workouts: [], routines: [], active: null } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [], routines: [], active: null } }))
     document.body.innerHTML = ''
   })
 
   afterEach(() => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }) })
 
-  it('requires an explicit confirmation, then creates a flat routine and keeps history unchanged', () => {
+  it('requires an explicit confirmation, then creates a flat routine and keeps history unchanged', async () => {
     const saved = workout()
-    useStore.setState(s => ({ S: { ...s.S, workouts: [saved] } }))
-    const host = (workoutDetailSheet(saved), renderTop())
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [saved] } }))
+    const host = (workoutDetailSheet(saved), (await renderTop()))
     expect(button(host, 'Save as routine')).toBeTruthy()
 
-    act(() => { button(host, 'Save as routine').click() })
-    const confirm = renderTop()
+    await act(async () => { button(host, 'Save as routine').click(); await uiRuntime.fixture.flush(); })
+    const confirm = (await renderTop())
     expect(confirm.textContent).toContain('Create an independent routine')
     expect(useStore.getState().S.routines).toHaveLength(0)
 
-    act(() => { button(confirm, 'Save').click() })
+    await act(async () => { button(confirm, 'Save').click(); await uiRuntime.fixture.flush(); })
     const routine = useStore.getState().S.routines[0]
     expect(routine).toMatchObject({ name: 'Push' })
     expect(routine.ex.map(e => e.id)).toEqual(['bench', 'row'])

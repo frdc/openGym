@@ -3,8 +3,19 @@
 // on the day or takes it off again, so two make a combined day (in the order tapped); "Rest day"
 // clears the day and closes; the sheet stays open for a second pick until Done. The weekday key
 // is dropped rather than left as an empty list.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -13,15 +24,15 @@ import { dayAssignSheet } from './sheets.jsx'
 const clone = v => JSON.parse(JSON.stringify(v))
 let host, root
 
-const renderTop = () => {
+const renderTop = async () => {
   const sheet = useUI.getState().sheets.at(-1)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
 }
 const row = name => [...host.querySelectorAll('.item')].find(el => el.querySelector('.tt')?.textContent === name)
-const tap = el => { act(() => el.click()); if (useUI.getState().sheets.length) renderTop() }
+const tap = async el => { await act(async () => { await el.click(); await uiRuntime.fixture.flush(); }); if (useUI.getState().sheets.length) await renderTop(); }
 const week = () => useStore.getState().S.week
 
-beforeEach(() => {
+beforeEach(async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   useUI.setState({ sheets: [], toastMsg: '' })
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
@@ -31,47 +42,47 @@ beforeEach(() => {
     { id: 'core', name: 'Core', emoji: null, ex: [] },
   ]
   S.week = { 1: ['push'] }
-  useStore.setState({ S, user: null })
+  await uiRuntime.fixture.applySnapshot({ S, user: null })
 })
 afterEach(() => { act(() => root.unmount()); host.remove() })
 
 describe('the weekday picker', () => {
-  it('ticks what is on the day and adds a second routine for a combined day, staying open', () => {
+  it('ticks what is on the day and adds a second routine for a combined day, staying open', async () => {
     dayAssignSheet(1)
-    renderTop()
+    await renderTop()
     expect(host.querySelector('h3').textContent).toBe('Monday')
     expect(row('Push').getAttribute('aria-pressed')).toBe('true')
     expect(row('Core').getAttribute('aria-pressed')).toBe('false')
-    tap(row('Core'))
+    await tap(row('Core'))
     expect(week()[1]).toEqual(['push', 'core'])
     expect(useUI.getState().sheets.length).toBe(1)
     expect(row('Core').getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('takes a routine off again, and drops the day once nothing is left', () => {
+  it('takes a routine off again, and drops the day once nothing is left', async () => {
     dayAssignSheet(1)
-    renderTop()
-    tap(row('Push'))
+    await renderTop()
+    await tap(row('Push'))
     expect(week()).not.toHaveProperty('1')
     expect(row('Rest day').querySelector('.menu-on').className).toContain('is-on')
   })
 
-  it('Rest day clears a combined day and closes', () => {
+  it('Rest day clears a combined day and closes', async () => {
     useStore.getState().update(s => { s.week[1] = ['push', 'core'] })
     dayAssignSheet(1)
-    renderTop()
-    tap(row('Rest day'))
+    await renderTop()
+    await tap(row('Rest day'))
     expect(week()).not.toHaveProperty('1')
     expect(useUI.getState().sheets.length).toBe(0)
   })
 
-  it('plans an empty day and closes on Done', () => {
+  it('plans an empty day and closes on Done', async () => {
     dayAssignSheet(3)
-    renderTop()
-    tap(row('Core'))
+    await renderTop()
+    await tap(row('Core'))
     expect(week()[3]).toEqual(['core'])
     const done = [...host.querySelectorAll('button')].find(b => b.textContent.trim() === 'Done')
-    act(() => done.click())
+    await act(async () => { await done.click(); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().sheets.length).toBe(0)
   })
 })

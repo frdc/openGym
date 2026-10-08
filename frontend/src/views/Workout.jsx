@@ -14,7 +14,6 @@ import { speedUnitOf, toSpeed, fromSpeed } from '../lib/speed.js'
 import { beep, vibrate, unlock } from '../lib/sound.js'
 import { pinState } from '../lib/queue.js'
 import { t, tn, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
-import { api, beacon } from '../lib/api.js'
 import { pyramidRestFor, maxRecordAt, isPyramid, pyramidLabel } from '../lib/pyramid.js'
 import { insertionIndexAfterCurrentUnit, nextUnfinishedUnit, setProgressHighWater, supersetFlowStep, restAfterSet, restOnRecheck, restSecFor, warmupRestSecFor } from '../lib/supersetFlow.js'
 import Media from '../components/Media.jsx'
@@ -1486,7 +1485,8 @@ function ActiveWorkout() {
     // the row is held to the end, ticked, or given a duration you typed yourself, and it never
     // reaches S.workouts (lib/finish-workout.js).
     const plan = (!e.sets[i].done && e.sets[i].planSec) || e.sets[i].sec || 45
-    const owner = { idx, i }
+    const { ownerKey, localReady, activeSessionToken } = useStore.getState()
+    const owner = { idx, i, context: { ownerKey, localReady, activeSessionToken } }
     useUI.getState().startWork(plan, exerciseNameText(exOr(e.id)), holdDone(owner, plan), { idx, i, id: e.id })
     // After startWork: a hold it displaced has already written its seconds to its own row.
     holdAt = { owner, idx, i }
@@ -1494,6 +1494,11 @@ function ActiveWorkout() {
   // What a hold hands back to its row: on its end, its Done, or a rest displacing it. Also bound
   // again to a hold restored after a reload (useUI.bindWork, below).
   const holdDone = (owner, plan) => (elapsed, { abandoned = false, chimed = false } = {}) => {
+    const matches = () => {
+      const current = useStore.getState(), context = owner.context
+      return context?.localReady && current.localReady && context.ownerKey === current.ownerKey && context.activeSessionToken === current.activeSessionToken
+    }
+    if (!matches()) return
     const { idx } = owner
     // The row may have moved while the hold ran (a set copied or removed above it): write to
     // where it is now. holdAt is that place (deleteActiveSet, copyActiveSet).
@@ -1509,11 +1514,11 @@ function ActiveWorkout() {
       // that displaces the hold, so the hand-back lands on a row that is already ticked. It
       // still wants the seconds (that is what was held, not the target), but a finished row has
       // no use for a plan set aside.
-      mutEntry(idx, en => { if (en.sets[i].planSec == null && !en.sets[i].done) en.sets[i].planSec = plan; en.sets[i].sec = elapsed })
+      mutEntry(idx, en => { if (!matches()) return; if (en.sets[i].planSec == null && !en.sets[i].done) en.sets[i].planSec = plan; en.sets[i].sec = elapsed })
       return
     }
-    mutEntry(idx, en => { en.sets[i].sec = elapsed; delete en.sets[i].planSec })
-      if (!useStore.getState().S.active.entries[idx].sets[i].done) toggle(idx, i, undefined, { quiet: chimed })
+    mutEntry(idx, en => { if (!matches()) return; en.sets[i].sec = elapsed; delete en.sets[i].planSec })
+      if (matches() && !useStore.getState().S.active.entries[idx].sets[i].done) toggle(idx, i, undefined, { quiet: chimed })
   }
   // A hold that came back from a reload has no handler yet: this screen gives it its own.
   const holdDoneRef = useRef(holdDone)
@@ -1522,7 +1527,7 @@ function ActiveWorkout() {
     useUI.getState().bindWork?.(wk => {
       // From here on it is tracked like a hold started on this screen (holdAt), so a set copied or
       // removed above it moves it along.
-      const owner = { idx: wk.owner.idx, i: wk.owner.i }
+      const owner = { idx: wk.owner.idx, i: wk.owner.i, context: wk.context }
       holdAt = { owner, idx: owner.idx, i: owner.i }
       return (...a) => holdDoneRef.current(owner, wk.total)(...a)
     })
@@ -1699,33 +1704,6 @@ function ActiveWorkout() {
       document.removeEventListener('keydown', down)
       document.removeEventListener('keyup', up)
       document.removeEventListener('pointerdown', pointer, true)
-    }
-  }, [])
-
-  // Live-presence heartbeat so the admin dashboard can show who's training now. Signed-in only —
-  // guests have no server session. Reads fresh state each tick so progress stays current.
-  useEffect(() => {
-    if (!useStore.getState().user || editing) return
-    let stopped = false
-    const ping = active => {
-      const A2 = useStore.getState().S.active
-      if (!A2) return
-      const u = supersetUnits(A2.entries)
-      const c = Math.min(A2.cur, Math.max(0, A2.entries.length - 1))
-      const ui = u.findIndex(x => x.includes(c))
-      const tot = setUnitsTotal(A2.entries)
-      api('/api/activity', { method: 'POST', body: JSON.stringify({
-        active, name: A2.name, exIdx: ui + 1, exTotal: u.length,
-        setsDone: setsDoneActive(A2), setsTotal: tot, startedAt: A2.start
-      }) }).catch(() => {})
-    }
-    ping(true)
-    const iv = setInterval(() => { if (!stopped) ping(true) }, 20000)
-    return () => {
-      stopped = true; clearInterval(iv)
-      // best-effort "left" signal: the beacon survives a tab close, fetch covers in-app nav
-      beacon('/api/activity', { active: false })
-      api('/api/activity', { method: 'POST', body: JSON.stringify({ active: false }) }).catch(() => {})
     }
   }, [])
 

@@ -18,7 +18,6 @@ import { useListReorder, moved } from '../lib/use-list-reorder.js'
 import { glyphOf, DEFAULT_GLYPH } from '../lib/glyphs.js'
 import { DEMO } from '../lib/demo.js'
 import { MOBILE } from '../lib/mobile.js'
-import { coachAvailable } from '../lib/coach.js'
 import { queueOf, queueView } from '../lib/queue.js'
 import { deriveSessionName } from '../lib/session-merge.js'
 import { markUndone, undoMarks } from '../lib/sync-merge.js'
@@ -126,7 +125,6 @@ export default function Plan() {
   const S = useStore(s => s.S)
   const update = useStore(s => s.update)
   const config = useStore(s => s.config)
-  const coachMode = useStore(s => s.coachLocal?.mode)
   const user = useStore(s => s.user)
   const fileRef = useRef(null)
   const [view, setViewState] = useState(readView)
@@ -138,7 +136,6 @@ export default function Plan() {
   /* The Coach's way in from Plan. It used to be a banner over the week; it is the last entry of the
      Plan menu now, gated by the same predicate every other Coach surface uses, so an instance
      without the feature sees exactly the menu it would have without it. */
-  const showCoach = coachAvailable(config, user, { demo: DEMO, mobile: MOBILE, coachMode })
 
   // Share, print, import, starter plans and the Coach: one menu behind the header button, so the
   // two views below are only about the plan itself.
@@ -152,7 +149,6 @@ export default function Plan() {
         { icon: 'note', label: t('Print / Save as PDF'), disabled: !has, onClick: printWholePlan },
         { icon: 'download', label: t('Import a plan file'), onClick: () => fileRef.current?.click() },
         { icon: 'clipboard', label: t('Load starter plan'), onClick: starterPlanSheet },
-        showCoach && { icon: 'sparkles', label: t('Coach'), sub: t('Plan design and reviews, from your own training'), onClick: () => nav('/coach') },
       ],
     })
   }
@@ -240,7 +236,7 @@ function Schedule({ S, update, nav, mode }) {
   const replacesOwn = ownSeq.length > 0 && (ownSeq.length !== seq.length || ownSeq.some((id, i) => id !== seq[i]))
   const adopt = () => confirmSheet({
     title: t('Use this rotation?'),
-    message: t('Your coach gives up control of this week: openGym owns the queue from here on and repeats these sessions by itself once they are all done. A new week from the coach’s app would replace this rotation.')
+    message: t('openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.')
       + (replacesOwn ? ' ' + t('Your own loop gets replaced.') : ''),
     confirmText: t('Use this rotation'),
     onConfirm: () => update(s => saveRotation(s, seq, '')),

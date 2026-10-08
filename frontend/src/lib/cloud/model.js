@@ -24,10 +24,10 @@ export const MAX_DOCUMENT_DEPTH = 20
 // Explicit inventory: adding a persistent setting requires a deliberate transport decision.
 const policies = {
   sync: `unit restSec restPauseSec sound soundOnSilent vibrateOnSilent timerFlash timedSetOvertime keepAwake lang theme accent accentCustom body targetW bodyweight routines week dayPlan queue rotation scheduleMode exWeights workouts customEx gifSize heatmapMetric workoutView wc hints reminder effort equipProfiles activeEquipId equipFilterOn exNotes favEx weekStart wdec speedUnit barWeights plates loadKind gymCards lastGymCardId checkIn showWeightCard weighIn connStatus startFrom enParens enOnly logRef balanceTemplate balanceOverrides vibrate classicChime showRir edited undone deleted`,
-  local: 'active coach autoBackup langAuto',
+  local: 'active autoBackup langAuto',
   derived: '_ts routineOrder',
   legacy: 'unitSet resetAt resetIds',
-  removed: '_rev _wid _wids _unstamped _prior',
+  removed: 'coach _rev _wid _wids _unstamped _prior',
 }
 export const FIELD_POLICY = Object.freeze(Object.fromEntries(Object.entries(policies).flatMap(([policy, fields]) => fields.split(' ').map(field => [field, policy]))))
 
@@ -39,4 +39,13 @@ export function makeEnvelope(owner, state) {
   return { schemaVersion: 1, ownerKey: owner.ownerKey, localRevision: 0, cloudGeneration: 1,
     state: structuredClone(state), remoteMetadataByPath: {}, pendingOperations: [], pendingJobs: [],
     adoptionDecision: null, recoveryCopies: [], lastConfirmedControl: null, localMetadata: { activeSessionToken: null } }
+}
+
+// Proven Firebase copies belong only to that exact owner. Guest adoption is explicit.
+export function recoverableBy(copy, owner) {
+  if (!copy.ownerKey) return copy.identityProvider !== 'firebase'
+  return copy.ownerKey === owner.ownerKey || (copy.reason === 'guest-adoption' && copy.ownerKey === makeOwner(owner.projectId).ownerKey)
+}
+export function trainingState(state) {
+  return Object.fromEntries(Object.entries(structuredClone(state)).filter(([key]) => Object.hasOwn(FIELD_POLICY, key) && FIELD_POLICY[key] !== 'removed'))
 }

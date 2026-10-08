@@ -54,7 +54,7 @@ beforeEach(() => {
     reminder: { on: false, time: '17:30' },
   }
   mocks.user = null
-  mocks.sync = null
+  mocks.sync = { local: 'saved', cloud: 'unconfigured' }
   mocks.MOBILE = false
   mocks.push = false
   mocks.pushOn = false
@@ -123,10 +123,10 @@ describe('the root', () => {
     expect(rowTitled('Workout').querySelector('.lrow-v').textContent).toBe('No rest timer · Cards')
   })
 
-  it('signed in, Reminders is there and the card names the account; on the phone app the Coach too', () => {
-    mocks.user = { id: 'u1', name: 'Dana' }
+  it('the card names the account and only the native app offers reminders', () => {
+    mocks.user = { uid: 'u1', email: 'dana@example.com', displayName: 'Dana' }
     mount()
-    expect(titles()).toContain('Reminders')
+    expect(titles()).not.toContain('Reminders')
     expect(titles()).not.toContain('AI Coach')
     expect(host.querySelector('.sp-acct .lrow-t').textContent).toBe('Dana')
     expect(host.querySelector('.sp-avatar').textContent).toBe('D')
@@ -134,17 +134,16 @@ describe('the root', () => {
     mocks.MOBILE = true
     mount()
     expect(titles()).toContain('Reminders')
-    expect(titles()).toContain('AI Coach')
+    expect(titles()).not.toContain('AI Coach')
     expect(host.querySelector('.sp-acct .lrow-t').textContent).toBe('This phone')
   })
 
-  it('a row opens its page; the Coach row opens the phone Coach setup; the card opens Account', () => {
+  it('a row opens its page and the card opens Account', () => {
     mocks.MOBILE = true
     mount()
     act(() => rowTitled('Timer alerts').click())
-    act(() => rowTitled('AI Coach').click())
     act(() => host.querySelector('.sp-acct').click())
-    expect(mocks.navs).toEqual([['/settings/alerts'], ['/coach/setup'], ['/settings/account']])
+    expect(mocks.navs).toEqual([['/settings/alerts'], ['/settings/account']])
   })
 
   it('searches every setting and a hit goes to its page with the row to flash', () => {
@@ -171,10 +170,10 @@ describe('the root', () => {
 describe('the search lands on a row', () => {
   const scenarios = {
     'guest in a browser': () => {},
-    'signed in, browser without push': () => { mocks.user = { id: 'u1', name: 'Dana' }; mocks.sync = { status: 'ok', server: 'https://gym.example' } },
+    'signed in, browser without push': () => { mocks.user = { uid: 'u1', email: 'dana@example.com', displayName: 'Dana' }; mocks.sync = { local: 'saved', cloud: 'synced' } },
     'phone, reminder off': () => { mocks.MOBILE = true },
     'phone, reminder and nudge on': () => { mocks.MOBILE = true; mocks.S.reminder = { on: true, time: '17:30', nudge: true }; mocks.S.autoBackup = true },
-    'phone paired with a server': () => { mocks.MOBILE = true; mocks.user = { id: 'u1', name: 'Dana' }; mocks.sync = { status: 'ok', server: 'https://gym.example' } },
+    'phone paired with a server': () => { mocks.MOBILE = true; mocks.user = { uid: 'u1', email: 'dana@example.com', displayName: 'Dana' }; mocks.sync = { local: 'saved', cloud: 'synced' } },
   }
   const ctxNow = () => ({
     ...guestWeb, user: mocks.user, mobile: mocks.MOBILE, pushOK: !mocks.MOBILE && mocks.push,
@@ -197,43 +196,28 @@ describe('the search lands on a row', () => {
 
   it('finds the rows that used to be missing', () => {
     const tr = s => s
-    const web = { ...guestWeb, user: { id: 'u' }, synced: true, pushOK: true, reminderOn: true, nudge: true }
+    const web = { ...guestWeb, mobile: true, user: { uid: 'u' }, synced: true, reminderOn: true, nudge: true }
     expect(searchSettings('reminder time', web, tr).map(h => h.title)).toEqual(['Reminder time'])
     expect(searchSettings('tone', web, tr).map(h => h.title)).toContain('Nudge tone')
-    expect(searchSettings('test notification', web, tr).map(h => h.title)).toEqual(['Send test notification'])
-    expect(searchSettings('server', web, tr).map(h => h.title)).toContain('Sync now')
+    expect(searchSettings('test notification', web, tr)).toEqual([])
+    expect(searchSettings('cloud', web, tr).map(h => h.title)).toContain('Sync now')
     expect(searchSettings('sync', web, tr).map(h => h.title)).toContain('Sync now')
     expect(searchSettings('loop', web, tr).map(h => h.title)).toContain('How you train')
     expect(searchSettings('swipe', web, tr)[0].title).toBe('Swipe actions')
     expect(searchSettings('gesture', web, tr).map(h => h.title)).toEqual(['Swipe actions'])
-    expect(searchSettings('home screen', web, tr).map(h => h.title)).toEqual(['In Safari: Share → Add to Home Screen'])
-    expect(searchSettings('install', { ...web, androidWeb: true }, tr).map(h => h.title)).toEqual(['In Chrome: ⋮ menu → Add to Home screen'])
+    expect(searchSettings('home screen', { ...web, mobile: false }, tr).map(h => h.title)).toEqual(['In Safari: Share → Add to Home Screen'])
+    expect(searchSettings('install', { ...web, mobile: false, androidWeb: true }, tr).map(h => h.title)).toEqual(['In Chrome: ⋮ menu → Add to Home screen'])
     expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true, autoBackup: true }, tr).map(h => h.title)).toEqual(['Backup folder'])
     expect(searchSettings('backup folder', { ...guestWeb, mobile: true, android: true }, tr)).toEqual([])
   })
 
-  it('a web reminder row waits for push to answer, and flashes Push notifications when it stays off', async () => {
-    vi.useFakeTimers()
-    try {
-      mocks.user = { id: 'u1', name: 'Dana' }
-      mocks.push = true
-      mocks.S.reminder = { on: true, time: '17:30' }
-      mount('reminders', 'Nudge me when I skip a planned workout', 'Push notifications')
-      await act(async () => { await vi.advanceTimersByTimeAsync(1600) })
-      expect(rowTitled('Push notifications').classList.contains('sp-flash')).toBe(true)
-      expect(mocks.toast).toHaveBeenCalledWith('Turn on push notifications first.')
-
-      // push on: the row appears once the server answers, and that row is the one flashed
-      mocks.pushOn = true
-      mocks.toast.mockClear()
-      act(() => root.render(null))
-      mount('reminders', 'Nudge me when I skip a planned workout', 'Push notifications')
-      await act(async () => { await vi.advanceTimersByTimeAsync(50) })
-      expect(rowTitled('Nudge me when I skip a planned workout').classList.contains('sp-flash')).toBe(true)
-      await act(async () => { await vi.advanceTimersByTimeAsync(1600) })
-      expect(mocks.toast).not.toHaveBeenCalled()
-    } finally { vi.useRealTimers() }
+  it('keeps Web Push and Coach absent from search on every platform', () => {
+    for (const mobile of [false, true]) {
+      expect(searchSettings('push notifications', { ...guestWeb, mobile }, s => s)).toEqual([])
+      expect(searchSettings('coach', { ...guestWeb, mobile }, s => s)).toEqual([])
+    }
   })
+
 })
 
 describe('the search query', () => {
@@ -263,7 +247,7 @@ describe('the pages', () => {
   it('each search entry is a row on its page (guest in a browser)', () => {
     const byPage = {}
     for (const e of SEARCH) if (pageVisible(PAGES[e.page].parent || e.page, guestWeb) && (!e.when || e.when(guestWeb))) (byPage[e.page] ||= []).push(e.title)
-    expect(Object.keys(byPage).sort()).toEqual(['about', 'advanced', 'alerts', 'data', 'equipment', 'look', 'plan', 'units', 'workout'])
+    expect(Object.keys(byPage).sort()).toEqual(['about', 'account', 'advanced', 'alerts', 'data', 'equipment', 'look', 'plan', 'units', 'workout'])
     for (const [page, want] of Object.entries(byPage)) {
       mount(page)
       const have = titles()
@@ -377,10 +361,10 @@ describe('searchSettings', () => {
     expect(searchSettings('nudge', guestWeb, tr)).toEqual([])                              // no Reminders for a web guest
     expect(searchSettings('nudge', { ...guestWeb, user: { id: 'u' } }, tr)).toEqual([])         // no push in this browser
     expect(searchSettings('nudge', { ...guestWeb, user: { id: 'u' }, pushOK: true }, tr)).toEqual([])   // the reminder is off
-    expect(searchSettings('nudge', { ...guestWeb, user: { id: 'u' }, pushOK: true, reminderOn: true }, tr).map(h => h.title)).toEqual(['Nudge me when I skip a planned workout'])
+    expect(searchSettings('nudge', { ...guestWeb, user: { uid: 'u' }, pushOK: true, reminderOn: true }, tr)).toEqual([])
     expect(searchSettings('nudge', { ...guestWeb, mobile: true, reminderOn: true }, tr).map(h => h.title)).toEqual(['Nudge me when I skip a planned workout'])
     expect(searchSettings('coach', guestWeb, tr)).toEqual([])
-    expect(searchSettings('coach', { ...guestWeb, mobile: true }, tr)[0].page).toBe('coach')
+    expect(searchSettings('coach', { ...guestWeb, mobile: true }, tr)).toEqual([])
     expect(searchSettings('vibrate silent', { ...guestWeb, mobile: true, android: true }, tr).map(h => h.title)).toEqual(['Vibrate on silent too'])
     expect(searchSettings('   ', guestWeb, tr)).toEqual([])
   })
@@ -415,7 +399,7 @@ describe('searchSettings', () => {
       expect(titles).not.toContain('Weight and reps buttons')
       expect(titles).not.toContain('Superset buttons in the exercise header')
     } finally { await setLang('en') }
-    expect(searchSettings('tone', { ...guestWeb, user: { id: 'u' }, pushOK: true, reminderOn: true, nudge: true }, s => s).map(h => h.title)).toContain('Nudge tone')
+    expect(searchSettings('tone', { ...guestWeb, mobile: true, reminderOn: true, nudge: true }, s => s).map(h => h.title)).toContain('Nudge tone')
     expect(searchSettings('json', guestWeb, s => s).map(h => h.title)).toContain('Export backup (JSON)')
   })
 })

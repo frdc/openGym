@@ -15,10 +15,9 @@ import { initBackButton } from './lib/back.js'
 import { useWakeLock } from './lib/wakelock.js'
 import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
-import { syncPushSubscription } from './lib/push.js'
 import { MOBILE } from './lib/mobile.js'
 import { exitWorkoutEdit, startFlow } from './sheets.jsx'
-import Icon from './components/Icon.jsx'
+import LocalStartup from './components/LocalStartup.jsx'
 import TabBar from './components/TabBar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Modals from './components/Modals.jsx'
@@ -26,7 +25,6 @@ import Toast from './components/Toast.jsx'
 import SyncBanner from './components/SyncBanner.jsx'
 import RestTimer from './components/RestTimer.jsx'
 import TimerFlash from './components/TimerFlash.jsx'
-import { openDeviceLinkRedeem } from './components/Passkeys.jsx'
 import Login from './views/Login.jsx'
 import MobileOnboarding from './views/MobileOnboarding.jsx'
 import Home from './views/Home.jsx'
@@ -41,10 +39,6 @@ import Muscles from './views/Muscles.jsx'
 import StructuralBalance from './views/StructuralBalance.jsx'
 import ProgressPhotos from './views/ProgressPhotos.jsx'
 import { SettingsRoute } from './views/Settings.jsx'
-import Admin from './views/Admin.jsx'
-import CoachChat from './views/CoachChat.jsx'
-import CoachIntake from './views/CoachIntake.jsx'
-import CoachSetup from './views/CoachSetup.jsx'
 
 // last known scrollY per route, so back-navigation can put the page where it was
 const scrollPositions = new Map()
@@ -125,23 +119,6 @@ function Shell() {
   // Click-drag a horizontal chip strip to scroll it sideways (lib/hchips.js) — on a desktop
   // browser there's otherwise no way to reach the filters past the edge.
   useEffect(() => installChipDrag(), [])
-  // Once per signed-in boot, hand the server this browser's push subscription again (see
-  // lib/push.js): a subscription the instance lost is back before the next reminder is due,
-  // with nobody having to visit Settings. Web only — the APK has no service worker.
-  useEffect(() => {
-    if (MOBILE || !user || !ready) return
-    syncPushSubscription().catch(() => {})
-  }, [user?.id, ready])
-  // Opened from a device-link QR code (#95): once boot knows who is here, the sheet that redeems
-  // it opens by itself — over the sign-in screen, or over the app for a guest or a signed-in
-  // browser. Once per visit; closed, the code stays for the sign-in screen's own button.
-  const linkCode = useStore(s => s.linkCode)
-  const linkOffered = useRef(false)
-  useEffect(() => {
-    if (!ready || !linkCode || linkOffered.current) return
-    linkOffered.current = true
-    openDeviceLinkRedeem()
-  }, [ready, linkCode])
   useEffect(() => {
     const onScroll = () => {
       // Modals pins the body while a sheet is open; scrollY is 0 then, not a position.
@@ -179,16 +156,10 @@ function Shell() {
   }, [inWorkout])
   // The chat owns the bottom of the screen as well: its composer sits where the tabs would be.
   // The first-launch card has no tabs either: they changed the route behind it.
-  const noTabs = inWorkout || loc.pathname === '/coach' || needsMobileOnboarding
+  const noTabs = inWorkout || needsMobileOnboarding
 
   const authed = user || isGuest
-  if (!localReady) return (
-    <div id="app">
-      <div style={{ paddingTop: '44vh', display: 'flex', justifyContent: 'center', fontSize: 34, color: 'var(--label-3)' }}>
-        <Icon name="dumbbell" />
-      </div>
-    </div>
-  )
+  if (!localReady) return <LocalStartup />
 
   return (
     <>
@@ -213,14 +184,6 @@ function Shell() {
               <Route path="/progress-photos" element={<ProgressPhotos />} />
               <Route path="/settings" element={<SettingsRoute />} />
               <Route path="/settings/:page" element={<SettingsRoute />} />
-              {/* The Coach screens gate themselves on the instance config; the routes exist
-                  unconditionally so a deep link from a notification lands somewhere sane
-                  rather than on the catch-all. */}
-              <Route path="/coach" element={<CoachChat />} />
-              <Route path="/coach/intake" element={<CoachIntake />} />
-              <Route path="/coach/proposal" element={<Navigate to="/coach" replace />} />
-              <Route path="/coach/setup" element={<CoachSetup />} />
-              <Route path="/admin" element={user?.admin ? <Admin /> : <Navigate to="/home" replace />} />
               <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
           )}

@@ -54,7 +54,7 @@ export async function migrateLegacy({ storage, legacyReader, owner, newId: _newI
       const value = source.ownerMetadata?.[field]
       if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) metadata[field] = value
     }
-    copies.push({ prepared, copy: { recoveryId, sourceId: source.sourceId, fingerprint, state: structuredClone(source.state), ownerMetadata: metadata, status: 'pending', reason } })
+    copies.push({ prepared, copy: { recoveryId, sourceId: source.sourceId, fingerprint, ...(source.identityProvider === 'firebase' ? { identityProvider: 'firebase', ownerKey: source.ownerKey } : {}), state: structuredClone(source.state), ownerMetadata: metadata, status: 'pending', reason } })
   }
   const committed = await storage.commit(owner.ownerKey, current => {
     const next = structuredClone(current || makeEnvelope(owner, DEF))

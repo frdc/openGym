@@ -47,9 +47,10 @@ public class RestAlertPlugin extends Plugin {
         return inFront;
     }
 
-    static void emit(String type, long endsAt, long totalMs, long leftMs, boolean paused) {
+    static void emit(String timerToken, String type, long endsAt, long totalMs, long leftMs, boolean paused) {
         if (instance == null) return;
         JSObject data = new JSObject();
+        data.put("timerToken", timerToken);
         data.put("type", type);
         data.put("endsAt", endsAt);
         data.put("totalMs", totalMs);
@@ -91,7 +92,8 @@ public class RestAlertPlugin extends Plugin {
                 call.getString("importance", "high"),
                 Boolean.TRUE.equals(call.getBoolean("localOnly", Boolean.FALSE)),
                 call.getString("countdownTitle", "Rest"),
-                number(call, "totalMs", 0)
+                number(call, "totalMs", 0),
+                call.getString("timerToken", "")
         );
         call.resolve();
     }
@@ -131,7 +133,7 @@ public class RestAlertPlugin extends Plugin {
             call.reject("no context");
             return;
         }
-        RestAlert.cancel(ctx.getApplicationContext(), (int) number(call, "id", RestAlert.NOTIFICATION_ID));
+        RestAlert.cancel(ctx.getApplicationContext(), (int) number(call, "id", RestAlert.NOTIFICATION_ID), call.getString("timerToken", ""));
         call.resolve();
     }
 
@@ -148,12 +150,17 @@ public class RestAlertPlugin extends Plugin {
             return;
         }
         Context app = ctx.getApplicationContext();
+        String timerToken = call.getString("timerToken", "");
+        synchronized (RestAlert.class) {
+        if (!RestAlert.matchesTimer(app, timerToken)) { call.resolve(); return; }
         RestAlert.cancelAlarmOnly(app, (int) number(call, "id", RestAlert.NOTIFICATION_ID));
         Intent i = new Intent(app, RestTimerService.class);
         i.setAction(RestAlert.ACTION_HOLD);
+        i.putExtra("timerToken", timerToken);
         i.putExtra("leftMs", number(call, "leftMs", 0));
         i.putExtra("totalMs", number(call, "totalMs", 0));
         try { app.startService(i); } catch (Exception ignored) { /* no countdown on screen to hold */ }
+        }
         call.resolve();
     }
 

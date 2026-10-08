@@ -2,26 +2,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { DEMO } from '../lib/demo.js'
-import { connectionView, actionLabel, syncNowWithToast, pairAgain, connectServer, signInAgain, useOnline } from './ServerSync.jsx'
+import { connectionView, actionLabel, syncNowWithToast, signInAgain, useOnline } from './ServerSync.jsx'
 import Icon from './Icon.jsx'
 
-// How long a change may sit unsent while the server is reachable before it is worth a word: the
-// push after an edit, or the one boot owes, lands well within this, and saying "not synced" for
-// every one of them would only teach people to ignore the line.
+// Brief cloud writes get a grace period; local write failures are shown immediately.
 export const PENDING_GRACE_MS = 5000
 
-/* The connection, always in view while the app is not connected to a server: offline, the server
-   unreachable or answering with an error (its HTTP code, for whoever runs it), a server that no
-   longer accepts this device, an answer that is not openGym's, and no server at all — a phone
-   kept local, a guest in a browser. It cannot be dismissed; it goes when the condition does — or
-   when Settings → "Show connection status" is off, and then a dot on Home says a problem is there.
-   The first ones say what is wrong and that the changes are kept here, with the one thing to do
-   about it (retry, pair again, sign in); the deliberate local setup only says so, quietly.
-
-   Pinned under the status bar, above the page and the pinned workout and chat headers, below the
-   tab bar, the timer and every sheet. Its height goes into --conn on the root, which the page's
-   top padding and those headers add in, so it takes its own room instead of covering a control.
-   The public demo has no server by design and says so itself; it never shows there. */
+/* Local durability and cloud synchronization have separate states. The banner shares its
+   status with Home's indicator when hidden in Settings. It reserves space with --conn so
+   workout controls stay visible; the explicit development demo supplies its own status. */
 // What the indicator would say right now, and whether it would say it: shared by the banner and
 // by the dot that stands in for it when the banner is switched off (useConnectionTrouble).
 function useConnection() {
@@ -31,18 +20,18 @@ function useConnection() {
   const onboarding = useStore(s => s.needsMobileOnboarding)
   const online = useOnline()
   const [waited, setWaited] = useState(false)
-  const status = sync?.status
+  const status = sync?.local === 'error' ? 'local-error' : sync?.local === 'saving' ? 'saving' : sync?.cloud
   useEffect(() => {
     setWaited(false)
-    if (status !== 'pending') return
+    if (!['pending', 'syncing'].includes(status)) return
     const tm = setTimeout(() => setWaited(true), PENDING_GRACE_MS)
     return () => clearTimeout(tm)
   }, [status])
 
-  const view = connectionView(sync, { online })
+  const view = connectionView({ ...sync, guest }, { online })
   // Signed out on the web, the sign-in screen is the whole app: it hears only that the server
   // ended the session, and that the changes are still here.
-  const show = !DEMO && !onboarding && !!view?.banner && (!!user || guest || status === 'auth') && (status !== 'pending' || waited)
+  const show = !DEMO && !onboarding && !!view?.banner && (!!user || guest || status === 'auth') && (!['pending', 'syncing'].includes(status) || waited)
   return { view, show, user, status }
 }
 
@@ -84,8 +73,8 @@ export default function SyncBanner() {
   if (!show) return null
   const act = {
     retry: () => { syncNowWithToast() },
-    pair: pairAgain,
-    connect: connectServer,
+    local: syncNowWithToast,
+    review: () => nav('/settings/account'),
     // Signed in, or with a session the server ended: the passkey right here. A guest goes to
     // Settings, where signing in sits next to creating a profile.
     signin: () => (user || status === 'auth' ? signInAgain() : nav('/settings/account')),

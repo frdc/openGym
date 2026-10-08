@@ -1,8 +1,19 @@
 // @vitest-environment happy-dom
 // Closing the editor of a saved workout: a save prompt still open after the editor already
 // closed (a route exit racing the first Save) must not offer to delete the workout it saved.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -18,36 +29,36 @@ const saved = () => ({
   entries: [{ id: A, target: { mode: 'reps', reps: 8 }, sets: [{ w: 45, r: 8, done: true }] }],
 })
 
-function renderTop() {
+async function renderTop() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const button = (host, label) => [...host.querySelectorAll('button')].find(b => b.textContent.trim() === label)
 
 describe('closing the saved-workout editor', () => {
   let navigated
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     navigated = []
     setNav(to => { navigated.push(to) })
     useUI.setState({ sheets: [], toastMsg: '' })
-    useStore.setState(s => ({ S: { ...s.S, workouts: [saved()], routines: [], active: null } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [saved()], routines: [], active: null } }))
     useStore.getState().update(S => { editCompletedSession(S, 'w-old'); S.active.entries[0].sets[0].w = 50 })
     document.body.innerHTML = ''
   })
   afterEach(() => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }) })
 
-  it('a second ask while the prompt is open joins it: one prompt, one save, the latest way out', () => {
+  it('a second ask while the prompt is open joins it: one prompt, one save, the latest way out', async () => {
     exitWorkoutEdit()
     exitWorkoutEdit(() => navigated.push('/stats'))   // the route exit that raced the X
     expect(useUI.getState().sheets.length).toBe(1)
-    const host = renderTop()
-    act(() => { button(host, 'Save changes').click() })
+    const host = (await renderTop())
+    await act(async () => { button(host, 'Save changes').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active).toBeNull()
     expect(useStore.getState().S.workouts[0].entries[0].sets[0].w).toBe(50)
     expect(useUI.getState().toastMsg).toBe('Workout updated')
@@ -56,32 +67,32 @@ describe('closing the saved-workout editor', () => {
     expect(navigated).toEqual(['/stats'])
   })
 
-  it('a stale prompt left open after the editor closed only leaves: no delete offer, no false toast', () => {
+  it('a stale prompt left open after the editor closed only leaves: no delete offer, no false toast', async () => {
     exitWorkoutEdit()
-    const stale = renderTop()
+    const stale = (await renderTop())
     // The editor closes some other way (a save from the bottom button) while the prompt is up.
-    act(() => { saveWorkoutEdits(() => navigated.push('/history')) })
+    await act(async () => { saveWorkoutEdits(() => navigated.push('/history')); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().toastMsg).toBe('Workout updated')
-    act(() => { button(stale, 'Save changes').click() })
+    await act(async () => { button(stale, 'Save changes').click(); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().sheets.length).toBe(0)
     expect(useUI.getState().toastMsg).toBe('Workout updated')
     expect(useStore.getState().S.workouts).toHaveLength(1)
     expect(navigated).toEqual(['/history', '/history'])
   })
 
-  it('after a prompt was answered, the next close asks afresh', () => {
+  it('after a prompt was answered, the next close asks afresh', async () => {
     exitWorkoutEdit()
-    const h = renderTop()
-    act(() => { button(h, 'Keep editing').click() })
+    const h = (await renderTop())
+    await act(async () => { button(h, 'Keep editing').click(); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().sheets.length).toBe(0)
     exitWorkoutEdit()
     expect(useUI.getState().sheets.length).toBe(1)
   })
 
-  it('with no editor open, closing and saving open nothing', () => {
+  it('with no editor open, closing and saving open nothing', async () => {
     useStore.getState().discardHistoryEdit()
     exitWorkoutEdit()
-    saveWorkoutEdits()
+    await saveWorkoutEdits()
     expect(useUI.getState().sheets.length).toBe(0)
     expect(navigated).toEqual(['/history', '/history'])
   })

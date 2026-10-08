@@ -52,7 +52,7 @@ describe('granular cloud codec', () => {
     for (const secret of ['private', '"active"', '_rev', 'resetIds', '"media"', '"img"']) expect(wire).not.toContain(secret)
     const back = decodeState(documents, { defaults: DEF, generation: 1, localOverlay })
     expect(back.active).toEqual(s.active)
-    expect(back.coach).toEqual(s.coach)
+    expect(back).not.toHaveProperty('coach')
     expect(back.customEx).toEqual(s.customEx)
     expect(back.workouts).toEqual(s.workouts)
   })

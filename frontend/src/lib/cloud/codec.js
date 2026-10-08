@@ -52,6 +52,7 @@ export function encodeState(state, options) {
   const documents = {}, localOverlay = { fields: {}, entities: {}, unmigratedWorkouts: [] }
   for (const [key, value] of Object.entries(state)) {
     if (!own(FIELD_POLICY, key)) throw new Error(`unclassified-field:${key}`)
+    if (key === 'coach') continue
     if (['local', 'legacy', 'removed', 'derived'].includes(FIELD_POLICY[key])) put(localOverlay.fields, key, copy(value))
   }
   const add = (path, payload, keys = [], numeric = false, deletion = {}) => {
@@ -135,6 +136,7 @@ function convertedPayload(path, rec, displayUnit) {
 }
 function restoreOverlay(state, overlay = {}) {
   Object.assign(state, copy(overlay.fields || {}))
+  delete state.coach
   for (const field of Object.keys(lists)) for (const entry of state[field] || []) {
     const extra = overlay.entities?.[entityPath(field, field === 'bodyweight' ? entry.d : entry.id)]
     if (!extra) continue

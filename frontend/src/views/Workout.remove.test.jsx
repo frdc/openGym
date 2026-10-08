@@ -1,4 +1,15 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -25,29 +36,29 @@ let container
 let sheetRoot
 let sheetContainer
 
-function setActive(entries, cur = 0) {
+async function setActive(entries, cur = 0) {
   const S = clone(DEF)
   S.wc = { ...S.wc, exerciseButtons: true }   // the removal button is opt-in now; the menu path is covered in Workout.test.jsx
   S.active = {
     id: 'remove-test', d: '2026-08-11', start: Date.now(), routineId: null,
     name: 'Remove test', bw: null, cur, entries
   }
-  useStore.setState({ S, user: null })
+  await uiRuntime.fixture.applySnapshot({ S, user: null })
 }
 
-function renderWorkout(entries) {
-  setActive(entries)
+async function renderWorkout(entries) {
+  await setActive(entries)
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  act(() => root.render(<MemoryRouter><Workout /></MemoryRouter>))
+  await act(async () => { await root.render(<MemoryRouter><Workout /></MemoryRouter>); await uiRuntime.fixture.flush(); })
 }
 
 function removeButton() {
   return [...container.querySelectorAll('button')].find(button => button.textContent.includes('Remove exercise'))
 }
 
-function renderTopSheet() {
+async function renderTopSheet() {
   if (sheetRoot) act(() => sheetRoot.unmount())
   if (sheetContainer) sheetContainer.remove()
   const sheet = useUI.getState().sheets.at(-1)
@@ -55,17 +66,17 @@ function renderTopSheet() {
   sheetContainer = document.createElement('div')
   document.body.appendChild(sheetContainer)
   sheetRoot = createRoot(sheetContainer)
-  act(() => sheetRoot.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await sheetRoot.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return sheetContainer
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers()
   localStorage.clear()
   useUI.getState().stopRest()
   useUI.getState().stopWork()
   useUI.setState({ sheets: [], toastMsg: '', timer: null, work: null })
-  useStore.setState({ S: clone(DEF), user: null })
+  await uiRuntime.fixture.applySnapshot({ S: clone(DEF), user: null })
   root = null
   container = null
   sheetRoot = null
@@ -84,18 +95,18 @@ afterEach(() => {
 })
 
 describe('active-session exercise removal', () => {
-  it('disables removal for the whole duration of a timed hold', () => {
-    renderWorkout([entry('1001')])
+  it('disables removal for the whole duration of a timed hold', async () => {
+    await renderWorkout([entry('1001')])
     expect(removeButton()).toBeTruthy()
     expect(removeButton().disabled).toBe(false)
 
-    act(() => useUI.getState().startWork(30, 'Hold', vi.fn()))
+    await act(async () => { await useUI.getState().startWork(30, 'Hold', vi.fn()); await uiRuntime.fixture.flush(); })
 
     expect(removeButton().disabled).toBe(true)
   })
 
-  it('cancels a pending timed callback before indexes shift and cleans a one-member group', () => {
-    setActive([entry('1001', 'sg-1'), entry('1002', 'sg-1'), entry('1003')], 1)
+  it('cancels a pending timed callback before indexes shift and cleans a one-member group', async () => {
+    await setActive([entry('1001', 'sg-1'), entry('1002', 'sg-1'), entry('1003')], 1)
     expect(useStore.getState().S.active.cur).toBe(1)
     const wrongWrite = vi.fn(elapsed => {
       useStore.getState().update(s => { s.active.entries[0].sets[0].sec = elapsed })
@@ -114,75 +125,75 @@ describe('active-session exercise removal', () => {
     expect(active.entries[0].sets[0].sec).toBeUndefined()
   })
 
-  it('cancels a running rest countdown when the exercise it belongs to is removed', () => {
-    setActive([entry('1001'), entry('1002')], 0)
+  it('cancels a running rest countdown when the exercise it belongs to is removed', async () => {
+    await setActive([entry('1001'), entry('1002')], 0)
     useUI.getState().startRest(90, 0)
     expect(useUI.getState().timer).not.toBeNull()
 
-    act(() => { removeActiveExercise(0) })
+    await act(async () => { removeActiveExercise(0); await uiRuntime.fixture.flush(); })
 
     expect(useUI.getState().timer).toBeNull()
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['1002'])
   })
 
-  it('keeps a rest countdown that belongs to another exercise, re-pointed at it', () => {
-    setActive([entry('1001'), entry('1002'), entry('1003')], 1)
+  it('keeps a rest countdown that belongs to another exercise, re-pointed at it', async () => {
+    await setActive([entry('1001'), entry('1002'), entry('1003')], 1)
     useUI.getState().startRest(90, 1)
 
-    act(() => { removeActiveExercise(0) })
+    await act(async () => { removeActiveExercise(0); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().timer?.forIdx).toBe(0)
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['1002', '1003'])
 
-    act(() => { removeActiveExercise(1) })
+    await act(async () => { removeActiveExercise(1); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().timer?.forIdx).toBe(0)
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['1002'])
 
-    act(() => { removeActiveExercise(0) })
+    await act(async () => { removeActiveExercise(0); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().timer).toBeNull()
   })
 
-  it('leaves a rest countdown without a known owner running', () => {
-    setActive([entry('1001'), entry('1002')], 0)
+  it('leaves a rest countdown without a known owner running', async () => {
+    await setActive([entry('1001'), entry('1002')], 0)
     useUI.getState().startRest(90)
 
-    act(() => { removeActiveExercise(0) })
+    await act(async () => { removeActiveExercise(0); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().timer).not.toBeNull()
   })
 
-  it('does not mutate before confirmation, leaves state unchanged on Cancel, and removes on Confirm', () => {
-    renderWorkout([entry('1001'), entry('1002')])
+  it('does not mutate before confirmation, leaves state unchanged on Cancel, and removes on Confirm', async () => {
+    await renderWorkout([entry('1001'), entry('1002')])
 
-    act(() => removeButton().click())
+    await act(async () => { await removeButton().click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['1001', '1002'])
 
-    let dialog = renderTopSheet()
+    let dialog = (await renderTopSheet())
     const cancel = [...dialog.querySelectorAll('button')].find(button => button.textContent === 'Cancel')
-    act(() => cancel.click())
+    await act(async () => { await cancel.click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['1001', '1002'])
 
-    act(() => removeButton().click())
-    dialog = renderTopSheet()
+    await act(async () => { await removeButton().click(); await uiRuntime.fixture.flush(); })
+    dialog = (await renderTopSheet())
     const confirm = [...dialog.querySelectorAll('button')].find(button => button.textContent === 'Remove')
-    act(() => confirm.click())
+    await act(async () => { await confirm.click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['1002'])
   })
 
-  it('uses the selected superset member occurrence rather than its exercise id', () => {
-    renderWorkout([entry('1001', 'pair'), entry('1001', 'pair'), entry('1002')])
+  it('uses the selected superset member occurrence rather than its exercise id', async () => {
+    await renderWorkout([entry('1001', 'pair'), entry('1001', 'pair'), entry('1002')])
     useStore.getState().update(s => {
       s.active.entries[0].target.marker = 'keep-first'
       s.active.entries[1].target.marker = 'remove-second'
     }, false)
 
-    act(() => removeButton().click())
-    const chooser = renderTopSheet()
+    await act(async () => { await removeButton().click(); await uiRuntime.fixture.flush(); })
+    const chooser = (await renderTopSheet())
     const choices = [...chooser.querySelectorAll('.item')]
     expect(choices).toHaveLength(2)
-    act(() => choices[1].click())
+    await act(async () => { await choices[1].click(); await uiRuntime.fixture.flush(); })
 
-    const dialog = renderTopSheet()
+    const dialog = (await renderTopSheet())
     const confirm = [...dialog.querySelectorAll('button')].find(button => button.textContent === 'Remove')
-    act(() => confirm.click())
+    await act(async () => { await confirm.click(); await uiRuntime.fixture.flush(); })
 
     const active = useStore.getState().S.active
     expect(active.entries.map(e => e.id)).toEqual(['1001', '1002'])
@@ -190,8 +201,8 @@ describe('active-session exercise removal', () => {
     expect(active.entries[0].sg).toBeUndefined()
   })
 
-  it('hides the remove control for an empty freestyle session', () => {
-    renderWorkout([])
+  it('hides the remove control for an empty freestyle session', async () => {
+    await renderWorkout([])
     expect(removeButton()).toBeUndefined()
   })
 })
@@ -222,49 +233,49 @@ describe('remove-exercise locale coverage', () => {
 })
 
 describe('remove-exercise edge cases', () => {
-  it('removing the last remaining exercise leaves an empty, coherent session', () => {
-    setActive([entry('a')], 0)
-    act(() => { removeActiveExercise(0) })
+  it('removing the last remaining exercise leaves an empty, coherent session', async () => {
+    await setActive([entry('a')], 0)
+    await act(async () => { removeActiveExercise(0); await uiRuntime.fixture.flush(); })
     const A = useStore.getState().S.active
     expect(A.entries).toHaveLength(0)
     expect(A.cur).toBe(0)
   })
 
-  it('removing one half of a two-member superset dissolves the group', () => {
-    setActive([entry('a', 'g1'), entry('b', 'g1'), entry('c')], 0)
-    act(() => { removeActiveExercise(1) })
+  it('removing one half of a two-member superset dissolves the group', async () => {
+    await setActive([entry('a', 'g1'), entry('b', 'g1'), entry('c')], 0)
+    await act(async () => { removeActiveExercise(1); await uiRuntime.fixture.flush(); })
     const A = useStore.getState().S.active
     expect(A.entries.map(e => e.id)).toEqual(['a', 'c'])
     // A superset of one is not a superset.
     expect(A.entries[0].sg).toBeUndefined()
   })
 
-  it('removing an entry below the active one keeps cur on the same exercise', () => {
-    setActive([entry('a'), entry('b'), entry('c')], 2)
-    act(() => { removeActiveExercise(0) })
+  it('removing an entry below the active one keeps cur on the same exercise', async () => {
+    await setActive([entry('a'), entry('b'), entry('c')], 2)
+    await act(async () => { removeActiveExercise(0); await uiRuntime.fixture.flush(); })
     const A = useStore.getState().S.active
     expect(A.entries.map(e => e.id)).toEqual(['b', 'c'])
     expect(A.entries[A.cur].id).toBe('c')
   })
 
-  it('persists the shortened active session for reload without changing completed history', () => {
+  it('persists the shortened active session for reload without changing completed history', async () => {
     const first = entry('same')
     first.target.marker = 'keep-first'
     const second = entry('same')
     second.target.marker = 'remove-second'
-    setActive([first, second, entry('other')], 1)
+    await setActive([first, second, entry('other')], 1)
     const workouts = [{ id: 'completed', d: '2026-08-10', entries: [{ id: 'same', sets: [{ w: 42, r: 5, done: true }] }] }]
-    useStore.setState(state => ({ S: { ...state.S, workouts: clone(workouts) } }))
+    await uiRuntime.fixture.applySnapshot(state => ({ S: { ...state.S, workouts: clone(workouts) } }))
 
-    act(() => { removeActiveExercise(1) })
+    await act(async () => { removeActiveExercise(1); await uiRuntime.fixture.flush(); })
 
-    const persisted = JSON.parse(localStorage.getItem('gym_state_v1'))
+    const persisted = (await uiRuntime.fixture.saved()).state
     expect(persisted.workouts).toEqual(workouts)
     expect(persisted.active.entries.map(e => e.id)).toEqual(['same', 'other'])
     expect(persisted.active.entries[0].target.marker).toBe('keep-first')
     expect(persisted.active.cur).toBe(1)
 
-    useStore.setState({ S: Object.assign(clone(DEF), persisted), user: null })
+    await uiRuntime.fixture.applySnapshot({ S: Object.assign(clone(DEF), persisted), user: null })
     expect(useStore.getState().S.active.entries.map(e => e.id)).toEqual(['same', 'other'])
     expect(useStore.getState().S.workouts).toEqual(workouts)
   })

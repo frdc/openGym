@@ -1,4 +1,15 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,33 +27,33 @@ vi.mock('../lib/sound.js', () => ({
 vi.mock('../lib/wakelock.js', () => ({ wakeLockSupported: () => true }))
 const navTo = vi.hoisted(() => vi.fn())
 vi.mock('../lib/nav.js', async importOriginal => {
-  const real = await importOriginal()
+  const real = (await importOriginal())
   real.setNav(navTo)
   return real
 })
 
 let host, root, originalS, close
 
-beforeEach(() => {
+beforeEach(async () => {
   originalS = useStore.getState().S
-  useStore.setState({ S: {
+  ;await uiRuntime.fixture.applySnapshot({ S: {
     ...originalS, restSec: 90, sound: false, vibrate: true, timerFlash: false, keepAwake: true,
     workoutView: 'cards', effort: 'none', gifSize: 'full',
     active: { id: 'a', name: 'Push', start: Date.now(), cur: 0, entries: [], workoutView: 'list' },
-  } })
+  } });
   useUI.setState({ sheets: [] })
   sound.canVibrate = true; sound.iPhone = false
   close = vi.fn()
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  act(() => root.render(<WorkoutSettings close={close} />))
+  await act(async () => { await root.render(<WorkoutSettings close={close} />); await uiRuntime.fixture.flush(); })
 })
 
-afterEach(() => {
-  act(() => root.render(null))
+afterEach(async () => {
+  await act(async () => { await root.render(null); await uiRuntime.fixture.flush(); })
   useUI.setState({ sheets: [] })
-  useStore.setState({ S: originalS })
+
   host.remove()
   navTo.mockReset()
 })
@@ -61,56 +72,56 @@ describe('the in-workout settings sheet', () => {
     expect(row('Exercise animations').querySelector('.lrow-s')).toBeNull()
   })
 
-  it('writes the same fields as Settings', () => {
-    act(() => row('Play a sound').querySelector('[role=switch]').click())
-    act(() => row('Vibrate').querySelector('[role=switch]').click())
-    act(() => row('Flash the screen').querySelector('[role=switch]').click())
-    act(() => row('Keep screen awake').querySelector('[role=switch]').click())
-    act(() => [...row('Effort per set').querySelectorAll('button')].find(b => b.textContent === 'RIR').click())
-    act(() => [...row('Exercise animations').querySelectorAll('button')].find(b => b.textContent === 'Small').click())
+  it('writes the same fields as Settings', async () => {
+    await act(async () => { await row('Play a sound').querySelector('[role=switch]').click(); await uiRuntime.fixture.flush(); })
+    await act(async () => { await row('Vibrate').querySelector('[role=switch]').click(); await uiRuntime.fixture.flush(); })
+    await act(async () => { await row('Flash the screen').querySelector('[role=switch]').click(); await uiRuntime.fixture.flush(); })
+    await act(async () => { await row('Keep screen awake').querySelector('[role=switch]').click(); await uiRuntime.fixture.flush(); })
+    await act(async () => { await [...row('Effort per set').querySelectorAll('button')].find(b => b.textContent === 'RIR').click(); await uiRuntime.fixture.flush(); })
+    await act(async () => { await [...row('Exercise animations').querySelectorAll('button')].find(b => b.textContent === 'Small').click(); await uiRuntime.fixture.flush(); })
     expect(S()).toMatchObject({ sound: true, vibrate: false, timerFlash: true, keepAwake: false, effort: 'rir', gifSize: 'mini' })
   })
 
-  it('shows this session’s layout, and a pick here is saved and replaces it', () => {
+  it('shows this session’s layout, and a pick here is saved and replaces it', async () => {
     expect(row('Layout').querySelector('button.on').textContent).toBe('List')
-    act(() => [...row('Layout').querySelectorAll('button')].find(b => b.textContent === 'Compact').click())
+    await act(async () => { await [...row('Layout').querySelectorAll('button')].find(b => b.textContent === 'Compact').click(); await uiRuntime.fixture.flush(); })
     expect(S().workoutView).toBe('compact')
     expect(S().active.workoutView).toBeUndefined()
   })
 
-  it('sets the rest timer on the wheel, 0:00 being off', () => {
-    act(() => row('Rest timer').click())
+  it('sets the rest timer on the wheel, 0:00 being off', async () => {
+    await act(async () => { await row('Rest timer').click(); await uiRuntime.fixture.flush(); })
     const sheet = useUI.getState().sheets.at(-1)
     const el = document.createElement('div')
     document.body.appendChild(el)
     const r = createRoot(el)
-    act(() => r.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+    await act(async () => { await r.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
     expect(el.querySelector('h3').textContent).toBe('Rest timer')
     expect(el.querySelector('.dw-read').textContent).toBe('1:30')
-    act(() => [...el.querySelectorAll('button')].find(b => b.textContent === 'Done').click())
+    await act(async () => { await [...el.querySelectorAll('button')].find(b => b.textContent === 'Done').click(); await uiRuntime.fixture.flush(); })
     expect(S().restSec).toBe(90)
     act(() => r.unmount()); el.remove()
   })
 
-  it('greys Vibrate out on an iPhone and says why', () => {
+  it('greys Vibrate out on an iPhone and says why', async () => {
     sound.canVibrate = false; sound.iPhone = true
-    act(() => root.render(<WorkoutSettings close={close} key="iphone" />))
+    await act(async () => { await root.render(<WorkoutSettings close={close} key="iphone" />); await uiRuntime.fixture.flush(); })
     expect(row('Vibrate').classList.contains('dis')).toBe(true)
     expect(row('Vibrate').querySelector('.lrow-s').textContent).toBe('Not on iPhone')
     expect(row('Vibrate').querySelector('[role=switch]').disabled).toBe(true)
   })
 
-  it('goes to Settings → Workout from All settings, closing the sheet', () => {
-    act(() => row('All settings').click())
+  it('goes to Settings → Workout from All settings, closing the sheet', async () => {
+    await act(async () => { await row('All settings').click(); await uiRuntime.fixture.flush(); })
     expect(close).toHaveBeenCalled()
     expect(navTo).toHaveBeenCalledWith('/settings/workout')
   })
 
   // The sheet's own history entry used to stay behind: back from Settings went to the workout, and
   // the next back landed on the same workout again and seemed to do nothing.
-  it('Settings takes the sheet\'s history entry instead of leaving it behind', () => {
+  it('Settings takes the sheet\'s history entry instead of leaving it behind', async () => {
     history.pushState({ openGymSheet: true }, '')
-    act(() => row('All settings').click())
+    await act(async () => { await row('All settings').click(); await uiRuntime.fixture.flush(); })
     expect(navTo).toHaveBeenCalledWith('/settings/workout', { replace: true })
     history.replaceState(null, '')
   })

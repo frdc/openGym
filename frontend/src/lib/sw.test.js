@@ -165,7 +165,7 @@ describe('sw.js install and activate', () => {
 // usually with no page open. It sent no device id, so the server's row lost it and the rest-timer
 // alert for that account went to every device until a page next booted. The page leaves the id
 // in a cache the worker can read (lib/push.js shareDeviceId).
-describe('sw.js re-registers a rotated push subscription with the page\'s device id', () => {
+describe('sw.js retires Web Push while preserving existing offline caches', () => {
   const rotated = {
     endpoint: 'https://push.example/e2',
     options: { applicationServerKey: new Uint8Array([1, 2, 3]).buffer },
@@ -192,20 +192,11 @@ describe('sw.js re-registers a rotated push subscription with the page\'s device
     expect(constant(swSrc, 'DEVICE_URL')).toBe(DEVICE_URL)
   })
 
-  it('sends the device id the page left', async () => {
+  it('never registers Web Push or subscription-renewal handlers', async () => {
     await loadSW()
-    await (await globalThis.caches.open(DEVICE_CACHE)).put(DEVICE_URL, new Response('dev1234abcd'))
-    expect(await rotate()).toEqual([['api/push/subscribe', {
-      subscription: { endpoint: 'https://push.example/e2', keys: { p256dh: 'p2', auth: 'a2' } },
-      deviceId: 'dev1234abcd'
-    }]])
-  })
-
-  it('with nothing left there, sends the subscription alone, as before', async () => {
-    await loadSW()
-    const sent = await rotate()
-    expect(sent).toHaveLength(1)
-    expect(sent[0][1]).toEqual({ subscription: { endpoint: 'https://push.example/e2', keys: { p256dh: 'p2', auth: 'a2' } } })
+    expect(handlers.push).toBeUndefined()
+    expect(handlers.pushsubscriptionchange).toBeUndefined()
+    expect(handlers.notificationclick).toEqual(expect.any(Function))
   })
 
   it('a new build\'s activate sweeps the old build\'s cache and keeps the device id', async () => {

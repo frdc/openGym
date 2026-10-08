@@ -4,6 +4,17 @@
 // the set in one tap, so the sheet's restore and the card's "bring the partner's row into view"
 // are asked for in the same commit. Each half is tested alone elsewhere with the other mocked;
 // only both together show the order they land in, and the order is the bug.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,7 +24,7 @@ import { useUI } from '../store/useUI.js'
 import { DEF, useStore } from '../store/useStore.js'
 
 vi.mock('../lib/sound.js', async importOriginal => ({
-  ...(await importOriginal()), beep: vi.fn(), chime: vi.fn(), unlock: vi.fn(), vibrate: vi.fn(),
+  ...((await importOriginal())), beep: vi.fn(), chime: vi.fn(), unlock: vi.fn(), vibrate: vi.fn(),
 }))
 vi.mock('../lib/api.js', () => ({
   api: vi.fn(() => Promise.resolve({})), IS_APPLE: false, IS_ANDROID: false, BIO: 'biometrics',
@@ -26,13 +37,13 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let host, root, originalS, scrolls, rafs
 
 const row = () => ({ w: 60, r: 5, done: false })
-const entry = (id, sg) => ({ id, sg, target: { mode: 'reps', sets: 2, reps: 5, weight: 60, bodyweight: false }, sets: [row(), row()] })
+const entry = (id, sg) => ({ id, ...(sg ? { sg } : {}), target: { mode: 'reps', sets: 2, reps: 5, weight: 60, bodyweight: false }, sets: [row(), row()] })
 
 // The restore window is module state in Modals.jsx, kept as a time. Each test's fake clock starts
 // a minute past the previous one's, so a sheet an earlier test closed is long done.
 let clock = Date.now()
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers({ now: clock += 60_000 })
   originalS = useStore.getState().S
   scrolls = []
@@ -53,7 +64,7 @@ beforeEach(() => {
     id: 'a', name: 'Test', start: Date.now(), cur: 0,
     entries: [entry('0025', 'g'), entry('0043', 'g'), entry('0001')],
   }
-  useStore.setState({ S, user: null })
+  await uiRuntime.fixture.applySnapshot({ S, user: null })
   useUI.setState({ sheets: [], timer: null, work: null, toastMsg: '' })
 
   host = document.createElement('div')
@@ -67,22 +78,22 @@ afterEach(() => {
   useUI.getState().stopRest()
   useUI.getState().stopWork()
   useUI.setState({ sheets: [] })
-  useStore.setState({ S: originalS })
+
   document.body.style.position = ''
   vi.useRealTimers()
 })
 
 const mount = async () => {
-  await act(async () => { root.render(<><Workout /><Modals /></>) })
+  await act(async () => { root.render(<><Workout /><Modals /></>); await uiRuntime.fixture.flush(); })
 }
 const click = async el => {
   expect(el).toBeTruthy()
-  await act(async () => { el.dispatchEvent(new window.Event('click', { bubbles: true })) })
+  await act(async () => { el.dispatchEvent(new window.Event('click', { bubbles: true })); await uiRuntime.fixture.flush(); })
 }
 const runFrames = async () => {
   const queued = rafs
   rafs = []
-  await act(async () => { queued.forEach(fn => fn()) })
+  await act(async () => { queued.forEach(fn => fn()); await uiRuntime.fixture.flush(); })
 }
 
 describe('rating a superset set closes a sheet and moves the marker in one tap', () => {
@@ -107,16 +118,16 @@ describe('rating a superset set closes a sheet and moves the marker in one tap',
     await runFrames()
     expect(scrolls).toEqual(['scrollTo', 'scrollTo'])         // the next-frame re-assert
 
-    await act(async () => { vi.advanceTimersByTime(349) })
+    await act(async () => { vi.advanceTimersByTime(349); await uiRuntime.fixture.flush(); })
     expect(scrolls).toEqual(['scrollTo', 'scrollTo'])         // still nothing of the card's
-    await act(async () => { vi.advanceTimersByTime(3) })
+    await act(async () => { vi.advanceTimersByTime(3); await uiRuntime.fixture.flush(); })
 
     // The card's scroll comes STRICTLY after the last restore, onto the partner's row.
     expect(scrolls).toEqual(['scrollTo', 'scrollTo', partnerRow()])
 
     // And nothing undoes it afterwards.
     await runFrames()
-    await act(async () => { vi.advanceTimersByTime(1000) })
+    await act(async () => { vi.advanceTimersByTime(1000); await uiRuntime.fixture.flush(); })
     expect(scrolls.filter(s => s === 'scrollTo')).toHaveLength(2)
     expect(scrolls.at(-1)).toBe(partnerRow())
   })

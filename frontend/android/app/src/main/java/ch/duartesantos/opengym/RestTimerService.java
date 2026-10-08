@@ -17,6 +17,7 @@ import android.os.PowerManager;
 public class RestTimerService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long endsAt;
+    private String timerToken;
     private long totalMs;
     private long pausedLeft;
     private boolean paused;
@@ -32,7 +33,8 @@ public class RestTimerService extends Service {
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
-            if (!running || paused || endsAt <= 0) return;
+            synchronized (RestAlert.class) {
+            if (!running || paused || endsAt <= 0 || !RestAlert.matchesTimer(RestTimerService.this, timerToken)) return;
             long left = endsAt - System.currentTimeMillis();
             if (left <= 0) {
                 reachEnd();
@@ -41,6 +43,7 @@ public class RestTimerService extends Service {
             show();
             // Next on the clock's next whole second, so the last run lands on the end itself.
             handler.postDelayed(this, ((left - 1) % 1000) + 1);
+            }
         }
     };
 
@@ -51,7 +54,16 @@ public class RestTimerService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        synchronized (RestAlert.class) { return handleCommand(intent, startId); }
+    }
+
+    private int handleCommand(Intent intent, int startId) {
         String action = intent == null ? null : intent.getAction();
+        String incomingToken = intent == null ? null : intent.getStringExtra("timerToken");
+        if (!RestAlert.ACTION_ACCENT.equals(action)) {
+            if (!RestAlert.matchesTimer(this, incomingToken)) return START_NOT_STICKY;
+            if (action != null && !incomingToken.equals(timerToken)) return START_NOT_STICKY;
+        }
         if (RestAlert.ACTION_ACCENT.equals(action)) {
             if (!running) {
                 // Only this start: a countdown asked for right behind it must still come up.
@@ -91,6 +103,7 @@ public class RestTimerService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        timerToken = incomingToken;
         endsAt = nextEnd;
         long passed = intent.getLongExtra("totalMs", 0);
         totalMs = passed > 0 ? passed : Math.max(1000, endsAt - System.currentTimeMillis());
@@ -183,7 +196,7 @@ public class RestTimerService extends Service {
      */
     private void reachEnd() {
         running = false;
-        RestAlert.fireFromCountdown(getApplicationContext(), endsAt);
+        RestAlert.fireFromCountdown(getApplicationContext(), endsAt, timerToken);
     }
 
     /**
@@ -214,21 +227,21 @@ public class RestTimerService extends Service {
         handler.removeCallbacks(tick);
         releaseCpu();
         RestAlert.cancelAlarmOnly(this, RestAlert.NOTIFICATION_ID);
-        RestAlertPlugin.emit("skip", 0, 0, 0, false);
+        RestAlertPlugin.emit(timerToken, "skip", 0, 0, 0, false);
         stopForegroundCompat();
         stopSelf();
     }
 
     private void emit(String type) {
         long left = paused ? pausedLeft : Math.max(0, endsAt - System.currentTimeMillis());
-        RestAlertPlugin.emit(type, endsAt, totalMs, left, paused);
+        RestAlertPlugin.emit(timerToken, type, endsAt, totalMs, left, paused);
     }
 
     private void show() {
         try {
             long left = paused ? pausedLeft : Math.max(0, endsAt - System.currentTimeMillis());
             Notification n = RestAlert.countdownNotification(
-                    this, left, totalMs, paused, pauseLabel, resumeLabel, minusLabel, plusLabel, skipLabel, accent, ink);
+                    this, left, totalMs, paused, pauseLabel, resumeLabel, minusLabel, plusLabel, skipLabel, accent, ink, timerToken);
             if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(RestAlert.COUNTDOWN_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
             } else {

@@ -1212,6 +1212,32 @@ export const PT_BR_OVERRIDES = {
   'Greys show lighter in dark mode, so buttons don’t look switched off.': 'Os cinzas ficam mais claros no modo escuro, para os botões não parecerem desligados.',
   'Greys show darker in light mode, so buttons don’t look switched off.': 'Os cinzas ficam mais escuros no modo claro, para os botões não parecerem desligados.',
   'Signed in from another tab. Your workout came along, keep going here.': 'Login feito em outra aba. Seu treino veio junto, continue por aqui.',
+  // Firebase account and local durability status.
+  "Account & sync": "Conta e sincronização",
+  "Add my training data": "Adicionar meus dados de treino",
+  "Changes could not be saved on this device. Keep the app open and try again.": "Não foi possível salvar as alterações neste dispositivo. Mantenha o aplicativo aberto e tente novamente.",
+  "Changes waiting for cloud sync": "Alterações aguardando sincronização na nuvem",
+  "Check your e-mail for a password reset link.": "Confira seu e-mail para redefinir a senha.",
+  "Cloud accounts are not configured. You can keep using this device locally.": "As contas na nuvem não estão configuradas. Você pode continuar usando este dispositivo localmente.",
+  "Cloud sync needs attention. Your changes are saved on this device.": "A sincronização na nuvem precisa de atenção. Suas alterações estão salvas neste dispositivo.",
+  "Could not recover this copy. Export a backup to keep it.": "Não foi possível recuperar esta cópia. Exporte um backup para preservá-la.",
+  "Create account": "Criar conta",
+  "E-mail": "E-mail",
+  "Keep this copy separate": "Manter esta cópia separada",
+  "Only add this copy if it belongs to you. The original stays on this device.": "Adicione esta cópia apenas se ela pertencer a você. O original permanece neste dispositivo.",
+  "Opening your local account…": "Abrindo sua conta local…",
+  "Recoverable local copy": "Cópia local recuperável",
+  "Review pending changes": "Revisar alterações pendentes",
+  "Saved on this device": "Salvo neste dispositivo",
+  "Saving on this device…": "Salvando neste dispositivo…",
+  "Send reset e-mail": "Enviar e-mail de redefinição",
+  "Sign in to sync. Your changes are saved on this device.": "Entre para sincronizar. Suas alterações estão salvas neste dispositivo.",
+  "Signing out keeps a local copy for this account. You can export a backup first.": "Sair mantém uma cópia local desta conta. Você pode exportar um backup antes.",
+  "Too many attempts. Try again later.": "Muitas tentativas. Tente novamente mais tarde.",
+  "Wrong e-mail or password.": "E-mail ou senha incorretos.",
+  "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "O openGym repetirá estas sessões planejadas quando todas forem concluídas. Importar um novo plano pode substituir esta rotação.",
+  "{0} pending changes": "{0} alterações pendentes",
+
 }
 
 export default { ...pt, ...PT_BR_OVERRIDES }

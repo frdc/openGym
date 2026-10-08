@@ -1,6 +1,17 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -11,13 +22,13 @@ const clone = v => JSON.parse(JSON.stringify(v))
 const ids = EXDB.filter(e => e.bp !== 'cardio').slice(0, 4).map(e => e.id)
 const mounted = []
 
-function renderTop() {
+async function renderTop() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const rowFor = (host, name) => [...host.querySelectorAll('.item')].find(el => el.querySelector('.tt')?.textContent === name)
@@ -30,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { act(() => { mounted.splice(0).forEach(r => r.unmount()) }) })
 
 describe('Add routine mid-session sheet', () => {
-  const setup = () => {
+  const setup = async () => {
     const S = clone(useStore.getState().S)
     S.routines = [
       { id: 'strength', name: 'Strength', emoji: '🏋️', prog: 'off', ex: [{ id: ids[0], sets: 3, reps: 5, weight: 60 }] },
@@ -43,14 +54,14 @@ describe('Add routine mid-session sheet', () => {
       entries: [{ id: ids[0], rid: 'strength', target: {}, sets: [{ w: 60, r: 5, done: true }] }],
       workoutView: 'cards',
     }
-    useStore.setState({ S, user: null })
+    await uiRuntime.fixture.applySnapshot({ S, user: null })
   }
 
-  it('appends the picked routine’s entries with rid, updates routineIds + name, toasts', () => {
-    setup()
+  it('appends the picked routine’s entries with rid, updates routineIds + name, toasts', async () => {
+    await setup()
     addRoutineToSessionSheet()
-    const host = renderTop()
-    act(() => { rowFor(host, 'Core').click() })
+    const host = (await renderTop())
+    await act(async () => { rowFor(host, 'Core').click(); await uiRuntime.fixture.flush(); })
 
     const a = useStore.getState().S.active
     expect(a.routineIds).toEqual(['strength', 'core'])
@@ -60,10 +71,10 @@ describe('Add routine mid-session sheet', () => {
     expect(useUI.getState().toastMsg).toContain('Core added')
   })
 
-  it('disables a routine already in the session and one with no exercises', () => {
-    setup()
+  it('disables a routine already in the session and one with no exercises', async () => {
+    await setup()
     addRoutineToSessionSheet()
-    const host = renderTop()
+    const host = (await renderTop())
     expect(rowFor(host, 'Strength').className).toContain('disabled')
     expect(rowFor(host, 'Strength').textContent).toContain('already added')
     expect(rowFor(host, 'Empty').className).toContain('disabled')
@@ -85,25 +96,25 @@ describe('WorkoutDetail — per-routine grouping', () => {
     entries: [{ id: ids[0], target: { reps: 5 }, sets: [{ w: 100, r: 5, done: true }] }],
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const S = clone(useStore.getState().S)
     S.routines = [
       { id: 'strength', name: 'Strength', emoji: '🏋️', ex: [] },
       { id: 'core', name: 'Core', emoji: '🧘', ex: [] },
     ]
-    useStore.setState({ S, user: null })
+    await uiRuntime.fixture.applySnapshot({ S, user: null })
   })
 
-  it('groups a combined workout into per-routine sections with a sets/volume subheader', () => {
-    const host = (workoutDetailSheet(combined), renderTop())
+  it('groups a combined workout into per-routine sections with a sets/volume subheader', async () => {
+    const host = (workoutDetailSheet(combined), (await renderTop()))
     expect(host.textContent).toContain('Strength')
     expect(host.textContent).toContain('Core')
     expect(host.textContent).toMatch(/2 sets/)
     expect(host.textContent).toMatch(/1 sets|1 set/)
   })
 
-  it('renders a legacy single-routine workout flat — no routine subheader', () => {
-    const host = (workoutDetailSheet(legacy), renderTop())
+  it('renders a legacy single-routine workout flat — no routine subheader', async () => {
+    const host = (workoutDetailSheet(legacy), (await renderTop()))
     // the only routine name that could appear is the header <h3> (w.name = "Push"); there is
     // no "Strength" subheader row
     expect(host.querySelectorAll('.row.between').length).toBe(0)

@@ -2,6 +2,18 @@
 // "Don't count for progression" from an exercise's ⋯ menu (Discord, asierlama: an injury day),
 // against the real store, sheets and progression engine: the toggle, the marker and its undo,
 // and what the next session is then built from.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -38,19 +50,20 @@ let container
 let sheetRoot
 let sheetContainer
 
-function renderWorkout(entries, { withRoutines = routines, withHistory = history } = {}) {
+async function renderWorkout(entries, { withRoutines = routines, withHistory = history } = {}) {
   const S = clone(DEF)
   S.routines = clone(withRoutines)
   S.workouts = clone(withHistory)
-  S.active = { id: 'noprog-test', d: '2026-09-23', start: Date.now(), routineIds: ['main'], routineId: 'main', name: 'Main', bw: null, cur: 0, entries }
-  useStore.setState({ S, user: null })
+  const active = { id: 'noprog-test', d: '2026-09-23', start: Date.now(), routineIds: ['main'], routineId: 'main', name: 'Main', bw: null, cur: 0, entries }
+  await uiRuntime.fixture.prepare(S)
+  await act(async () => { uiRuntime.fixture.setFixture(draft => { draft.active = active }); await uiRuntime.fixture.flush() })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  act(() => root.render(<MemoryRouter><Workout /></MemoryRouter>))
+  await act(async () => { await root.render(<MemoryRouter><Workout /></MemoryRouter>); await uiRuntime.fixture.flush(); })
 }
 
-function renderTopSheet() {
+async function renderTopSheet() {
   if (sheetRoot) act(() => sheetRoot.unmount())
   if (sheetContainer) sheetContainer.remove()
   const sheet = useUI.getState().sheets.at(-1)
@@ -58,15 +71,15 @@ function renderTopSheet() {
   sheetContainer = document.createElement('div')
   document.body.appendChild(sheetContainer)
   sheetRoot = createRoot(sheetContainer)
-  act(() => sheetRoot.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await sheetRoot.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return sheetContainer
 }
 
-const openMenu = () => {
+const openMenu = async () => {
   const more = container.querySelector('button[aria-label="More"]')
   expect(more).toBeTruthy()
-  act(() => more.click())
-  return renderTopSheet()
+  await act(async () => { await more.click(); await uiRuntime.fixture.flush(); })
+  return (await renderTopSheet())
 }
 const menuItem = (menu, label) => [...menu.querySelectorAll('.menu-item')].find(it => it.querySelector('.tt')?.textContent === label)
 const marker = () => container.querySelector('.noprog')
@@ -90,16 +103,16 @@ afterEach(() => {
 })
 
 describe('don’t count this session for progression', () => {
-  it('the ⋯ menu stamps the entry, the card says so, and Undo takes it back', () => {
-    renderWorkout([entry(BENCH, 'main', 80)])
+  it('the ⋯ menu stamps the entry, the card says so, and Undo takes it back', async () => {
+    await renderWorkout([entry(BENCH, 'main', 80)])
     expect(marker()).toBeNull()
 
-    const menu = openMenu()
+    const menu = (await openMenu())
     const item = menuItem(menu, 'Don’t count for progression')
     expect(item).toBeTruthy()
     expect(item.querySelector('.ss').textContent).toBe('This exercise, this session only')
     expect(item.querySelector('.menu-on.is-on')).toBeNull()
-    act(() => item.click())
+    await act(async () => { await item.click(); await uiRuntime.fixture.flush(); })
 
     expect(active().entries[0].noProg).toBe(true)
     expect(marker().textContent).toContain('Not counted for progression')
@@ -107,30 +120,30 @@ describe('don’t count this session for progression', () => {
     expect(useStore.getState().S.routines.find(r => r.id === 'main').excludeFromProgression).toBeUndefined()
 
     const undo = [...marker().querySelectorAll('button')].find(b => b.textContent === 'Undo')
-    act(() => undo.click())
+    await act(async () => { await undo.click(); await uiRuntime.fixture.flush(); })
     expect(active().entries[0].noProg).toBeUndefined()
     expect(marker()).toBeNull()
   })
 
-  it('the menu item is a switch: it shows it is on, and a second tap turns it off', () => {
-    renderWorkout([entry(BENCH, 'main', 80, { noProg: true })])
-    const item = menuItem(openMenu(), 'Don’t count for progression')
+  it('the menu item is a switch: it shows it is on, and a second tap turns it off', async () => {
+    await renderWorkout([entry(BENCH, 'main', 80, { noProg: true })])
+    const item = menuItem((await openMenu()), 'Don’t count for progression')
     expect(item.querySelector('.menu-on.is-on')).toBeTruthy()
-    act(() => item.click())
+    await act(async () => { await item.click(); await uiRuntime.fixture.flush(); })
     expect(active().entries[0].noProg).toBeUndefined()
   })
 
-  it('only that exercise: the others in the session still count', () => {
-    renderWorkout([entry(BENCH, 'main', 80), entry(ROW, 'main', 50)])
-    const item = menuItem(openMenu(), 'Don’t count for progression')
-    act(() => item.click())
+  it('only that exercise: the others in the session still count', async () => {
+    await renderWorkout([entry(BENCH, 'main', 80), entry(ROW, 'main', 50)])
+    const item = menuItem((await openMenu()), 'Don’t count for progression')
+    await act(async () => { await item.click(); await uiRuntime.fixture.flush(); })
     expect(active().entries.map(e => e.noProg === true)).toEqual([true, false])
   })
 
-  it('the saved workout keeps it, and the next session progresses from the last one that counted', () => {
-    renderWorkout([entry(BENCH, 'main', 80)])
-    const item = menuItem(openMenu(), 'Don’t count for progression')
-    act(() => item.click())
+  it('the saved workout keeps it, and the next session progresses from the last one that counted', async () => {
+    await renderWorkout([entry(BENCH, 'main', 80)])
+    const item = menuItem((await openMenu()), 'Don’t count for progression')
+    await act(async () => { await item.click(); await uiRuntime.fixture.flush(); })
     useStore.getState().update(s => { s.active.entries[0].sets[0].done = true })
 
     const saved = buildCompletedWorkout(active(), { end: Date.now() })
@@ -157,31 +170,31 @@ describe('don’t count this session for progression', () => {
         { id: ROW, rid: 'main', target: { sets: 1, reps: 8, weight: 70 }, sets: [{ w: 70, r: 8, done: true }] },
       ],
     }]
-    const start = () => {
+    const start = async () => {
       const S = { ...clone(DEF), routines: clone(planned), workouts: clone(logged) }
       const [bench] = buildSessionEntries(S, planned[0]).map(e => ({ ...e, rid: 'main' }))
-      renderWorkout([bench], { withRoutines: planned, withHistory: logged })
+      await renderWorkout([bench], { withRoutines: planned, withHistory: logged })
       expect(active().entries[0].sets.map(set => set.w)).toEqual([102.5])
-      const keepOut = menuItem(openMenu(), 'Don’t count for progression')
-      act(() => keepOut.click())
+      const keepOut = menuItem((await openMenu()), 'Don’t count for progression')
+      await act(async () => { await keepOut.click(); await uiRuntime.fixture.flush(); })
       expect(active().entries[0].noProg).toBe(true)
     }
-    const undoAndFinish = () => {
+    const undoAndFinish = async () => {
       const undo = [...marker().querySelectorAll('button')].find(b => b.textContent === 'Undo')
-      act(() => undo.click())
+      await act(async () => { await undo.click(); await uiRuntime.fixture.flush(); })
       expect(active().entries[0].noProg).toBeUndefined()
       useStore.getState().update(s => { s.active.entries[0].sets.forEach(set => { set.done = true }) })
       const saved = buildCompletedWorkout(active(), { end: Date.now() })
       return { ...useStore.getState().S, active: null, workouts: [...logged, saved] }
     }
 
-    it('Exercise settings saved unchanged, then Undo: the session counts at 102.5 and the next one goes on from there', () => {
-      start()
-      const settings = menuItem(openMenu(), 'Exercise settings')
-      act(() => settings.click())
-      const sheet = renderTopSheet()
+    it('Exercise settings saved unchanged, then Undo: the session counts at 102.5 and the next one goes on from there', async () => {
+      await start()
+      const settings = menuItem((await openMenu()), 'Exercise settings')
+      await act(async () => { await settings.click(); await uiRuntime.fixture.flush(); })
+      const sheet = (await renderTopSheet())
       const save = [...sheet.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save')
-      act(() => save.click())
+      await act(async () => { await save.click(); await uiRuntime.fixture.flush(); })
 
       const [bench] = active().entries
       expect(bench.noProg).toBe(true)
@@ -189,17 +202,17 @@ describe('don’t count this session for progression', () => {
       expect(bench.target.weight).toBe(102.5)
       expect(bench.plan.kind).not.toBe('off')
 
-      const S = undoAndFinish()
+      const S = (await undoAndFinish())
       expect(nextPrescription(S, planned[0].ex[0], planned[0]).weight).toBe(105)
     })
 
-    it('a swap, then Undo: the replacement counts at its own prescription, not the routine’s numbers', () => {
-      start()
+    it('a swap, then Undo: the replacement counts at its own prescription, not the routine’s numbers', async () => {
+      await start()
       swapActiveWorkoutExercise(0)
       const picker = useUI.getState().sheets.at(-1)
-      act(() => picker.render(picker.close).props.onPick(EXDB.find(e => e.id === ROW)))
+      await act(async () => { await picker.render(picker.close).props.onPick(EXDB.find(e => e.id === ROW)); await uiRuntime.fixture.flush(); })
       const config = useUI.getState().sheets.at(-1)
-      act(() => config.render(config.close).props.onSave({ ...planned[0].ex[1] }))
+      await act(async () => { await config.render(config.close).props.onSave({ ...planned[0].ex[1] }); await uiRuntime.fixture.flush(); })
 
       const [row] = active().entries
       expect(row.id).toBe(ROW)
@@ -211,29 +224,29 @@ describe('don’t count this session for progression', () => {
       expect(row.sets.map(set => set.w)).toEqual([75])
       expect(row.plan.kind).not.toBe('off')
 
-      const S = undoAndFinish()
+      const S = (await undoAndFinish())
       expect(nextPrescription(S, planned[0].ex[1], planned[0]).weight).toBe(80)
     })
   })
 
-  it('a deload routine’s exercise saved in Exercise settings stays at the routine’s own numbers', () => {
+  it('a deload routine’s exercise saved in Exercise settings stays at the routine’s own numbers', async () => {
     // 70 × 8 in Main would put a counting row at 75; the deload keeps its 40.
     const rowInMain = { id: 'w0', d: '2026-09-18', routineIds: ['main'], entries: [{ id: ROW, rid: 'main', target: { sets: 1, reps: 8, weight: 70 }, sets: [{ w: 70, r: 8, done: true }] }] }
-    renderWorkout([{ ...entry(ROW, 'deload', 40, { noProg: true }), target: { sets: 1, reps: 8, weight: 40 }, sets: [{ w: 40, r: 8, done: false }] }], { withHistory: [...history, rowInMain] })
-    const settings = menuItem(openMenu(), 'Exercise settings')
-    act(() => settings.click())
-    const save = [...renderTopSheet().querySelectorAll('button')].find(b => b.textContent.trim() === 'Save')
-    act(() => save.click())
+    await renderWorkout([{ ...entry(ROW, 'deload', 40, { noProg: true }), target: { sets: 1, reps: 8, weight: 40 }, sets: [{ w: 40, r: 8, done: false }] }], { withHistory: [...history, rowInMain] })
+    const settings = menuItem((await openMenu()), 'Exercise settings')
+    await act(async () => { await settings.click(); await uiRuntime.fixture.flush(); })
+    const save = [...((await renderTopSheet()).querySelectorAll('button'))].find(b => b.textContent.trim() === 'Save')
+    await act(async () => { await save.click(); await uiRuntime.fixture.flush(); })
     const [row] = active().entries
     expect(row.noProg).toBe(true)
     expect(row.plan.kind).toBe('off')
     expect(row.sets.map(set => set.w)).toEqual([40])
   })
 
-  it('a deload routine’s exercise shows the marker but offers neither the switch nor an undo', () => {
-    renderWorkout([entry(ROW, 'deload', 40, { noProg: true })])
+  it('a deload routine’s exercise shows the marker but offers neither the switch nor an undo', async () => {
+    await renderWorkout([entry(ROW, 'deload', 40, { noProg: true })])
     expect(marker().textContent).toContain('Not counted for progression')
     expect(marker().querySelector('button')).toBeNull()
-    expect(menuItem(openMenu(), 'Don’t count for progression')).toBeUndefined()
+    expect(menuItem((await openMenu()), 'Don’t count for progression')).toBeUndefined()
   })
 })

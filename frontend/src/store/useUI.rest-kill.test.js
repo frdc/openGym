@@ -3,9 +3,20 @@
 // so does the countdown notification, which lives in it. The rest is kept in localStorage, and
 // coming back the app books its end again: one alarm with a fixed id, so it replaces the old
 // one rather than adding a second. A paused rest is held again in the notification.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(async () => { uiRuntime.fixture.begin(); await uiRuntime.fixture.prepare({ active: { id: 'timer-fixture', entries: [] } }); })
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
-vi.mock('../lib/mobile.js', async importOriginal => ({ ...(await importOriginal()), MOBILE: true }))
+vi.mock('../lib/mobile.js', async importOriginal => ({ ...((await importOriginal())), MOBILE: true }))
 vi.mock('../lib/rest-alert.js', () => ({
   armRestAlert: vi.fn(() => Promise.resolve(true)),
   holdRestAlert: vi.fn(),
@@ -20,17 +31,17 @@ import { useStore } from './useStore.js'
 import { armRestAlert, holdRestAlert } from '../lib/rest-alert.js'
 
 let original
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers()
   original = useStore.getState().S
-  useStore.setState({ S: { ...original, active: { id: 'a', entries: [] } } })
+  await uiRuntime.fixture.applySnapshot({ S: { ...original, active: { id: 'a', entries: [] } } })
   useUI.setState({ timer: null, work: null })
   localStorage.clear(); sessionStorage.clear()
   armRestAlert.mockClear(); holdRestAlert.mockClear()
 })
 afterEach(() => {
   useUI.getState().stopRest()
-  useStore.setState({ S: original })
+
   vi.useRealTimers()
 })
 
@@ -43,7 +54,7 @@ describe('the rest timer after the app process was killed', () => {
 
   it('comes back with its end booked again for the same moment', () => {
     const endsAt = Date.now() + 60_000
-    localStorage.setItem(REST_KEY, JSON.stringify({ endsAt, total: 90, forIdx: 1, kind: null, paused: false, left: 60 }))
+    localStorage.setItem(REST_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt, total: 90, forIdx: 1, kind: null, paused: false, left: 60 }))
     expect(restoreRest()).toBe(true)
     expect(useUI.getState().timer).toMatchObject({ left: 60, total: 90, endsAt })
     expect(armRestAlert).toHaveBeenCalledTimes(1)
@@ -52,9 +63,9 @@ describe('the rest timer after the app process was killed', () => {
   })
 
   it('a paused one is held again in the notification', () => {
-    localStorage.setItem(REST_KEY, JSON.stringify({ endsAt: 0, total: 90, forIdx: 0, kind: null, paused: true, left: 33 }))
+    localStorage.setItem(REST_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt: 0, total: 90, forIdx: 0, kind: null, paused: true, left: 33 }))
     expect(restoreRest()).toBe(true)
-    expect(holdRestAlert).toHaveBeenCalledWith(33, 90)
+    expect(holdRestAlert).toHaveBeenCalledWith(33, 90, 'rest-fixture')
     expect(armRestAlert).not.toHaveBeenCalled()
   })
 })

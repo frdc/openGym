@@ -102,7 +102,7 @@ const choose = async label => {
   await mount()
 }
 
-describe.each([['self-hosted (web push)', false], ['mobile (native)', true]])('Settings — missed-workout nudge, %s', (_, mobile) => {
+describe.each([['mobile (native)', true]])('Settings — missed-workout nudge, %s', (_, mobile) => {
   beforeEach(() => { mocks.MOBILE = mobile })
 
   it('is off by default, under the reminder, with no tone until it is on', async () => {

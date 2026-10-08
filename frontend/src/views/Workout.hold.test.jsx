@@ -2,6 +2,17 @@
 // The end of a hold, against the real store and work timer: it sounds once. The chime and its
 // buzz pattern belong to the timer (store/useUI.js); the set it ticks adds neither its own beep,
 // which clipped the chime's first note, nor its short buzz, which cut the pattern off.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -21,21 +32,21 @@ const plank = () => ({ id: '1001', target: { mode: 'time', sets: 2, sec: 10 }, s
 let root
 let container
 
-function renderWorkout(entries) {
+async function renderWorkout(entries) {
   const S = clone(DEF)
   S.sound = true
   S.active = { id: 'hold-test', d: '2026-09-23', start: Date.now(), routineId: null, name: 'Hold', bw: null, cur: 0, entries }
-  useStore.setState({ S, user: null })
+  await uiRuntime.fixture.applySnapshot({ S, user: null })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  act(() => root.render(<MemoryRouter><Workout /></MemoryRouter>))
+  await act(async () => { await root.render(<MemoryRouter><Workout /></MemoryRouter>); await uiRuntime.fixture.flush(); })
 }
 
-const startHold = () => {
+const startHold = async () => {
   const go = container.querySelector('button[aria-label="Start set"]')
   expect(go).toBeTruthy()
-  act(() => go.click())
+  await act(async () => { await go.click(); await uiRuntime.fixture.flush(); })
   expect(useUI.getState().work).not.toBeNull()
 }
 const tickBeeps = () => beep.mock.calls.filter(call => call[1] === 1040)
@@ -60,10 +71,10 @@ afterEach(() => {
 })
 
 describe('the end of a hold', () => {
-  it('ran out on its own: the chime and its buzz pattern, and no tick beep or short buzz after them', () => {
-    renderWorkout([plank()])
-    startHold()
-    act(() => { vi.advanceTimersByTime(11_000) })
+  it('ran out on its own: the chime and its buzz pattern, and no tick beep or short buzz after them', async () => {
+    await renderWorkout([plank()])
+    await startHold()
+    await act(async () => { vi.advanceTimersByTime(11_000); await uiRuntime.fixture.flush(); })
     expect(doneOf()).toEqual([true, false])
     expect(chime).toHaveBeenCalledOnce()
     expect(tickBeeps()).toEqual([])
@@ -72,11 +83,11 @@ describe('the end of a hold', () => {
     expect(vibrate).not.toHaveBeenCalled()
   })
 
-  it('finished early with Done: the set ticks the way a tap does, beep and buzz', () => {
-    renderWorkout([plank()])
-    startHold()
-    act(() => { vi.advanceTimersByTime(4_000) })
-    act(() => useUI.getState().finishWorkEarly())
+  it('finished early with Done: the set ticks the way a tap does, beep and buzz', async () => {
+    await renderWorkout([plank()])
+    await startHold()
+    await act(async () => { vi.advanceTimersByTime(4_000); await uiRuntime.fixture.flush(); })
+    await act(async () => { await useUI.getState().finishWorkEarly(); await uiRuntime.fixture.flush(); })
     expect(doneOf()).toEqual([true, false])
     expect(chime).not.toHaveBeenCalled()
     expect(tickBeeps()).toHaveLength(1)
@@ -91,37 +102,37 @@ describe('a per-side hold', () => {
     { sec: 10, w: 0, done: false, side: 'L' }, { sec: 10, w: 0, done: false, side: 'R' },
     { sec: 10, w: 0, done: false, side: 'L' }, { sec: 10, w: 0, done: false, side: 'R' },
   ] })
-  const holdRow = n => {
+  const holdRow = async n => {
     const go = container.querySelectorAll('button[aria-label="Start set"]')[n]
-    act(() => go.click())
-    act(() => { vi.advanceTimersByTime(11_000) })
+    await act(async () => { await go.click(); await uiRuntime.fixture.flush(); })
+    await act(async () => { vi.advanceTimersByTime(11_000); await uiRuntime.fixture.flush(); })
   }
 
-  it('left held: a 10 s "Switch sides" countdown, which ends with the chime and goes', () => {
-    renderWorkout([sidePlank()])
-    holdRow(0)
+  it('left held: a 10 s "Switch sides" countdown, which ends with the chime and goes', async () => {
+    await renderWorkout([sidePlank()])
+    await holdRow(0)
     expect(doneOf()).toEqual([true, false, false, false])
     const tm = useUI.getState().timer
     expect(tm).toMatchObject({ kind: 'switch', total: 10 })
     expect(chime).toHaveBeenCalledTimes(1)
-    act(() => { vi.advanceTimersByTime(10_000) })
+    await act(async () => { vi.advanceTimersByTime(10_000); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().timer).toBeNull()
     expect(chime).toHaveBeenCalledTimes(2)
     expect(alertBuzz).toHaveBeenCalledTimes(2)
   })
 
-  it('right held too: the set\'s full rest, not another switch', () => {
-    renderWorkout([sidePlank()])
-    holdRow(0)
-    holdRow(1)
+  it('right held too: the set\'s full rest, not another switch', async () => {
+    await renderWorkout([sidePlank()])
+    await holdRow(0)
+    await holdRow(1)
     expect(doneOf()).toEqual([true, true, false, false])
     const tm = useUI.getState().timer
     expect(tm.kind).toBeUndefined()
     expect(tm.total).toBe(useStore.getState().S.restSec)
   })
 
-  it('Left and Right pills carry both words, so they are one width (#322)', () => {
-    renderWorkout([sidePlank()])
+  it('Left and Right pills carry both words, so they are one width (#322)', async () => {
+    await renderWorkout([sidePlank()])
     const pills = [...container.querySelectorAll('.sidepill')]
     expect(pills.map(p => p.textContent)).toEqual(['Left', 'Right', 'Left', 'Right'])
     for (const p of pills) expect([p.dataset.l, p.dataset.r]).toEqual(['Left', 'Right'])

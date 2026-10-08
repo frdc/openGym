@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.Intent;
+import android.net.Uri;
 import android.widget.RemoteViews;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
@@ -65,14 +66,29 @@ public final class RestAlert {
 
     private RestAlert() {}
 
+    static String currentTimer(Context ctx) {
+        return ctx.getSharedPreferences("rest-timer", Context.MODE_PRIVATE).getString("timerToken", "");
+    }
+    static boolean matchesTimer(Context ctx, String token) {
+        return token != null && !token.isEmpty() && token.equals(currentTimer(ctx));
+    }
+    private static void setTimer(Context ctx, String token) {
+        ctx.getSharedPreferences("rest-timer", Context.MODE_PRIVATE).edit().putString("timerToken", token).commit();
+    }
+
     /**
      * `alarmBuzz` is Settings → "Vibrate when the phone is on silent" (#375): the end buzzes as an
      * alarm, which silent mode lets through, and the notification goes out on the quiet channel so
      * a phone with its ringer on does not buzz twice.
      */
-    public static void schedule(Context ctx, long at, int id, String title, boolean sound, boolean vibrate,
+    public static synchronized void schedule(Context ctx, long at, int id, String title, boolean sound, boolean vibrate,
                                 boolean alarmBuzz, String channelId, String visibility, String importance,
-                                boolean localOnly, String countdownTitle, long totalMs) {
+                                boolean localOnly, String countdownTitle, long totalMs, String timerToken) {
+        if (timerToken == null || timerToken.isEmpty()) return;
+        cancelAlarmOnly(ctx, id);
+        setTimer(ctx, timerToken);
+        firedFor = 0;
+        stopCurrent();
         alarmBuzz = vibrate && alarmBuzz;
         channelId = channelFor(channelId, vibrate);
         Intent intent = alarmIntent(ctx);
@@ -123,7 +139,8 @@ public final class RestAlert {
         if (skip != null && !skip.isEmpty()) labSkip = skip;
     }
 
-    public static void cancel(Context ctx, int id) {
+    public static synchronized void cancel(Context ctx, int id, String timerToken) {
+        if (!matchesTimer(ctx, timerToken)) return;
         stopCountdown(ctx);
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         PendingIntent pi = PendingIntent.getBroadcast(ctx, id, alarmIntent(ctx), FLAGS);
@@ -131,6 +148,8 @@ public final class RestAlert {
         pi.cancel();
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         nm.cancel(id);
+        setTimer(ctx, "");
+        stopCurrent();
     }
 
     /**
@@ -139,7 +158,8 @@ public final class RestAlert {
      * (on an emulator it came 50 seconds after a 90-second rest), so the countdown sounds the end
      * and the alarm is only the fallback for a countdown that was not running.
      */
-    static void fireFromCountdown(Context ctx, long at) {
+    static synchronized void fireFromCountdown(Context ctx, long at, String timerToken) {
+        if (!matchesTimer(ctx, timerToken)) return;
         cancelAlarmOnly(ctx, NOTIFICATION_ID);
         Intent intent = alarmIntent(ctx);
         intent.putExtra("id", NOTIFICATION_ID);
@@ -160,7 +180,8 @@ public final class RestAlert {
     }
 
     /** Runs off the main thread. Holds the CPU until the tone has finished. */
-    public static void fire(Context ctx, Intent intent) {
+    public static synchronized void fire(Context ctx, Intent intent) {
+        if (!matchesTimer(ctx, intent.getStringExtra("timerToken"))) return;
         if (!claim(intent.getLongExtra("at", 0))) return;
         PowerManager.WakeLock cpu = null;
         try {
@@ -200,6 +221,9 @@ public final class RestAlert {
     private static Intent alarmIntent(Context ctx) {
         Intent intent = new Intent(ctx, RestAlertReceiver.class);
         intent.setAction(ACTION);
+        String timerToken = currentTimer(ctx);
+        intent.setData(Uri.parse("opengym-rest:" + timerToken));
+        intent.putExtra("timerToken", timerToken);
         return intent;
     }
 
@@ -380,6 +404,7 @@ public final class RestAlert {
 
     static void startCountdown(Context ctx, long endsAt, long totalMs, String title) {
         Intent i = new Intent(ctx, RestTimerService.class);
+        i.putExtra("timerToken", currentTimer(ctx));
         i.putExtra("endsAt", endsAt);
         i.putExtra("totalMs", totalMs);
         i.putExtra("title", title == null || title.isEmpty() ? "Rest" : title);
@@ -412,7 +437,7 @@ public final class RestAlert {
     @SuppressWarnings("deprecation")
     static Notification countdownNotification(Context ctx, long leftMs, long totalMs, boolean paused,
                                               String pause, String resume, String minus, String plus, String skip,
-                                              int accent, int ink) {
+                                              int accent, int ink, String timerToken) {
         int max = (int) Math.max(1, Math.round(totalMs / 1000.0));
         int left = (int) Math.min(max, (Math.max(0, leftMs) + 999) / 1000);
         String clock = clock(left);
@@ -427,10 +452,10 @@ public final class RestAlert {
         expanded.setTextViewText(R.id.rest_minus, minus);
         expanded.setTextViewText(R.id.rest_plus, plus);
         expanded.setTextViewText(R.id.rest_skip, skip);
-        expanded.setOnClickPendingIntent(R.id.rest_pause, control(ctx, ACTION_PAUSE, 51));
-        expanded.setOnClickPendingIntent(R.id.rest_minus, control(ctx, ACTION_MINUS, 52));
-        expanded.setOnClickPendingIntent(R.id.rest_plus, control(ctx, ACTION_PLUS, 53));
-        expanded.setOnClickPendingIntent(R.id.rest_skip, control(ctx, ACTION_SKIP, 54));
+        expanded.setOnClickPendingIntent(R.id.rest_pause, control(ctx, ACTION_PAUSE, 51, timerToken));
+        expanded.setOnClickPendingIntent(R.id.rest_minus, control(ctx, ACTION_MINUS, 52, timerToken));
+        expanded.setOnClickPendingIntent(R.id.rest_plus, control(ctx, ACTION_PLUS, 53, timerToken));
+        expanded.setOnClickPendingIntent(R.id.rest_skip, control(ctx, ACTION_SKIP, 54, timerToken));
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(ctx, COUNTDOWN_CHANNEL_ID)
                 : new Notification.Builder(ctx);
@@ -479,9 +504,11 @@ public final class RestAlert {
         }
     }
 
-    private static PendingIntent control(Context ctx, String action, int code) {
+    private static PendingIntent control(Context ctx, String action, int code, String timerToken) {
         Intent i = new Intent(ctx, RestTimerService.class);
         i.setAction(action);
+        i.setData(Uri.parse("opengym-rest:" + timerToken));
+        i.putExtra("timerToken", timerToken);
         return PendingIntent.getService(ctx, code, i, FLAGS);
     }
 

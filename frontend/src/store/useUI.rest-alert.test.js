@@ -2,6 +2,18 @@
 // Issue #239: the local "rest over" alert ignored the Push switch in Settings. Every rest asked
 // for the notification permission on its own, and once granted it fired with the switch off —
 // a page cannot give a permission back. "On" is this browser holding a push subscription.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(async () => { uiRuntime.fixture.begin(); await uiRuntime.fixture.prepare({ active: { id: 'timer-fixture', entries: [] } }); })
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { useUI } from './useUI.js'
 import { useStore } from './useStore.js'
@@ -18,10 +30,10 @@ const runOut = async () => {
   await vi.advanceTimersByTimeAsync(3000)
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers()
   originalSettings = useStore.getState().S
-  useStore.setState({ S: { ...originalSettings, sound: false }, user: null })
+  await uiRuntime.fixture.applySnapshot({ S: { ...originalSettings, sound: false }, user: null })
   useUI.setState({ timer: null })
   showNotification = vi.fn()
   requestPermission = vi.fn(async () => 'granted')
@@ -36,18 +48,19 @@ beforeEach(() => {
 afterEach(() => {
   useUI.getState().stopRest()
   hide(false)
-  useStore.setState({ S: originalSettings })
+
   delete globalThis.Notification
   vi.useRealTimers()
 })
 
-describe('the local rest-over alert follows the Push switch', () => {
-  it('stays silent with the switch off, even though the permission is granted', async () => {
+describe('the local rest-over alert follows browser permission', () => {
+  it('stays silent when browser permission is denied', async () => {
+    globalThis.Notification.permission = 'denied'
     await runOut()
     expect(showNotification).not.toHaveBeenCalled()
   })
 
-  it('fires once with the switch on, tagged like the server push, without repeating the title', async () => {
+  it('fires once with granted permission without repeating the title', async () => {
     subscription = { endpoint: 'https://push.example/x' }
     await runOut()
     expect(showNotification).toHaveBeenCalledTimes(1)
@@ -57,7 +70,7 @@ describe('the local rest-over alert follows the Push switch', () => {
     expect(opts.body).toBeUndefined()
   })
 
-  it('never asks for the permission by itself — only the switch does', async () => {
+  it('never asks for permission by itself', async () => {
     globalThis.Notification.permission = 'default'
     await runOut()
     expect(requestPermission).not.toHaveBeenCalled()

@@ -11,7 +11,7 @@ import { MOBILE, nativeLoadLegacyStrict, onAppActive, syncReminder, writeAutoBac
 import { referencedHashes } from '../lib/media-refs.js'
 import { createOfflineStorage } from '../lib/cloud/offline-store.js'
 import { createLegacyReader, migrateLegacy } from '../lib/cloud/legacy-migration.js'
-import { makeOwner, makeEnvelope } from '../lib/cloud/model.js'
+import { makeOwner, makeEnvelope, recoverableBy, trainingState } from '../lib/cloud/model.js'
 import { prepareOperation, decodeState, encodeState } from '../lib/cloud/codec.js'
 import { createSyncBridge } from '../lib/cloud/sync-bridge.js'
 import { createFirebaseClient, readFirebaseConfig } from '../lib/cloud/firebase-client.js'
@@ -78,6 +78,7 @@ export function createWorkoutStore(options = {}) {
       if (stopped || value.ownerKey !== transition?.owner.ownerKey) return
       envelope = value
       const S = sanitizeAccent(state)
+      delete S.coach
       S.customEx = healCustomEx(S.customEx)
       registerCustom(S.customEx || [])
       set({ S, ownerKey: value.ownerKey, activeSessionToken: value.localMetadata?.activeSessionToken || null,
@@ -180,6 +181,7 @@ export function createWorkoutStore(options = {}) {
     function record(next, push, kind, replaceActive = false) {
       requireReady()
       const previous = get().S
+      delete next.coach
       next.customEx = healCustomEx(next.customEx)
       // Reject policy/identity errors before accepting a view that cannot enter the bridge.
       encodeState(next, { generation: envelope.cloudGeneration, unitVersion: envelope.unitProjectionVersion ?? envelope.lastConfirmedControl?.unitVersion ?? 1 })
@@ -246,7 +248,8 @@ export function createWorkoutStore(options = {}) {
         requireReady()
         const preview = mergeWith || (importRead?.ownerKey === get().ownerKey ? importRead : null); importRead = null
         if (preview?.ownerKey && preview.ownerKey !== get().ownerKey) throw failure('owner-mismatch')
-        return bridge.importBackup(backup, { mode: mergeWith ? 'merge' : 'replace', mergeWith: preview })
+        const training = clone(backup); delete training.coach
+        return bridge.importBackup(training, { mode: mergeWith ? 'merge' : 'replace', mergeWith: preview })
       },
       async flushLocal() { if (bridge) await bridge.flushLocal() },
       async retryLocal() {
@@ -269,25 +272,44 @@ export function createWorkoutStore(options = {}) {
       login: (...args) => session ? session.login(...args) : Promise.reject(failure('auth/not-ready')),
       register: (...args) => session ? session.register(...args) : Promise.reject(failure('auth/not-ready')),
       resetPassword: (...args) => session ? session.resetPassword(...args) : Promise.reject(failure('auth/not-ready')),
+      getContext: () => ({ ownerKey: get().ownerKey, localReady: get().localReady, activeSessionToken: get().activeSessionToken, epoch }),
       async signOut({ force = false } = {}) {
-        requireReady(); await bridge.syncNow()
+        requireReady()
+        const capturedEpoch = epoch, capturedKey = get().ownerKey, capturedSession = session
+        const assertDeparture = () => { if (stopped || epoch !== capturedEpoch || get().ownerKey !== capturedKey || !get().localReady) throw failure('stale-context') }
+        await bridge.syncNow(); assertDeparture()
         const left = get().unsyncedChanges()
         if (left.owed && !force) return left
-        const { useUI } = await import('./useUI.js')
-        useUI.getState().abandonWork?.(); useUI.getState().stopRest?.(); useUI.getState().stopWork?.()
-        await get().flushLocal(); await session.signOut()
+        const { useUI } = await import('./useUI.js'); assertDeparture()
+        useUI.getState().abandonWork?.(); assertDeparture()
+        useUI.getState().stopRest?.(); useUI.getState().stopWork?.()
+        await get().flushLocal(); assertDeparture()
+        // An SDK request already sent cannot be cancelled; no later UI success is applied to B.
+        await capturedSession.signOut()
+        if (get().user || get().ownerKey !== guest.ownerKey || !get().localReady) throw failure('stale-context')
         return { ...left, ...(left.owed ? { stashed: true } : {}) }
       },
       resolveAdoption(choice) { requireReady(); return bridge.resolveAdoption(choice) },
       adoptProfile(ask) {
         if (adopting) return adopting
-        const key = get().ownerKey, decision = envelope?.adoptionDecision
+        const key = get().ownerKey, answerEpoch = epoch, decision = envelope?.adoptionDecision
         if (decision?.status !== 'pending') return Promise.resolve(null)
         const copy = envelope.recoveryCopies.find(c => c.recoveryId === decision.recoveryId)
-        adopting = (async () => { const add = await ask(localExtras(copy?.state || DEF, get().S)); if (key !== get().ownerKey) throw failure('stale-context'); await bridge.resolveAdoption(add ? 'add' : 'keep'); return add })().finally(() => { adopting = null })
+        adopting = (async () => { const add = await ask(localExtras(copy?.state || DEF, get().S)); if (key !== get().ownerKey || answerEpoch !== epoch) throw failure('stale-context'); await bridge.resolveAdoption(add ? 'add' : 'keep'); return add })().finally(() => { adopting = null })
         return adopting
       },
       async resumeAdoption(ask) { if (!ask) ask = (await import('../sheets.jsx')).askAddDeviceData; return get().adoptProfile(ask) },
+      listRecovery() {
+        requireReady()
+        return (envelope?.recoveryCopies || []).filter(copy => recoverableBy(copy, transition.owner)).map(({ recoveryId, sourceId, reason, decision }) => ({ recoveryId, sourceId, reason, decision }))
+      },
+      recoveryState(recoveryId) {
+        requireReady()
+        const copy = envelope?.recoveryCopies.find(item => item.recoveryId === recoveryId)
+        if (!copy || !recoverableBy(copy, transition.owner)) throw failure('recovery-owner-mismatch')
+        return trainingState(copy.state)
+      },
+      resolveRecovery(recoveryId, choice) { requireReady(); return bridge.resolveRecovery(recoveryId, choice) },
       async keptChanges() { return (envelope?.recoveryCopies || []).filter(c => c.ownerKey === get().ownerKey).map(c => ({ server: projectId, uid: desiredUser?.uid || null, recoveryId: c.recoveryId, at: c.state?._ts || 0 })) },
       async keptState(server, uid) { if (server !== projectId || uid !== (desiredUser?.uid || null) || !get().localReady) return null; return clone(departures.get(get().ownerKey)?.state || envelope?.recoveryCopies.find(c => c.ownerKey === get().ownerKey)?.state || null) },
       async stashedMediaHashes() { requireReady(); return new Set((envelope?.recoveryCopies || []).flatMap(c => [...referencedHashes(c.state)])) },

@@ -1,7 +1,18 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { importFromApp } from './sheets.jsx'
@@ -22,20 +33,20 @@ async function summaryFor(text) {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  act(() => root.render(sheet.render(() => {})))
+  await act(async () => { await root.render(sheet.render(() => {})); await uiRuntime.fixture.flush(); })
   return host.querySelector('.muted.small').textContent
 }
 
 describe('the import summary’s dates', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     useUI.setState({ sheets: [], toasts: [] })
-    useStore.setState(s => ({ S: { ...s.S, unit: 'kg', workouts: [], bodyweight: [] } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, unit: 'kg', workouts: [], bodyweight: [] } }))
   })
   afterEach(() => { if (root) act(() => root.unmount()); root = null; document.body.innerHTML = '' })
 
   it('carry the year when the history spans two years', async () => {
-    const text = await summaryFor(csv('2025-02-03', '2026-01-21'))
+    const text = (await summaryFor(csv('2025-02-03', '2026-01-21')))
     expect(text).toContain('2025')
     expect(text).toContain('2026')
   })
@@ -51,10 +62,10 @@ describe('the import summary’s dates', () => {
 // QA 10-06: the summary never said how many rows it had left out, and every count read "1 workouts
 // imported", "1 sets bring an RPE".
 describe('the import summary’s counts', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     useUI.setState({ sheets: [], toasts: [], toastMsg: '' })
-    useStore.setState(s => ({ S: { ...s.S, unit: 'kg', workouts: [], bodyweight: [], wc: { ...s.S.wc, effort: 'rpe' } } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, unit: 'kg', workouts: [], bodyweight: [], wc: { ...s.S.wc, effort: 'rpe' } } }))
   })
   afterEach(() => { if (root) act(() => root.unmount()); root = null; document.body.innerHTML = '' })
   const lines = () => [...host.querySelectorAll('.small.dim')].map(d => d.textContent)
@@ -74,7 +85,7 @@ describe('the import summary’s counts', () => {
     await summaryFor(['Date,Workout Name,Exercise Name,Set Order,Weight,Reps,Seconds,RPE', '2026-01-02 10:00:00,Push,Bench Press (Barbell),1,60,5,0,8'].join('\n'))
     expect(lines().join(' ')).toMatch(/\b1 set brings an RPE with it\./)
     const importBtn = [...host.querySelectorAll('button')].find(b => b.textContent === 'Import')
-    act(() => importBtn.click())
+    await act(async () => { await importBtn.click(); await uiRuntime.fixture.flush(); })
     expect(useUI.getState().toastMsg).toBe('1 workout imported')
   })
 })

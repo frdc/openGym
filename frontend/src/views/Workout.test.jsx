@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => {
   state.stopWork = vi.fn(() => { state.work = null })
   state.storeSnapshot = () => ({
     S: state.S,
+    ownerKey: 'isolated-view-owner', localReady: true, activeSessionToken: 'isolated-view-draft',
     user: null,
     update: mut => {
       const next = structuredClone(state.S)

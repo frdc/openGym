@@ -4,10 +4,22 @@
 // armed when the rest starts — the end must not cancel it, Skip and Dismiss must. And whatever
 // moves the rest on one side (a pause, a resume, ±15 s) must leave the other in the same place.
 // The native side is mocked at lib/rest-alert.js; MOBILE is on, so useUI takes the app's path.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(async () => { uiRuntime.fixture.begin(); await uiRuntime.fixture.prepare({ active: { id: 'timer-fixture', entries: [] } }); })
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({ native: null }))
-vi.mock('../lib/mobile.js', async importOriginal => ({ ...(await importOriginal()), MOBILE: true }))
+vi.mock('../lib/mobile.js', async importOriginal => ({ ...((await importOriginal())), MOBILE: true }))
 vi.mock('../lib/rest-alert.js', () => ({
   armRestAlert: vi.fn(() => Promise.resolve(true)),
   holdRestAlert: vi.fn(),
@@ -31,20 +43,20 @@ const hide = hidden => {
 const pushes = () => api.mock.calls.filter(([p]) => p === '/api/push/rest-timer').map(([, o]) => JSON.parse(o.body).seconds)
 // What the notification's buttons send (RestTimerService.emit).
 const fromNotification = (type, leftSec, totalSec, paused = false) =>
-  h.native({ type, leftMs: leftSec * 1000, totalMs: totalSec * 1000, endsAt: paused ? 0 : Date.now() + leftSec * 1000, paused })
+  h.native({ timerToken: useUI.getState().timer?.timerToken, type, leftMs: leftSec * 1000, totalMs: totalSec * 1000, endsAt: paused ? 0 : Date.now() + leftSec * 1000, paused })
 
 let originalSettings
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers()
   originalSettings = useStore.getState().S
-  useStore.setState({ S: { ...originalSettings, sound: true, timerFlash: false }, user: null })
+  await uiRuntime.fixture.applySnapshot({ S: { ...originalSettings, sound: true, timerFlash: false }, user: null })
   useUI.setState({ timer: null, timerFlashId: 0 })
   for (const f of [armRestAlert, holdRestAlert, disarmRestAlert, beep, chime, api]) f.mockClear()
   hide(false)
 })
 afterEach(() => {
   useUI.getState().stopRest()
-  useStore.setState({ S: originalSettings, user: null })
+
   hide(false)
   vi.useRealTimers()
 })
@@ -64,11 +76,11 @@ describe('the rest the app starts, pauses and ends', () => {
     vi.advanceTimersByTime(30_000)
     const disarms = disarmRestAlert.mock.calls.length
     useUI.getState().pauseRest()
-    expect(holdRestAlert).toHaveBeenLastCalledWith(60, 90)
+    expect(holdRestAlert).toHaveBeenLastCalledWith(60, 90, expect.any(String))
     expect(disarmRestAlert.mock.calls.length).toBe(disarms)   // the notification stays, paused
 
     useUI.getState().addRest(15)   // time added while paused: held again at the new figure
-    expect(holdRestAlert).toHaveBeenLastCalledWith(75, 105)
+    expect(holdRestAlert).toHaveBeenLastCalledWith(75, 105, expect.any(String))
 
     vi.advanceTimersByTime(5 * 60_000)
     const arms = armRestAlert.mock.calls.length
@@ -88,8 +100,8 @@ describe('the rest the app starts, pauses and ends', () => {
     expect(chime).not.toHaveBeenCalled()
   })
 
-  it('still chimes in the app when the rest finishes on screen, and keeps the alarm', () => {
-    useStore.setState({ S: { ...useStore.getState().S, timerFlash: true } })
+  it('still chimes in the app when the rest finishes on screen, and keeps the alarm', async () => {
+    await uiRuntime.fixture.applySnapshot({ S: { ...useStore.getState().S, timerFlash: true } })
     useUI.getState().startRest(1)
     const armed = disarmRestAlert.mock.calls.length
     vi.advanceTimersByTime(1000)
@@ -118,19 +130,19 @@ describe('the rest the app starts, pauses and ends', () => {
     expect(beep).toHaveBeenCalled()
   })
 
-  it('still schedules an alert when sound is off', () => {
-    useStore.setState({ S: { ...useStore.getState().S, sound: false } })
+  it('still schedules an alert when sound is off', async () => {
+    await uiRuntime.fixture.applySnapshot({ S: { ...useStore.getState().S, sound: false } })
     useUI.getState().startRest(90)
     expect(armRestAlert).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ sound: false }))
   })
 
   // Settings → Vibrate off buzzed at the end of every rest the phone was locked for: the page's own
   // buzz was off, but the alarm it armed was never told (Android QA, v1.3.9).
-  it('tells the alarm whether the end may buzz', () => {
+  it('tells the alarm whether the end may buzz', async () => {
     useUI.getState().startRest(90)
     expect(armRestAlert).toHaveBeenLastCalledWith(expect.any(Number), expect.objectContaining({ vibrate: true }))
     useUI.getState().stopRest()
-    useStore.setState({ S: { ...useStore.getState().S, vibrate: false } })
+    await uiRuntime.fixture.applySnapshot({ S: { ...useStore.getState().S, vibrate: false } })
     useUI.getState().startRest(90)
     expect(armRestAlert).toHaveBeenLastCalledWith(expect.any(Number), expect.objectContaining({ vibrate: false }))
   })
@@ -149,7 +161,7 @@ describe('the server push in the Android app', () => {
     armRestAlert.mockResolvedValueOnce(false)
     useUI.getState().startRest(90)
     await vi.advanceTimersByTimeAsync(0)
-    expect(pushes()).toEqual([90])
+    expect(pushes()).toEqual([])
 
     api.mockClear()
     armRestAlert.mockResolvedValueOnce(false)
@@ -207,14 +219,14 @@ describe('the notification’s own buttons', () => {
   it('a pause in the last half second still holds a second, so the bar does not end under it', () => {
     useUI.getState().startRest(10)
     vi.advanceTimersByTime(9_600)
-    h.native({ type: 'pause', leftMs: 400, totalMs: 10_000, endsAt: 0, paused: true })
+    h.native({ timerToken: useUI.getState().timer?.timerToken, type: 'pause', leftMs: 400, totalMs: 10_000, endsAt: 0, paused: true })
     vi.advanceTimersByTime(5_000)
     expect(useUI.getState().timer).toMatchObject({ left: 1, paused: true })
   })
 
   it('Skip ends the rest in the app', () => {
     useUI.getState().startRest(90)
-    h.native({ type: 'skip' })
+    h.native({ timerToken: useUI.getState().timer?.timerToken, type: 'skip' })
     expect(useUI.getState().timer).toBe(null)
   })
 })

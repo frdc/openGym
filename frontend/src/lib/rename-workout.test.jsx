@@ -1,5 +1,16 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
+import { describe, expect, it, beforeEach, afterEach , vi } from 'vitest'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useStore } from '../store/useStore.js'
@@ -8,14 +19,14 @@ import { renameWorkoutSheet, addRoutineToSessionSheet } from '../sheets.jsx'
 import { buildCompletedWorkout } from './finish-workout.js'
 
 const mounted = []
-function render(open) {
+async function render(open) {
   open()
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 
@@ -34,15 +45,15 @@ describe('rename workout', () => {
   })
   afterEach(unmountAll)
 
-  it('renames an active workout and disables save on empty input', () => {
-    useStore.setState(s => ({
+  it('renames an active workout and disables save on empty input', async () => {
+    ;await uiRuntime.fixture.applySnapshot(s => ({
       S: {
         ...s.S,
         active: { id: 'w1', d: '2026-08-25', start: 1, name: 'Leg Day', entries: [] },
       },
-    }))
+    }));
 
-    const host = render(() => renameWorkoutSheet())
+    const host = (await render(() => renameWorkoutSheet()))
     const input = host.querySelector('input')
     const saveBtn = [...host.querySelectorAll('button')].find(b => /save/i.test(b.textContent))
 
@@ -50,13 +61,13 @@ describe('rename workout', () => {
     expect(saveBtn.disabled).toBe(false)
 
     // Type blank whitespace
-    act(() => { type(input, '   ') })
+    await act(async () => { type(input, '   '); await uiRuntime.fixture.flush(); })
     expect(saveBtn.disabled).toBe(true)
 
     // Type a new title and save
-    act(() => { type(input, 'Heavy Squats & Core') })
+    await act(async () => { type(input, 'Heavy Squats & Core'); await uiRuntime.fixture.flush(); })
     expect(saveBtn.disabled).toBe(false)
-    act(() => { saveBtn.click() })
+    await act(async () => { saveBtn.click(); await uiRuntime.fixture.flush(); })
 
     const active = useStore.getState().S.active
     expect(active.name).toBe('Heavy Squats & Core')
@@ -67,29 +78,27 @@ describe('rename workout', () => {
     expect(completed.name).toBe('Heavy Squats & Core')
   })
 
-  it('submits on Enter key press', () => {
-    useStore.setState(s => ({
+  it('submits on Enter key press', async () => {
+    ;await uiRuntime.fixture.applySnapshot(s => ({
       S: {
         ...s.S,
         active: { id: 'w1', d: '2026-08-25', start: 1, name: 'Upper A', entries: [] },
       },
-    }))
+    }));
 
-    const host = render(() => renameWorkoutSheet())
+    const host = (await render(() => renameWorkoutSheet()))
     const input = host.querySelector('input')
 
-    act(() => { type(input, 'Upper Power') })
-    act(() => {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    })
+    await act(async () => { type(input, 'Upper Power'); await uiRuntime.fixture.flush(); })
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await uiRuntime.fixture.flush(); })
 
     const active = useStore.getState().S.active
     expect(active.name).toBe('Upper Power')
     expect(active.customName).toBe(true)
   })
 
-  it('preserves custom renamed title when another routine is added to the session', () => {
-    useStore.setState(s => ({
+  it('preserves custom renamed title when another routine is added to the session', async () => {
+    ;await uiRuntime.fixture.applySnapshot(s => ({
       S: {
         ...s.S,
         routines: [
@@ -106,13 +115,13 @@ describe('rename workout', () => {
           entries: [{ id: 'bench_press', sets: [] }],
         },
       },
-    }))
+    }));
 
-    const host = render(() => addRoutineToSessionSheet())
+    const host = (await render(() => addRoutineToSessionSheet()))
     // Click on Routine 2
     const items = [...host.querySelectorAll('.item')].filter(el => !el.classList.contains('disabled'))
     expect(items.length).toBeGreaterThan(0)
-    act(() => { items[0].click() })
+    await act(async () => { items[0].click(); await uiRuntime.fixture.flush(); })
 
     const active = useStore.getState().S.active
     // The name should remain 'My Special Workout' instead of being overwritten with 'Routine 1 + Routine 2'

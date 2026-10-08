@@ -1,6 +1,7 @@
+import { prepareLegacyState } from './legacy-migration.js'
 import { createJobCoordinator, reconcileJobUnits } from './sync-jobs.js'
 import * as defaultCodec from './codec.js'
-import { makeEnvelope, makeOwner } from './model.js'
+import { makeEnvelope, makeOwner, recoverableBy, trainingState } from './model.js'
 import { DEF } from '../../store/state-defaults.js'
 import { createSyncStatus } from './sync-status.js'
 
@@ -345,13 +346,36 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     })
     if (valid(ctx)) await syncNow()
   }
+  async function resolveRecovery(recoveryId, choice) {
+    if (!['add', 'keep'].includes(choice)) throw failure('invalid-adoption-choice')
+    const ctx = active; assertCurrent(ctx)
+    const source = memory(ctx).recoveryCopies.find(copy => copy.recoveryId === recoveryId)
+    if (!source || !recoverableBy(source, ctx.owner)) throw failure('recovery-owner-mismatch')
+    const prepared = choice === 'add' ? await prepareLegacyState(trainingState(source.state)) : null
+    assertCurrent(ctx); await flush(ctx); assertCurrent(ctx)
+    const opId = newId(), sessionToken = newId()
+    await durable(ctx, current => {
+      const copy = current.recoveryCopies.find(item => item.recoveryId === recoveryId)
+      if (!copy || !recoverableBy(copy, ctx.owner)) throw failure('recovery-owner-mismatch')
+      if (copy.decision) return current
+      let next = clone(current)
+      if (choice === 'add') {
+        const operation = codec.prepareOperation(DEF, prepared, { ownerKey: ctx.owner.ownerKey, opId, kind: 'recovery', generation: next.lastConfirmedControl ? next.cloudGeneration : null, unitVersion: next.lastConfirmedControl?.unitVersion || 1 })
+        next = codec.mergeLocalDraft(next, { previous: DEF, next: { ...prepared, active: next.state.active || prepared.active || null }, operation,
+          activeSessionToken: next.state.active ? next.localMetadata?.activeSessionToken || sessionToken : prepared.active ? sessionToken : null })
+      }
+      next.recoveryCopies = next.recoveryCopies.map(item => item.recoveryId === recoveryId ? { ...item, decision: choice } : item)
+      return next
+    })
+    assertCurrent(ctx)
+  }
   const jobs = createJobCoordinator({ context: () => active, durable, flush, current: assertCurrent, remote, newId, now, syncNow })
   return { reset: jobs.reset, importBackup: jobs.importBackup, changeUnit: jobs.changeUnit, hydrate, bindAuth, unbindAuth, recordChange, flushLocal: () => flush(active),
     flushOwner: ownerKey => {
       const ctx = contexts.get(ownerKey)
       if (!ctx) return Promise.reject(failure('unknown-owner-context'))
       return flush(ctx)
-    }, syncNow, resolveAdoption,
+    }, syncNow, resolveAdoption, resolveRecovery,
     readRemote: async () => { const ctx = active; if (!authenticated(ctx)) throw failure('auth-required'); return refresh(ctx) },
     getUnsynced: () => { const envelope = active?.envelope && memory(active), count = (envelope?.pendingOperations.length || 0) + (envelope?.pendingJobs.length || 0);
       return { count, blocked: status.get().cloud === 'blocked' || envelope?.adoptionDecision?.status === 'pending' ? count : [...(envelope?.pendingOperations || []), ...(envelope?.pendingJobs || [])].filter(x => x.blockedReason).length } },

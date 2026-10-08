@@ -4,6 +4,17 @@
 // and put back), a reorder of the loop (a routine swiped out of it and put back), and with an
 // older app (v1.3.9) a rename of the routine swiped away in Plan and put back. Undo means "as if
 // nothing happened", so that change has to survive, on every device, in either merge order.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn(), useParams: () => ({}) }))
@@ -45,7 +56,7 @@ const both = (x, y) => [mergeStates(x, y), mergeStates(y, x)]
 const T1 = Date.now()
 const clockAt = ms => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(ms) }
 
-beforeEach(() => { localStorage.clear(); useStore.setState({ S: shared(), user: null }) })
+beforeEach(async () => { localStorage.clear(); await uiRuntime.fixture.applySnapshot({ S: shared(), user: null }); })
 afterEach(() => { vi.useRealTimers(); localStorage.clear() })
 
 describe('Undo of an exercise swiped out of a routine', () => {
@@ -160,8 +171,8 @@ describe('Undo of a routine swiped away in Plan, with an older app (v1.3.9) on t
   })
   // RC verify 2026-10-07: a routine with no edit time (the seed's, a template's, one from before
   // stamps and never edited since) was stamped "now" by the Undo, the newer version to v1.3.9.
-  it('a rename made there offline survives the Undo of a routine that had no edit time', () => {
-    useStore.setState({ S: (() => { const s = clone(S()); delete s.routines[1]._ts; return s })() })
+  it('a rename made there offline survives the Undo of a routine that had no edit time', async () => {
+    await uiRuntime.fixture.prepare((() => { const s = clone(S()); delete s.routines[1]._ts; return s })())
     const base = S()
     const old = clone(base)
     old.routines[1].name = 'Pull heavy'; old.routines[1]._ts = T0; old._ts = T0   // v1.3.9, offline

@@ -2,6 +2,17 @@
 // Swipe actions on Plan (v1.3.11). The routines list: toward the start deletes with an Undo (no
 // confirm), toward the end duplicates. The loop: toward the start takes the routine out, with an
 // Undo, and nothing on the other side. Weekday rows do not swipe. The rows stay keyboard buttons.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,35 +38,35 @@ const clone = value => JSON.parse(JSON.stringify(value))
 const routine = (id, name) => ({ id, name, emoji: null, ex: [{ id: '0025' }] })
 let host, root, widthSpy
 
-function mount(view, extra = {}) {
+async function mount(view, extra = {}) {
   localStorage.setItem('gym_plan_view', view)
   const S = clone(DEF)
   Object.assign(S, {
     routines: [routine('a', 'Push A'), routine('b', 'Pull A'), routine('c', 'Legs')],
     week: { 1: ['a', 'b'], 3: ['b'], 5: ['c'] }, dayPlan: { '2099-01-01': 'b' },
   }, extra)
-  useStore.setState({ S, user: null })
+  await uiRuntime.fixture.applySnapshot({ S, user: null })
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
-  act(() => root.render(<Plan />))
+  await act(async () => { await root.render(<Plan />); await uiRuntime.fixture.flush(); })
 }
 const S = () => useStore.getState().S
 const swrows = () => [...host.querySelectorAll('.swrow')]
 const rowOf = name => swrows().find(r => r.querySelector('.tt')?.textContent === name)
-function pointer(target, type, x, y = 300) {
+async function pointer(target, type, x, y = 300) {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.assign(event, { pointerId: 7, pointerType: 'touch', clientX: x, clientY: y })
-  act(() => { target.dispatchEvent(event) })
+  await act(async () => { target.dispatchEvent(event); await uiRuntime.fixture.flush(); })
 }
-const click = target => act(() => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })) })
-function swipe(target, x0, x1) {
-  pointer(target, 'pointerdown', x0)
-  pointer(target, 'pointermove', (x0 + x1) / 2)
-  pointer(target, 'pointermove', x1)
-  pointer(target, 'pointerup', x1)
-  click(target)
-  act(() => vi.advanceTimersByTime(800))
+const click = async target => await act(async () => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); await uiRuntime.fixture.flush(); })
+async function swipe(target, x0, x1) {
+  await pointer(target, 'pointerdown', x0)
+  await pointer(target, 'pointermove', (x0 + x1) / 2)
+  await pointer(target, 'pointermove', x1)
+  await pointer(target, 'pointerup', x1)
+  await click(target)
+  await act(async () => { await vi.advanceTimersByTime(800); await uiRuntime.fixture.flush(); })
 }
-const undo = () => act(() => useUI.getState().runToastAction())
+const undo = async () => await act(async () => { await useUI.getState().runToastAction(); await uiRuntime.fixture.flush(); })
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -74,15 +85,15 @@ afterEach(() => {
 })
 
 describe('the routines list', () => {
-  it('rows stay keyboard buttons that open the routine, with both panes out of reach while shut', () => {
-    mount('routines')
+  it('rows stay keyboard buttons that open the routine, with both panes out of reach while shut', async () => {
+    await mount('routines')
     expect(swrows()).toHaveLength(3)
     const r = rowOf('Pull A').querySelector('.item')
     expect(r.getAttribute('role')).toBe('button')
     expect(r.tabIndex).toBe(0)
-    act(() => { r.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    await act(async () => { r.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await uiRuntime.fixture.flush(); })
     expect(nav).toHaveBeenLastCalledWith('/plan/r/b')
-    click(rowOf('Push A').querySelector('.item'))
+    await click(rowOf('Push A').querySelector('.item'))
     expect(nav).toHaveBeenLastCalledWith('/plan/r/a')
     const panes = rowOf('Push A').querySelectorAll('.swpane')
     expect(panes).toHaveLength(2)
@@ -94,10 +105,10 @@ describe('the routines list', () => {
     expect(rowOf('Push A').querySelector('.swpane.cp').textContent).toBe('Duplicate')
   })
 
-  it('a long swipe toward the start deletes without a confirm, and Undo puts everything back', () => {
-    mount('routines')
+  it('a long swipe toward the start deletes without a confirm, and Undo puts everything back', async () => {
+    await mount('routines')
     const before = clone(S())
-    swipe(rowOf('Pull A'), 330, 60)
+    await swipe(rowOf('Pull A'), 330, 60)
     expect(confirmSheet).not.toHaveBeenCalled()
     expect(S().routines.map(r => r.id)).toEqual(['a', 'c'])
     expect(S().week).toEqual({ 1: ['a'], 5: ['c'] })
@@ -105,7 +116,7 @@ describe('the routines list', () => {
     expect(useUI.getState().toastMsg).toBe('“Pull A” gone.')
     expect(nav).not.toHaveBeenCalled()
 
-    undo()
+    await undo()
     // the same routines in the same order, the one put back without an edit time it never had
     // (stamped "now", it beat a rename an older app made offline before the swipe)
     expect(S().routines).toEqual(before.routines)
@@ -114,9 +125,9 @@ describe('the routines list', () => {
     expect(rowOf('Pull A')).toBeTruthy()
   })
 
-  it('a long swipe toward the end duplicates right below, and stays on the list', () => {
-    mount('routines')
-    swipe(rowOf('Push A'), 100, 330)
+  it('a long swipe toward the end duplicates right below, and stays on the list', async () => {
+    await mount('routines')
+    await swipe(rowOf('Push A'), 100, 330)
     expect(S().routines.map(r => r.name)).toEqual(['Push A', 'Push A (Copy)', 'Pull A', 'Legs'])
     const copy = S().routines[1]
     expect(copy.id).not.toBe('a')
@@ -126,38 +137,38 @@ describe('the routines list', () => {
     expect(nav).not.toHaveBeenCalled()
   })
 
-  it('the duplicate’s toast has its own Undo, which takes the copy away again', () => {
-    mount('routines')
-    swipe(rowOf('Push A'), 100, 330)
+  it('the duplicate’s toast has its own Undo, which takes the copy away again', async () => {
+    await mount('routines')
+    await swipe(rowOf('Push A'), 100, 330)
     expect(S().routines).toHaveLength(4)
     expect(useUI.getState().toastAction).toBeTruthy()
-    undo()
+    await undo()
     expect(S().routines.map(r => r.id)).toEqual(['a', 'b', 'c'])
   })
 
-  it('an Undo that finds the routine already back says so instead of nothing', () => {
-    mount('routines')
-    act(() => { deleteRoutineWithUndo('b') })
+  it('an Undo that finds the routine already back says so instead of nothing', async () => {
+    await mount('routines')
+    await act(async () => { deleteRoutineWithUndo('b'); await uiRuntime.fixture.flush(); })
     const pending = useUI.getState().toastAction
-    act(() => useStore.getState().update(s => { s.routines.splice(1, 0, routine('b', 'Pull A')) }))   // a sync brought it back
-    act(() => pending.run())
+    await act(async () => { await useStore.getState().update(s => { s.routines.splice(1, 0, routine('b', 'Pull A')) }); await uiRuntime.fixture.flush(); })   // a sync brought it back
+    await act(async () => { await pending.run(); await uiRuntime.fixture.flush(); })
     expect(S().routines.map(r => r.id)).toEqual(['a', 'b', 'c'])
     expect(useUI.getState().toastMsg).toBe('It’s already back.')
   })
 
-  it('Edit’s minus deletes the same way, with the Undo in place of the confirm', () => {
-    mount('routines')
-    click(host.querySelector('.plan-textbtn'))
-    click(host.querySelector('button[aria-label="Delete Legs"]'))
+  it('Edit’s minus deletes the same way, with the Undo in place of the confirm', async () => {
+    await mount('routines')
+    await click(host.querySelector('.plan-textbtn'))
+    await click(host.querySelector('button[aria-label="Delete Legs"]'))
     expect(confirmSheet).not.toHaveBeenCalled()
     expect(S().routines.map(r => r.id)).toEqual(['a', 'b'])
-    undo()
+    await undo()
     expect(S().routines.map(r => r.id)).toEqual(['a', 'b', 'c'])
     expect(S().week[5]).toEqual(['c'])
   })
 
-  it('is a plain list with the setting off', () => {
-    mount('routines', { wc: { ...DEF.wc, swipeSets: false } })
+  it('is a plain list with the setting off', async () => {
+    await mount('routines', { wc: { ...DEF.wc, swipeSets: false } })
     expect(swrows()).toHaveLength(0)
     expect(host.querySelectorAll('.item.plan-routine')).toHaveLength(3)
   })
@@ -168,34 +179,34 @@ describe('the loop', () => {
     queue: { ids: ['a', 'b', 'c'], since: 1, startsOn: '2026-10-01', label: 'My loop', rotationId: 'rot' },
     scheduleMode: 'rotation', week: {}, dayPlan: { '2099-01-01': 'b' } }
 
-  it('a swipe toward the start takes the routine out, and Undo puts the loop and its pin back', () => {
-    mount('schedule', clone(loop))
+  it('a swipe toward the start takes the routine out, and Undo puts the loop and its pin back', async () => {
+    await mount('schedule', clone(loop))
     expect(swrows()).toHaveLength(3)
     // remove-only: no copy pane, and a swipe toward the end does nothing
     expect(rowOf('Pull A').querySelector('.swpane.cp')).toBeNull()
     expect(rowOf('Pull A').querySelector('.swpane.del').textContent).toBe('Remove')
-    swipe(rowOf('Pull A'), 60, 330)
+    await swipe(rowOf('Pull A'), 60, 330)
     expect(S().queue.ids).toEqual(['a', 'b', 'c'])
 
-    swipe(rowOf('Pull A'), 330, 60)
+    await swipe(rowOf('Pull A'), 330, 60)
     expect(S().queue.ids).toEqual(['a', 'c'])
     expect(S().rotation.sequence).toEqual(['a', 'c'])
     expect(S().dayPlan).toEqual({})          // its future pin was swept with it
     expect(S().routines).toHaveLength(3)     // out of the loop, not deleted
     expect(useUI.getState().toastMsg).toBe('“Pull A” is out of the loop.')
 
-    undo()
+    await undo()
     expect(S().queue).toEqual(loop.queue)
     expect(S().rotation).toEqual(loop.rotation)
     expect(S().dayPlan).toEqual(loop.dayPlan)
   })
 
-  it('Undo after the loop changed again slots the routine back at its old place', () => {
-    mount('schedule', clone(loop))
-    swipe(rowOf('Pull A'), 330, 60)
+  it('Undo after the loop changed again slots the routine back at its old place', async () => {
+    await mount('schedule', clone(loop))
+    await swipe(rowOf('Pull A'), 330, 60)
     const pending = useUI.getState().toastAction
-    act(() => useStore.getState().update(s => { s.queue = { ...s.queue, ids: ['c', 'a'] }; s.rotation = { ...s.rotation, sequence: ['c', 'a'] } }))
-    act(() => pending.run())
+    await act(async () => { await useStore.getState().update(s => { s.queue = { ...s.queue, ids: ['c', 'a'] }; s.rotation = { ...s.rotation, sequence: ['c', 'a'] } }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await pending.run(); await uiRuntime.fixture.flush(); })
     expect(S().queue.ids).toEqual(['c', 'b', 'a'])
     expect(S().rotation.sequence).toEqual(['c', 'b', 'a'])
   })
@@ -206,66 +217,66 @@ describe('the loop', () => {
     else { s.queue = null; s.rotation = { ...s.rotation, sequence: [] }; s.scheduleMode = 'rotation' }
   })
 
-  it('Undo after switching to Fixed week puts the routine back in the saved loop and stays on Fixed week', () => {
-    mount('schedule', clone(loop))
-    act(() => { takeOutOfLoop('b', setSeq, ['a', 'b', 'c'], 'My loop') })
+  it('Undo after switching to Fixed week puts the routine back in the saved loop and stays on Fixed week', async () => {
+    await mount('schedule', clone(loop))
+    await act(async () => { takeOutOfLoop('b', setSeq, ['a', 'b', 'c'], 'My loop'); await uiRuntime.fixture.flush(); })
     const pending = useUI.getState().toastAction
-    act(() => useStore.getState().update(s => { chooseFixedWeek(s) }))
-    act(() => pending.run())
+    await act(async () => { await useStore.getState().update(s => { chooseFixedWeek(s) }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await pending.run(); await uiRuntime.fixture.flush(); })
     expect(S().queue).toBeNull()
     expect(scheduleModeOf(S())).toBe('week')
     expect(S().rotation.sequence).toEqual(['a', 'b', 'c'])
   })
 
-  it('the same after taking out the last routine, where the loop itself did not change', () => {
-    mount('schedule', { ...clone(loop), rotation: { ...loop.rotation, sequence: ['a'] }, queue: { ...loop.queue, ids: ['a'] } })
-    act(() => { takeOutOfLoop('a', setSeq, ['a'], 'My loop') })
+  it('the same after taking out the last routine, where the loop itself did not change', async () => {
+    await mount('schedule', { ...clone(loop), rotation: { ...loop.rotation, sequence: ['a'] }, queue: { ...loop.queue, ids: ['a'] } })
+    await act(async () => { takeOutOfLoop('a', setSeq, ['a'], 'My loop'); await uiRuntime.fixture.flush(); })
     expect(S().queue).toBeNull()
     const pending = useUI.getState().toastAction
-    act(() => useStore.getState().update(s => { chooseFixedWeek(s) }))
-    act(() => pending.run())
+    await act(async () => { await useStore.getState().update(s => { chooseFixedWeek(s) }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await pending.run(); await uiRuntime.fixture.flush(); })
     expect(S().queue).toBeNull()
     expect(scheduleModeOf(S())).toBe('week')
     expect(S().rotation.sequence).toEqual(['a'])
   })
 
-  it('a coach’s queue written meanwhile is left alone by the Undo', () => {
-    mount('schedule', clone(loop))
-    act(() => { takeOutOfLoop('b', setSeq, ['a', 'b', 'c'], 'My loop') })
+  it('a coach’s queue written meanwhile is left alone by the Undo', async () => {
+    await mount('schedule', clone(loop))
+    await act(async () => { takeOutOfLoop('b', setSeq, ['a', 'b', 'c'], 'My loop'); await uiRuntime.fixture.flush(); })
     const pending = useUI.getState().toastAction
     const coach = { ids: ['c', 'a'], since: 5, startsOn: '2026-10-02', label: 'Coach' }
-    act(() => useStore.getState().update(s => { s.queue = clone(coach) }))
-    act(() => pending.run())
+    await act(async () => { await useStore.getState().update(s => { s.queue = clone(coach) }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await pending.run(); await uiRuntime.fixture.flush(); })
     expect(S().queue).toEqual(coach)
     expect(S().rotation.sequence).toEqual(['a', 'b', 'c'])
   })
 
-  it('Undo for a routine deleted meanwhile says it is too late', () => {
-    mount('schedule', clone(loop))
-    act(() => { takeOutOfLoop('b', setSeq, ['a', 'b', 'c'], 'My loop') })
+  it('Undo for a routine deleted meanwhile says it is too late', async () => {
+    await mount('schedule', clone(loop))
+    await act(async () => { takeOutOfLoop('b', setSeq, ['a', 'b', 'c'], 'My loop'); await uiRuntime.fixture.flush(); })
     const pending = useUI.getState().toastAction
-    act(() => useStore.getState().update(s => { deleteRoutine(s, 'b') }))
-    act(() => pending.run())
+    await act(async () => { await useStore.getState().update(s => { deleteRoutine(s, 'b') }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await pending.run(); await uiRuntime.fixture.flush(); })
     expect(S().queue.ids).toEqual(['a', 'c'])
     expect(useUI.getState().toastMsg).toBe('Too late, that one’s gone')
   })
 
-  it('the edit-mode minus has the same Undo, and weekday rows never swipe', () => {
-    mount('schedule', { ...clone(loop), week: { 1: ['c'], 2: ['a'] } })
-    click([...host.querySelectorAll('.plan-textbtn')].find(b => b.textContent === 'Edit'))
-    click(host.querySelector('button[aria-label="Remove Legs"]'))
+  it('the edit-mode minus has the same Undo, and weekday rows never swipe', async () => {
+    await mount('schedule', { ...clone(loop), week: { 1: ['c'], 2: ['a'] } })
+    await click([...host.querySelectorAll('.plan-textbtn')].find(b => b.textContent === 'Edit'))
+    await click(host.querySelector('button[aria-label="Remove Legs"]'))
     expect(S().queue.ids).toEqual(['a', 'b'])
-    undo()
+    await undo()
     expect(S().queue.ids).toEqual(['a', 'b', 'c'])
     act(() => root.unmount()); host.remove()
 
-    mount('schedule', { week: { 1: ['a'], 3: ['b'] } })   // a fixed week
+    ;await mount('schedule', { week: { 1: ['a'], 3: ['b'] } });   // a fixed week
     expect(host.querySelectorAll('.plan-day').length).toBeGreaterThan(0)
     expect(swrows()).toHaveLength(0)
   })
 
-  it('a coach’s own queue does not swipe', () => {
-    mount('schedule', { ...clone(loop), queue: { ...loop.queue, rotationId: 'someone-else' } })
+  it('a coach’s own queue does not swipe', async () => {
+    await mount('schedule', { ...clone(loop), queue: { ...loop.queue, rotationId: 'someone-else' } })
     expect(swrows()).toHaveLength(0)
   })
 })
