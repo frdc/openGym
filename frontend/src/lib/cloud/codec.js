@@ -201,7 +201,19 @@ function associatedExercisePaths(previous, next, changed) {
 /** Inputs have already been stamped by the caller; IDs and causal time are never created here. */
 export function prepareOperation(previous, next, options) {
   const before = encodeState(previous, options), after = encodeState(next, options)
-  const paths = new Set([...Object.keys(before.documents), ...Object.keys(after.documents)].filter(p => !same(before.documents[p], after.documents[p])))
+  const changed = path => {
+    const a = before.documents[path], b = after.documents[path]
+    if (same(a, b)) return false
+    // stampChange bumps an entity's generic timestamp even for a local photo.
+    // Suppress only that timestamp delta when its local overlay actually changed
+    // and every other transported value/stamp/deletion is exactly unchanged.
+    if (a && b && !same(before.localOverlay.entities[path], after.localOverlay.entities[path])) {
+      const withoutTime = rec => { const out = copy(rec); delete out.payload._ts; return out }
+      if (same(withoutTime(a), withoutTime(b))) return false
+    }
+    return true
+  }
+  const paths = new Set([...Object.keys(before.documents), ...Object.keys(after.documents)].filter(changed))
   for (const [path, id] of associatedExercisePaths(previous, next, paths)) {
     paths.add(path)
     if (!after.documents[path]) {
