@@ -242,7 +242,10 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       if (ctx.envelope.adoptionDecision?.status === 'pending') { emit(ctx, { cloud: 'adoption-required', cloudError: null }); return }
       emit(ctx, { cloud: 'syncing', cloudError: null, retryAt: null })
       while (authenticated(ctx)) {
-        const latest = await storage.read(ctx.owner.ownerKey); assertCurrent(ctx)
+        let latest
+        try { latest = await storage.read(ctx.owner.ownerKey) }
+        catch (error) { localError(ctx, error); throw error }
+        assertCurrent(ctx)
         if (latest) accept(ctx, latest)
         operation = ctx.envelope.pendingOperations[0]
         if (!operation) break

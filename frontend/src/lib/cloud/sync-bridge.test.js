@@ -189,6 +189,42 @@ describe('durable synchronization coordinator', () => {
     expect(statuses.at(-1)).toMatchObject({ local: 'saved', cloud: 'synced' })
   })
 
+  it('reports a failed local queue read after refresh as waiting-local and retries the same durable operation', async () => {
+    const storage = fakeStorage()
+    // Isolate the queue read: otherwise a revision observer could consume the
+    // injected failure before runSync reaches this specific storage boundary.
+    storage.subscribe = () => () => {}
+    const { bridge, remote, statuses } = setup(storage)
+    await bind(bridge); await bridge.syncNow()
+    const read = storage.read, commit = storage.commit
+    const before = (await read(owner.ownerKey)).state
+    await bridge.recordChange({ previous: before, next: edit(before, { targetW: 88 }), scheduleRemote: false })
+    const pending = await read(owner.ownerKey), opId = pending.pendingOperations[0].opId
+    let armAfterRefresh = true, failQueueRead = false
+    storage.commit = async (...args) => {
+      const saved = await commit(...args)
+      if (armAfterRefresh) { armAfterRefresh = false; failQueueRead = true }
+      return saved
+    }
+    storage.read = async capturedOwner => {
+      if (failQueueRead) { failQueueRead = false; throw Object.assign(new Error('local queue unavailable'), { code: 'storage-unavailable' }) }
+      return read(capturedOwner)
+    }
+
+    await bridge.syncNow()
+    const retained = await read(owner.ownerKey)
+    expect(retained.localRevision).toBeGreaterThan(pending.localRevision)
+    expect(retained.pendingOperations.map(op => op.opId)).toEqual([opId])
+    expect(remote.transactions).toHaveLength(0)
+    expect(statuses.at(-1)).toMatchObject({ local: 'error', localError: { code: 'storage-unavailable' }, cloud: 'waiting-local', cloudError: null })
+
+    await bridge.syncNow()
+    expect((await read(owner.ownerKey)).pendingOperations).toEqual([])
+    expect(remote.transactions.map(transaction => transaction.opId)).toEqual([opId])
+    expect((await remote.readProfileFromServer(owner)).documents['settings/targetW'].payload.value).toBe(88)
+    expect(statuses.at(-1)).toMatchObject({ local: 'saved', localError: null, cloud: 'synced', cloudError: null })
+  })
+
   it('rejects a completed upload from the old auth epoch without touching either owner queue', async () => {
     const { bridge, remote, storage, states } = setup()
     await bind(bridge); await bridge.syncNow()
