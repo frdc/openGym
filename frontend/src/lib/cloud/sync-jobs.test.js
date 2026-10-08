@@ -161,11 +161,13 @@ it('replace reconciles records observed after the preview instead of deleting la
 
 it('reports a paused job as unsynced even with no ordinary operation', async () => {
   const { bridge, remote } = setupBridge()
+  let latestStatus; bridge.subscribeStatus(value => { latestStatus = value })
   await bind(bridge)
   remote.failNext(Object.assign(new Error('denied'), { code: 'permission-denied' }))
   await bridge.changeUnit('lb')
   expect(bridge.getUnsynced().count).toBeGreaterThan(0)
   expect(bridge.getUnsynced().blocked).toBeGreaterThan(0)
+  expect(latestStatus).toMatchObject({ cloud: 'blocked', pendingCount: 1, blockedCount: 1 })
   await bridge.unbindAuth()
 })
 it('reconciles a confirmed offline queue through completed conversion and relabel history', async () => {
@@ -256,4 +258,167 @@ it('part sizing accounts for large existing records as well as small replacement
   const job = jobs.createJob({ ownerKey: owner.ownerKey, generation: 1, kind: 'import', opId: 'bytes', paths, payloads, referenceDocuments, options: { sourceVersion: 1, targetVersion: 1 } })
   expect(job.parts.every(part => part.paths.length === 1)).toBe(true)
   expect(job.parts).toHaveLength(20)
+})
+
+describe('Task 6 review: replace preview local baseline', () => {
+  for (const explicit of [false, true]) it(`preserves unsent additions and existing-record edits after ${explicit ? 'explicit local' : 'legacy remote-only'} preview`, async () => {
+    const initial = fixtureState({ workouts: [{ id: 'known', d: '2026-10-08', entries: [], note: 'before' }, { id: 'remove', d: '2026-10-08', entries: [] }] })
+    const { bridge, remote, storage } = setupBridge(initial)
+    await bind(bridge)
+    const baseline = await storage.read(owner.ownerKey)
+    const preview = { state: structuredClone(initial), rev: 0, ...(explicit ? { localState: baseline.state, localRevision: baseline.localRevision } : {}) }
+    const next = structuredClone(baseline.state)
+    next.workouts[0].note = 'edited after preview'; next.workouts.push({ id: 'late-local', d: '2026-10-08', entries: [] })
+    next._ts = stampChange(baseline.state, next, 100)
+    await bridge.recordChange({ previous: baseline.state, next, scheduleRemote: false })
+    expect((await storage.read(owner.ownerKey)).lastConfirmedControl.dataRevision).toBe(0)
+    await bridge.importBackup(fixtureState(), { mode: 'replace', mergeWith: preview })
+    const state = codec.decodeState((await remote.readProfileFromServer(owner)).documents)
+    expect(state.workouts.map(w => w.id).sort()).toEqual(['known', 'late-local'])
+    expect(state.workouts.find(w => w.id === 'known').note).toBe('edited after preview')
+    await bridge.unbindAuth()
+  })
+  it('still replaces unchanged records explicitly included in the local preview', async () => {
+    const { bridge, remote, storage } = setupBridge()
+    await bind(bridge)
+    const before = (await storage.read(owner.ownerKey)).state, next = fixtureState({ workouts: [{ id: 'known-local', d: '2026-10-08', entries: [] }] })
+    next._ts = stampChange(before, next, 100)
+    await bridge.recordChange({ previous: before, next, scheduleRemote: false })
+    const snapshot = await storage.read(owner.ownerKey)
+    await bridge.importBackup(fixtureState(), { mode: 'replace', mergeWith: { state: before, rev: 0, localState: snapshot.state, localRevision: snapshot.localRevision } })
+    expect(codec.decodeState((await remote.readProfileFromServer(owner)).documents).workouts).toEqual([])
+    await bridge.unbindAuth()
+  })
+})
+it('recovers retired queued intent before unit reconciliation when conversion is followed by remote reset', async () => {
+  const initial = fixtureState({ targetW: 70 }), { bridge, remote, storage } = setupBridge(initial)
+  await bridge.hydrate(owner)
+  const next = fixtureState({ targetW: 90 }); next._ts = stampChange(initial, next, 100)
+  await bridge.recordChange({ previous: initial, next, scheduleRemote: false })
+  const job = jobs.planUnitJob({ profile: await remote.readProfileFromServer(owner), ownerKey: owner.ownerKey, to: 'lb', opId: 'before-reset' })
+  await remote.beginJob(owner, job)
+  for (const part of job.parts) await remote.commitJobPart(owner, job, part)
+  await remote.finishJob(owner, job)
+  await remote.commitReset(owner, { opId: 'remote-reset', baseGeneration: 1, nextGeneration: 2 })
+  await bind(bridge)
+  const saved = await storage.read(owner.ownerKey)
+  expect(saved.cloudGeneration).toBe(2)
+  expect(saved.unitProjectionVersion).toBe(2)
+  expect(saved.lastConfirmedControl).toMatchObject({ generation: 2, unitVersion: 2 })
+  expect(saved.pendingOperations).toEqual([])
+  expect(saved.recoveryCopies.find(copy => copy.reason === 'generation-mismatch')).toMatchObject({ ownerKey: owner.ownerKey, state: { targetW: 90 }, pendingOperations: [{ generation: 1, unitVersion: 1 }] })
+  expect(saved.state.targetW).toBe(fixtureState().targetW)
+  await bridge.syncNow()
+  expect((await storage.read(owner.ownerKey)).cloudGeneration).toBe(2)
+  await bridge.unbindAuth()
+})
+describe('Task 6 review: competing unit intents', () => {
+  for (const remoteConvert of [true, false]) it(`finishes the remote job first and ${remoteConvert ? 'proves equivalent projection' : 'recovers ambiguous projection and edits'}`, async () => {
+    const initial = fixtureState({ targetW: 79 }), { bridge, remote, storage } = setupBridge(initial)
+    await bridge.hydrate(owner)
+    const older = fixtureState({ targetW: 80 }); older._ts = stampChange(initial, older, 100)
+    await bridge.recordChange({ previous: initial, next: older, scheduleRemote: false })
+    await bridge.changeUnit('lb', { convert: true })
+    const projected = await storage.read(owner.ownerKey), next = { ...projected.state, targetW: 180 }
+    next._ts = stampChange(projected.state, next, 200)
+    await bridge.recordChange({ previous: projected.state, next, scheduleRemote: false })
+    const foreign = jobs.planUnitJob({ profile: await remote.readProfileFromServer(owner), ownerKey: owner.ownerKey, to: 'lb', convert: remoteConvert, opId: `foreign-${remoteConvert}` })
+    await remote.beginJob(owner, foreign)
+    await bind(bridge)
+    const saved = await storage.read(owner.ownerKey), server = await remote.readProfileFromServer(owner)
+    expect(server.control).toMatchObject({ activeUnitJob: null, unitVersion: 2 })
+    expect(saved.pendingJobs).toEqual([])
+    expect(saved.pendingOperations).toEqual([])
+    expect(codec.decodeState(server.documents).targetW).toBe(remoteConvert ? 180 : 80)
+    if (!remoteConvert) {
+      const copy = saved.recoveryCopies.find(c => c.reason === 'unit-intent-conflict')
+      expect(copy).toMatchObject({ ownerKey: owner.ownerKey, state: { unit: 'lb', targetW: 180 }, pendingOperations: [{ unitVersion: 2 }] })
+      expect(copy.pendingOperations[0].payloads['settings/targetW']).toMatchObject({ dataUnit: 'lb', payload: { value: 180 } })
+      expect(copy.pendingJobs[0].options.convert).toBe(true)
+    }
+    await bridge.syncNow()
+    expect(codec.decodeState((await remote.readProfileFromServer(owner)).documents).targetW).toBe(remoteConvert ? 180 : 80)
+    await bridge.unbindAuth()
+  })
+})
+describe('Task 6 review: durable reset cleanup', () => {
+  it('retains cleanup after reset ACK, permits new-generation writes, and resumes unknown remote records after reload', async () => {
+    const initial = fixtureState({ workouts: [{ id: 'reuse', d: '2026-10-08', entries: [] }, { id: 'retired', d: '2026-10-08', entries: [] }] })
+    const { bridge, remote, storage } = setupBridge(initial)
+    await bind(bridge)
+    await storage.commit(owner.ownerKey, value => ({ ...value, remoteMetadataByPath: {} }))
+    const remove = remote.deleteOldGeneration
+    remote.deleteOldGeneration = async () => { throw Object.assign(new Error('cleanup-failed'), { code: 'permission-denied' }) }
+    await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+    const reset = await storage.read(owner.ownerKey)
+    expect(reset.pendingJobs[0]).toMatchObject({ kind: 'cleanup', generation: 1 })
+    expect(reset.pendingJobs[0].paths.length).toBeGreaterThan(0)
+    expect(reset.pendingJobs[0].paths.length).toBeLessThanOrEqual(20)
+    const next = fixtureState({ workouts: [{ id: 'reuse', d: '2026-10-08', entries: [], note: 'new generation' }] })
+    next._ts = stampChange(reset.state, next, 100)
+    await bridge.recordChange({ previous: reset.state, next, scheduleRemote: false })
+    await bridge.syncNow()
+    expect(codec.decodeState((await remote.readProfileFromServer(owner)).documents).workouts[0].note).toBe('new generation')
+    await bridge.unbindAuth()
+    remote.deleteOldGeneration = remove
+    const reload = createSyncBridge({ storage, remote }); await bind(reload)
+    expect((await storage.read(owner.ownerKey)).pendingJobs).toEqual([])
+    expect(await remote.readOldGenerationPaths(owner, { generation: 1 })).toEqual([])
+    expect(remote.transactions.filter(t => t.kind === 'reset')).toHaveLength(1)
+    expect(codec.decodeState((await remote.readProfileFromServer(owner)).documents).workouts[0].note).toBe('new generation')
+    await reload.unbindAuth()
+  })
+  it('checkpoints between cleanup parts and retains earlier cleanup across a newer reset', async () => {
+    const initial = fixtureState({ workouts: Array.from({ length: 43 }, (_, i) => ({ id: `retired${i}`, d: '2026-10-08', entries: [] })) })
+    const { bridge, remote, storage } = setupBridge(initial)
+    await bind(bridge)
+    const remove = remote.deleteOldGeneration; let calls = 0
+    remote.deleteOldGeneration = async (...args) => { if (++calls >= 2) throw Object.assign(new Error('cleanup-failed'), { code: 'permission-denied' }); return remove(...args) }
+    await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+    expect((await storage.read(owner.ownerKey)).pendingJobs[0]).toMatchObject({ kind: 'cleanup', completedParts: 1 })
+    await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+    const pending = (await storage.read(owner.ownerKey)).pendingJobs
+    expect(pending.filter(j => j.kind === 'cleanup').map(j => j.generation).sort()).toEqual([1, 2])
+    expect((await remote.readProfileFromServer(owner)).control.generation).toBe(3)
+    await bridge.unbindAuth(); remote.deleteOldGeneration = remove
+    const reload = createSyncBridge({ storage, remote }); await bind(reload)
+    expect((await storage.read(owner.ownerKey)).pendingJobs).toEqual([])
+    expect(await remote.readOldGenerationPaths(owner, { generation: 1 })).toEqual([])
+    expect(remote.transactions.filter(t => t.kind === 'reset')).toHaveLength(2)
+    await reload.unbindAuth()
+  })
+})
+it('persists cleanup-only intent before the first enumeration request and retries after reload', async () => {
+  const { bridge, remote, storage } = setupBridge(fixtureState({ workouts: [{ id: 'old', d: '2026-10-08', entries: [] }] }))
+  await bind(bridge)
+  const read = remote.readOldGenerationPaths
+  remote.readOldGenerationPaths = async () => {
+    expect((await storage.read(owner.ownerKey)).pendingJobs[0]).toMatchObject({ kind: 'cleanup', generation: 1, paths: [] })
+    throw Object.assign(new Error('enumeration-failed'), { code: 'permission-denied' })
+  }
+  await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+  await bridge.unbindAuth(); remote.readOldGenerationPaths = read
+  const reload = createSyncBridge({ storage, remote }); await bind(reload)
+  expect((await storage.read(owner.ownerKey)).pendingJobs).toEqual([])
+  expect(remote.transactions.filter(t => t.kind === 'reset')).toHaveLength(1)
+  await reload.unbindAuth()
+})
+
+it('replays the same reset when local persistence fails at the ACK-to-cleanup transition', async () => {
+  const { bridge, remote, storage } = setupBridge()
+  await bind(bridge); remote.delayCallbacks(true)
+  const reset = remote.commitReset; let failOnce = true
+  remote.commitReset = async (...args) => {
+    const control = await reset(...args)
+    if (failOnce) { failOnce = false; storage.failNextCommit(Object.assign(new Error('quota'), { code: 'storage-full' })) }
+    return control
+  }
+  await expect(bridge.reset()).rejects.toMatchObject({ code: 'storage-full' })
+  expect((await storage.read(owner.ownerKey)).pendingJobs[0]).toMatchObject({ kind: 'reset', reset: { baseGeneration: 1, nextGeneration: 2 } })
+  await bridge.unbindAuth()
+  const reload = createSyncBridge({ storage, remote }); await bind(reload)
+  expect((await storage.read(owner.ownerKey)).pendingJobs).toEqual([])
+  expect((await remote.readProfileFromServer(owner)).control.generation).toBe(2)
+  expect(remote.transactions.filter(t => t.kind === 'reset')).toHaveLength(1)
+  await reload.unbindAuth()
 })

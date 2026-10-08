@@ -91,7 +91,7 @@ export function fakeStorage(initial = {}) {
 // Coordinator double only; permission/rules proofs live in check-firestore-rules.mjs.
 export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = null } = {}) {
   let profile = structuredClone(initialProfile), failure = null, repetitions = 1, delayed = false
-  const transactions = [], listeners = new Set(), callbacks = [], jobs = new Map()
+  const transactions = [], listeners = new Set(), callbacks = [], jobs = new Map(), retired = new Map()
   const error = code => Object.assign(new Error(code), { code })
   const check = owner => { if (ownerKey === null) ownerKey = owner.ownerKey; if (owner.ownerKey !== ownerKey) throw error('owner-mismatch'); if (failure) { const e = failure; failure = null; throw e } }
   const notify = () => { for (const listener of listeners) { const value = structuredClone(profile.control), fn = () => listener.onControl(value); if (delayed) callbacks.push(fn); else fn() } }
@@ -119,6 +119,7 @@ export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = nu
       if (profile.control.generation !== reset.baseGeneration) throw error('generation-mismatch')
       if (reset.nextGeneration !== reset.baseGeneration + 1) throw error('invalid-reset')
       if (profile.control.activeUnitJob) throw error('unit-job-active')
+      for (const [path, record] of Object.entries(profile.documents)) retired.set(path, structuredClone(record))
       profile = { control: { ...profile.control, generation: reset.nextGeneration, dataRevision: profile.control.dataRevision + 1, lastResetOpId: reset.opId }, documents: {} }
       transactions.push({ kind: 'reset', ...reset }); notify(); return structuredClone(profile.control)
     },
@@ -164,7 +165,17 @@ export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = nu
       if (job.kind === 'unit') profile.control = { ...profile.control, unitVersion: job.options.targetVersion, activeUnitJob: null, dataRevision: profile.control.dataRevision + 1 }
       job.status = 'complete'; notify(); return structuredClone(profile.control)
     },
-    async deleteOldGeneration(owner) { check(owner) },
+    async readOldGenerationPaths(owner, { generation }) {
+      check(owner)
+      if (generation >= profile.control.generation) throw error('generation-mismatch')
+      return [...retired].filter(([path, record]) => record.generation === generation && !profile.documents[path]).map(([path]) => path).sort().slice(0, 20)
+    },
+    async deleteOldGeneration(owner, { generation, paths }) {
+      check(owner)
+      if (generation >= profile.control.generation) throw error('generation-mismatch')
+      for (const path of paths) if (retired.get(path)?.generation === generation) retired.delete(path)
+      transactions.push({ kind: 'cleanup', generation, paths: structuredClone(paths) })
+    },
     failNext(error) { failure = error }, repeatTransaction(times = 2) { repetitions = times }, delayCallbacks(value = true) { delayed = value },
     deliverCallbacks() { for (const fn of callbacks.splice(0)) fn() },
     replaceProfile(value) { profile = structuredClone(value); notify() },

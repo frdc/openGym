@@ -107,6 +107,19 @@ export function reconcileJobUnits(current, profile, history) {
   return next
 }
 
+// A replace may delete only the preview's known contents. Preserve the complete
+// current record when it changed after that baseline, including unsent edits.
+function preservePreviewChanges(next, before, baseline, options) {
+  const known = codec.encodeState(inUnitOf(baseline, before), options).documents
+  const current = codec.encodeState(before, options).documents
+  const encoded = codec.encodeState(next, options)
+  for (const path of new Set([...Object.keys(known), ...Object.keys(current)])) {
+    if (JSON.stringify(known[path]) === JSON.stringify(current[path])) continue
+    if (current[path]) encoded.documents[path] = current[path]
+    else delete encoded.documents[path]
+  }
+  return codec.decodeState(encoded.documents, { ...options, localOverlay: encoded.localOverlay })
+}
 export function createJobCoordinator({ context, durable, flush, current, remote, newId, now, syncNow }) {
   const requireContext = () => { const ctx = context(); if (!ctx?.envelope) fail('local-not-ready'); return ctx }
   const authenticated = ctx => ctx.user && ctx.owner.uid && remote
@@ -122,11 +135,11 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
         const job = { jobId: key(opId), ownerKey: value.ownerKey, kind: 'reset', generation: baseGeneration, status: 'pending',
           reset: { opId, baseGeneration, nextGeneration: baseGeneration == null ? null : baseGeneration + 1 }, paths: Object.keys(value.remoteMetadataByPath) }
         return { ...value, state, cloudGeneration: baseGeneration == null ? value.cloudGeneration : baseGeneration + 1, remoteMetadataByPath: {}, pendingOperations: [],
-          pendingJobs: ctx.owner.uid ? [job] : [], unitProjectionVersion: value.lastConfirmedControl?.unitVersion || 1,
+          pendingJobs: ctx.owner.uid ? [...value.pendingJobs.filter(j => j.kind === 'cleanup'), job] : [], unitProjectionVersion: value.lastConfirmedControl?.unitVersion || 1,
           recoveryCopies: [...value.recoveryCopies, { recoveryId: job.jobId, reason: 'reset', ownerKey: value.ownerKey, state: clone(value.state), pendingOperations: clone(value.pendingOperations), pendingJobs: clone(value.pendingJobs) }] }
       })
     }
-    if (authenticated(ctx)) await runReset(ctx)
+    if (authenticated(ctx)) { await runReset(ctx); await runCleanup(ctx) }
   }
   async function runReset(ctx) {
     let job = ctx.envelope.pendingJobs.find(j => j.kind === 'reset')
@@ -140,9 +153,36 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
     const control = await remote.commitReset(ctx.owner, clone(job.reset)); current(ctx)
     await durable(ctx, value => {
       if (!value.pendingJobs.some(j => j.jobId === job.jobId) || value.cloudGeneration !== control.generation) return value
-      return { ...value, lastConfirmedControl: clone(control), pendingJobs: value.pendingJobs.filter(j => j.jobId !== job.jobId) }
+      return { ...value, lastConfirmedControl: clone(control), pendingJobs: value.pendingJobs.map(j => j.jobId !== job.jobId ? j :
+        { jobId: job.jobId, ownerKey: value.ownerKey, kind: 'cleanup', generation: job.reset.baseGeneration, status: 'pending', paths: [], completedParts: 0 }) }
     })
-    await remote.deleteOldGeneration?.(ctx.owner, { generation: job.reset.baseGeneration, paths: job.paths }); current(ctx)
+
+  }
+  async function runCleanup(ctx) {
+    if (ctx.cleaning) return ctx.cleaning
+    const work = (async () => {
+      for (const original of ctx.envelope.pendingJobs.filter(j => j.kind === 'cleanup')) {
+        while (true) {
+          let job = ctx.envelope.pendingJobs.find(j => j.jobId === original.jobId && j.kind === 'cleanup')
+          if (!job) break
+          if (!job.paths.length) {
+            const paths = await remote.readOldGenerationPaths(ctx.owner, { generation: job.generation }); current(ctx)
+            await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.flatMap(j => {
+              if (j.jobId !== job.jobId || j.paths.length) return [j]
+              return paths.length ? [{ ...j, paths: clone(paths) }] : []
+            }) }))
+            job = ctx.envelope.pendingJobs.find(j => j.jobId === original.jobId)
+            if (!job) break
+          }
+          const paths = clone(job.paths)
+          await remote.deleteOldGeneration(ctx.owner, { generation: job.generation, paths }); current(ctx)
+          await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.map(j =>
+            j.jobId === job.jobId && JSON.stringify(j.paths) === JSON.stringify(paths) ? { ...j, paths: [], completedParts: j.completedParts + 1 } : j) }))
+        }
+      }
+    })().finally(() => { if (ctx.cleaning === work) ctx.cleaning = null })
+    ctx.cleaning = work
+    return work
   }
   async function changeUnit(to, { convert = true } = {}) {
     const ctx = requireContext(); await flush(ctx)
@@ -170,13 +210,13 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
     await durable(ctx, value => {
       const preview = mergeWith?.state || null, before = value.state
       const stamp = Math.max(time, highestStamp(before) + 1, highestStamp(source) + 1, highestStamp(preview) + 1)
-      const changedSincePreview = preview && mergeWith.rev != null && mergeWith.rev !== value.lastConfirmedControl?.dataRevision
-      const others = (changedSincePreview ? [preview] : [before, preview]).filter(Boolean)
+      const baseline = preview && (mergeWith.localState ? mergeStates(mergeWith.localState, preview, { retainAllDeletions: true }) : preview)
+      const others = baseline ? [baseline] : [before]
       let next = clone(source)
       if (mode === 'merge') next = mergeStates(next, preview ? (mergeWith.local ? mergeStates(before, preview, { retainAllDeletions: true }) : preview) : before, { prefer: 'a', retainAllDeletions: true })
       stampRestore(next, others, stamp, { retainAllDeletions: true })
       if (mode === 'replace') stampReplace(next, others, stamp, { retainAllDeletions: true })
-      if (mode === 'replace' && changedSincePreview) next = mergeStates(next, before, { retainAllDeletions: true })
+      if (mode === 'replace' && baseline) next = preservePreviewChanges(next, before, baseline, { generation: value.cloudGeneration, unitVersion: value.unitProjectionVersion ?? value.lastConfirmedControl?.unitVersion ?? 1 })
       next.active = before.active ? inUnitOf({ unit: before.unit, active: before.active }, next).active : next.active || null
       next._ts = stamp
       const unitVersion = value.unitProjectionVersion ?? value.lastConfirmedControl?.unitVersion ?? 1
@@ -197,14 +237,36 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
       const job = activeJob.preparedParts < activeJob.totalParts ? resumeUnitPlan(activeJob, profile) : { ...activeJob, parts: await remote.readJobParts(ctx.owner, activeJob) }
       current(ctx); await durable(ctx, value => ({ ...value, pendingJobs: [...value.pendingJobs, job] }))
     }
-    for (const original of [...ctx.envelope.pendingJobs]) {
-      if (original.kind === 'reset') continue
+    const ordered = [...ctx.envelope.pendingJobs].sort((a, b) => Number(b.jobId === activeJob?.jobId) - Number(a.jobId === activeJob?.jobId))
+    for (const original of ordered) {
+      if (['reset','cleanup'].includes(original.kind) || !ctx.envelope.pendingJobs.some(j => j.jobId === original.jobId)) continue
       let job = original
       if (job.blockedReason) fail(job.blockedReason)
       if (job.generation !== profile.control.generation) {
         await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.filter(j => j.jobId !== job.jobId), recoveryCopies: [...value.recoveryCopies, { recoveryId: job.jobId, reason: 'generation-mismatch', job: clone(job) }] })); continue
       }
       if (job.kind === 'unit' && !manifests.some(j => j.jobId === job.jobId)) {
+        if (job.options.sourceVersion < profile.control.unitVersion) {
+          const history = await remote.readJobs(ctx.owner); current(ctx)
+          const equivalent = history.some(done => done.kind === 'unit' && done.status === 'complete' && done.generation === job.generation
+            && ['from','to','convert','sourceVersion','targetVersion'].every(k => done.options[k] === job.options[k]))
+          await durable(ctx, value => {
+            if (equivalent) return { ...value, pendingJobs: value.pendingJobs.filter(j => j.jobId !== job.jobId) }
+            // This projected version has different semantics on the server. Keep
+            // its source and all projected edits intact in owner-specific recovery.
+            const projected = value.pendingOperations.filter(op => op.generation === job.generation && op.unitVersion >= job.options.targetVersion)
+            const affectedJobs = value.pendingJobs.filter(j => j.generation === job.generation && j.kind !== 'cleanup' && j.kind !== 'reset')
+            const overlay = codec.encodeState(value.state, { generation: value.cloudGeneration, unitVersion: value.unitProjectionVersion }).localOverlay
+            overlay.fields.active = null; delete overlay.fields.unitSet
+            return { ...value, state: codec.decodeState(profile.documents, { generation: profile.control.generation, localOverlay: overlay }),
+              unitProjectionVersion: profile.control.unitVersion,
+              pendingOperations: value.pendingOperations.filter(op => !projected.some(p => p.opId === op.opId)),
+              pendingJobs: value.pendingJobs.filter(j => !affectedJobs.some(old => old.jobId === j.jobId)),
+              recoveryCopies: [...value.recoveryCopies, { recoveryId: `unit-conflict:${job.jobId}`, ownerKey: value.ownerKey, reason: 'unit-intent-conflict',
+                state: clone(value.state), pendingOperations: clone(projected), pendingJobs: clone(affectedJobs) }] }
+          })
+          continue
+        }
         if (job.options.sourceVersion !== profile.control.unitVersion) fail('unit-version-mismatch')
         const planned = planUnitJob({ profile, ownerKey: ctx.owner.ownerKey, to: job.options.to, convert: job.options.convert, opId: 'replan' })
         job = { ...planned, jobId: job.jobId, options: { ...planned.options, stamp: job.options.stamp } }
@@ -221,5 +283,5 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
     }
     return profile
   }
-  return { reset, changeUnit, importBackup, runReset, run }
+  return { reset, changeUnit, importBackup, runReset, runCleanup, run }
 }

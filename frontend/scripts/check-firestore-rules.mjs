@@ -42,11 +42,46 @@ function changed(before, edit, owner, control, opId = randomUUID()) {
   const after = structuredClone(before); edit(after); after._ts = stampChange(before, after, Date.now())
   return codec.prepareOperation(before, after, { ownerKey: owner.ownerKey, generation: control.generation, unitVersion: control.unitVersion, kind: 'update', opId })
 }
+async function checkResumableCleanup(a, owner, remote) {
+  let profile = await remote.readProfileFromServer(owner)
+  const path = `users/${owner.uid}/apps/opengym`
+  for (let part = 0; part < 3; part++) {
+    const op = changed(codec.decodeState(profile.documents), state => {
+      state.workouts.push(...Array.from({ length: 15 }, (_, i) => ({ id: `cleanup-${part}-${i}`, d: '2026-10-08', entries: [] })))
+    }, owner, profile.control)
+    await remote.commitOperation(owner, op, context(profile)); profile = await remote.readProfileFromServer(owner)
+  }
+  const retiredGeneration = profile.control.generation
+  await remote.commitReset(owner, { opId: randomUUID(), baseGeneration: retiredGeneration, nextGeneration: retiredGeneration + 1 })
+  const fresh = createFirestorePort({ client: a })
+  let paths = await fresh.readOldGenerationPaths(owner, { generation: retiredGeneration })
+  assert.equal(paths.length, 20)
+  const reusedPath = paths.find(p => p.startsWith('workouts/'))
+  const old = (await sdk.getDocFromServer(sdk.doc(a.db, path + '/' + reusedPath))).data()
+  profile = await fresh.readProfileFromServer(owner)
+  const reuse = changed(codec.decodeState(profile.documents), state => { state.workouts.push({ ...old.payload, note: 'recreated after reset' }) }, owner, profile.control)
+  await fresh.commitOperation(owner, reuse, context(profile))
+  await fresh.deleteOldGeneration(owner, { generation: retiredGeneration, paths })
+  assert.equal((await sdk.getDocFromServer(sdk.doc(a.db, path + '/' + reusedPath))).data().generation, retiredGeneration + 1)
+  pass('fresh adapter enumerates 20 unknown retired records and cleanup preserves an ID recreated after enumeration')
+  await fresh.commitReset(owner, { opId: randomUUID(), baseGeneration: retiredGeneration + 1, nextGeneration: retiredGeneration + 2 })
+  let pages = 1
+  while ((paths = await fresh.readOldGenerationPaths(owner, { generation: retiredGeneration })).length) {
+    assert.ok(paths.length <= 20)
+    await fresh.deleteOldGeneration(owner, { generation: retiredGeneration, paths }); pages++
+  }
+  assert.ok(pages >= 3)
+  assert.deepEqual(await fresh.readOldGenerationPaths(owner, { generation: retiredGeneration }), [])
+  assert.equal((await sdk.getDocFromServer(sdk.doc(a.db, path + '/' + reusedPath))).data().generation, retiredGeneration + 1)
+  await assert.rejects(() => fresh.readOldGenerationPaths(owner, { generation: retiredGeneration + 2 }), e => e.code === 'generation-mismatch')
+  pass('bounded cleanup resumes across parts and a newer reset without erasing later-generation records')
+}
 try {
   const a = await client('a', true), b = await client('b', true), guest = await client('guest', false)
   const ownerA = makeOwner(projectId, a.auth.currentUser.uid), ownerB = makeOwner(projectId, b.auth.currentUser.uid)
   const pathA = `users/${ownerA.uid}/apps/opengym`, pathB = `users/${ownerB.uid}/apps/opengym`
   const remote = createFirestorePort({ client: a }), remoteB = createFirestorePort({ client: b })
+  if (!process.argv.includes('--cleanup-only')) {
   let profile = await remote.readProfileFromServer(ownerA)
   assert.equal(profile.control.dataRevision, 0); assert.deepEqual(profile.documents, {})
   await remoteB.readProfileFromServer(ownerB)
@@ -192,6 +227,8 @@ try {
   assert.equal((await sdk.getDocFromServer(sdk.doc(a.db, pathA + '/routines/cjA'))).exists(), false)
   await denied(() => sdk.deleteDoc(sdk.doc(a.db, pathA + '/workouts/dzE')), 'physical delete of current generation denied')
   pass('conditional cleanup deletes only retired generation and preserves recreated ID')
+  }
+  await checkResumableCleanup(a, ownerA, remote)
 } finally {
   for (const stop of stops) stop()
   const results = await Promise.allSettled(clients.map(async ({ app, db }) => { await sdk.terminate(db); await deleteApp(app) }))

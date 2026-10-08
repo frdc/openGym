@@ -250,3 +250,20 @@ it('blocks a now-oversized import part after remote growth without discarding it
   expect(h.commits).toHaveLength(before)
   expect(job.payloads[paths[0]]).toEqual(source[paths[0]])
 })
+it('enumerates bounded retired-generation cleanup pages without relying on the old local cache', async () => {
+  const h = harness({ ...initialControl(), generation: 2 }), record = operation().payloads['workouts/dzE']
+  for (let i = 0; i < 45; i++) h.rows.set(`${root}/workouts/retired${String(i).padStart(2, '0')}`, record)
+  const first = await h.remote.readOldGenerationPaths(owner, { generation: 1 })
+  expect(first).toHaveLength(20)
+  h.rows.set(`${root}/${first[0]}`, { ...record, generation: 2 })
+  await h.remote.deleteOldGeneration(owner, { generation: 1, paths: first })
+  let pages = 1, paths
+  while ((paths = await h.remote.readOldGenerationPaths(owner, { generation: 1 })).length) {
+    expect(paths.length).toBeLessThanOrEqual(20)
+    await h.remote.deleteOldGeneration(owner, { generation: 1, paths }); pages++
+  }
+  expect(pages).toBe(3)
+  expect(h.rows.get(`${root}/${first[0]}`).generation).toBe(2)
+  expect(h.rows.size).toBe(2)
+  await expect(h.remote.readOldGenerationPaths(owner, { generation: 2 })).rejects.toMatchObject({ code: 'generation-mismatch' })
+})

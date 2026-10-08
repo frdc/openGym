@@ -1,4 +1,4 @@
-import { jobManifest, transformUnitRecord } from './sync-jobs.js'
+import { jobManifest, transformUnitRecord, MAX_PART_BYTES } from './sync-jobs.js'
 import { doc, collection, query, where, orderBy, documentId, limit, startAfter, getDocFromServer, getDocsFromServer, runTransaction, onSnapshot } from 'firebase/firestore'
 import * as defaultCodec from './codec.js'
 import { FIELD_POLICY, MAX_DOCUMENT_BYTES, MAX_DOCUMENT_DEPTH, makeOwner } from './model.js'
@@ -295,6 +295,28 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
     })
     root(owner); cache.delete(owner.ownerKey); return control
   }
+  async function readOldGenerationPaths(owner, { generation }) {
+    root(owner)
+    if (!integer(generation) || generation < 1) fail('invalid-cleanup')
+    const control = await serverControl(owner)
+    if (!control || control.generation <= generation) fail('generation-mismatch')
+    const paths = []; let size = 0
+    // Deletions drain the query, so restart at the first remaining ID on every
+    // page. A newer generation or a recreated ID is never a cleanup candidate.
+    for (const family of collections) {
+      const page = confirmed(await sdk.getDocsFromServer(sdk.query(sdk.collection(client.db, root(owner) + '/' + family),
+        sdk.where('generation', '==', generation), sdk.orderBy(sdk.documentId()), sdk.limit(20 - paths.length)))); root(owner)
+      for (const snap of page.docs) {
+        const path = `${family}/${snap.id}`, record = validateRecord(path, snap.data())
+        if (record.generation !== generation) fail('invalid-document', path)
+        const estimate = 2 * new TextEncoder().encode(JSON.stringify(record)).length + 4096
+        if (paths.length && size + estimate > MAX_PART_BYTES) return paths
+        paths.push(path); size += estimate
+        if (paths.length === 20) return paths
+      }
+    }
+    return paths
+  }
   async function deleteOldGeneration(owner, { generation, paths }) {
     root(owner)
     if (!integer(generation) || generation < 1 || !Array.isArray(paths)) fail('invalid-cleanup')
@@ -321,5 +343,5 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
     }, error => { if (!stopped) onError(error) })
     return () => { if (!stopped) { stopped = true; stop() } }
   }
-  return { readProfileFromServer, watchControl, commitOperation, commitReset, beginJob, readJobs, readJobParts, commitJobPart, finishJob, deleteOldGeneration }
+  return { readProfileFromServer, watchControl, commitOperation, commitReset, beginJob, readJobs, readJobParts, commitJobPart, finishJob, readOldGenerationPaths, deleteOldGeneration }
 }

@@ -72,7 +72,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     const info = errorInfo(error, op), retry = transient(info.code)
     if (!retry) cancelTimer(ctx)
     emit(ctx, { cloud: retry ? 'waiting' : (info.code.startsWith('auth/') || info.code === 'unauthenticated') ? 'auth-required' : 'blocked', cloudError: info,
-      blockedCount: retry ? ctx.envelope.pendingOperations.filter(x => x.blockedReason).length : ctx.envelope.pendingOperations.length,
+      blockedCount: retry ? [...ctx.envelope.pendingOperations, ...ctx.envelope.pendingJobs].filter(x => x.blockedReason).length : ctx.envelope.pendingOperations.length + ctx.envelope.pendingJobs.length,
       ...(!retry ? { retryAt: null } : {}) })
     if (retry && authenticated(ctx) && ctx.timer == null) {
       const delay = delays[Math.min(ctx.attempt++, delays.length - 1)]
@@ -211,21 +211,26 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
   function integrate(current, profile, initialControl, history) {
     const { control, documents } = profile
     let next = clone(current)
-    if (next.pendingJobs.some(j => j.kind === 'reset') || control.activeUnitJob || next.pendingJobs.some(j => j.kind === 'unit')) return next
+    if (next.pendingJobs.some(j => j.kind === 'reset')) return next
     const previousControl = next.lastConfirmedControl
     if (previousControl && (control.generation < previousControl.generation || (control.generation === previousControl.generation && control.dataRevision < previousControl.dataRevision))) return next
-    next = reconcileJobUnits(next, profile, history)
+
     // Unknown generations are assigned only after this server-confirmed Profile.
     next.pendingOperations = next.pendingOperations.map(op => initializeOperation(op, initialControl))
     const retired = next.pendingOperations.filter(op => op.generation !== control.generation)
     if (retired.length || (previousControl && next.cloudGeneration !== control.generation)) {
-      next.recoveryCopies.push({ recoveryId: `generation:${next.cloudGeneration}:${next.localRevision}`, reason: 'generation-mismatch', state: clone(next.state), pendingOperations: clone(retired) })
+      const retiredJobs = next.pendingJobs.filter(j => j.kind !== 'cleanup' && j.generation !== control.generation)
+      next.recoveryCopies.push({ recoveryId: `generation:${next.cloudGeneration}:${next.localRevision}`, ownerKey: next.ownerKey, reason: 'generation-mismatch', state: clone(next.state), pendingOperations: clone(retired), pendingJobs: clone(retiredJobs) })
+      next.pendingJobs = next.pendingJobs.filter(j => !retiredJobs.some(old => old.jobId === j.jobId))
       next.pendingOperations = next.pendingOperations.filter(op => op.generation === control.generation)
       const localOverlay = codec.encodeState(next.state, { generation: next.cloudGeneration, unitVersion: previousControl?.unitVersion || 1 }).localOverlay
       next.state = codec.decodeState(documents, { generation: control.generation, localOverlay })
       next.remoteMetadataByPath = {}
+      next.unitProjectionVersion = control.unitVersion
     }
     next.cloudGeneration = control.generation
+    if (control.activeUnitJob || next.pendingJobs.some(j => j.kind === 'unit')) return next
+    next = reconcileJobUnits(next, profile, history)
     return codec.applyConfirmation(next, { ownerKey: next.ownerKey, opId: null, control, documents })
   }
   async function refresh(ctx) {
@@ -275,6 +280,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
         await durable(ctx, current => current.cloudGeneration !== confirmation.control.generation ? current : current.pendingJobs.some(j => j.kind === 'unit') ? { ...current, pendingOperations: current.pendingOperations.filter(op => op.opId !== confirmation.opId) } : codec.applyConfirmation(current, confirmation)); assertCurrent(ctx)
         profile = await refresh(ctx); assertCurrent(ctx)
       }
+      await jobs.runCleanup(ctx); assertCurrent(ctx)
       ctx.attempt = 0; cancelTimer(ctx)
       emit(ctx, { cloud: 'synced', cloudError: null, retryAt: null })
     } catch (error) { cloudError(ctx, error, operation) }
@@ -331,7 +337,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
   return { reset: jobs.reset, importBackup: jobs.importBackup, changeUnit: jobs.changeUnit, hydrate, bindAuth, unbindAuth, recordChange, flushLocal: () => flush(active), syncNow, resolveAdoption,
     readRemote: async () => { const ctx = active; if (!authenticated(ctx)) throw failure('auth-required'); return refresh(ctx) },
     getUnsynced: () => { const envelope = active?.envelope && memory(active), count = (envelope?.pendingOperations.length || 0) + (envelope?.pendingJobs.length || 0);
-      return { count, blocked: status.get().cloud === 'blocked' || envelope?.adoptionDecision?.status === 'pending' ? count : envelope?.pendingOperations.filter(x => x.blockedReason).length || 0 } },
+      return { count, blocked: status.get().cloud === 'blocked' || envelope?.adoptionDecision?.status === 'pending' ? count : [...(envelope?.pendingOperations || []), ...(envelope?.pendingJobs || [])].filter(x => x.blockedReason).length } },
     subscribeStatus: status.subscribe,
     // Runtime lifecycle adapters call these on foreground / online hints.
     onForeground: syncNow, onOnline: syncNow }
