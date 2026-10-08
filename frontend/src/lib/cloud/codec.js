@@ -248,10 +248,16 @@ function reconcileCustomLoads(merged, local, remote) {
 
 /** Replay-safe merge. The transaction must verify remoteProfile.control.dataRevision before writing. */
 export function mergeOperation(remoteByPath, operation, { control, domainContext } = {}) {
+  if (control.activeUnitJob && operation.paths.some(p => operation.payloads[p]?.dataUnit)) throw new Error('unit-job-active')
+  return mergeOperationDocuments(remoteByPath, operation, { control, domainContext })
+}
+
+// A local acknowledgement replays pending edits even while remote numeric uploads are paused.
+// Generation, unit-version, and record validation still apply to this pure reconciliation.
+function mergeOperationDocuments(remoteByPath, operation, { control, domainContext }) {
   if (operation.blockedReason) throw new Error(operation.blockedReason)
   if (control.generation !== operation.generation) throw new Error('generation-mismatch')
   if (control.unitVersion !== operation.unitVersion) throw new Error('unit-version-mismatch')
-  if (control.activeUnitJob && operation.paths.some(p => operation.payloads[p]?.dataUnit)) throw new Error('unit-job-active')
   if (domainContext && domainContext.remoteProfile.control.dataRevision !== control.dataRevision) throw new Error('domain-context-stale')
   const documentsToWrite = {}, confirmedDocuments = {}
   if (operation.paths.every(p => remoteByPath[p]?.appliedOpId === operation.opId)) {
@@ -328,7 +334,7 @@ export function applyConfirmation(envelope, confirmation) {
       continue
     }
     // Reapply pending diffs to the acknowledgement using their original stamps, never new time.
-    const result = mergeOperation(documents, op, { control: confirmation.control, domainContext: { remoteProfile: { control: confirmation.control, documents }, remoteState: decodeState(documents, options) } })
+    const result = mergeOperationDocuments(documents, op, { control: confirmation.control, domainContext: { remoteProfile: { control: confirmation.control, documents }, remoteState: decodeState(documents, options) } })
     documents = { ...documents, ...result.confirmedDocuments }
   }
   out.state = decodeState(documents, { ...options, defaults: DEF, localOverlay })

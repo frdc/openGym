@@ -262,4 +262,33 @@ describe('granular cloud codec', () => {
     expect(after.deleted.favEx['0025']).toBe(-5)
   })
 
+  it.each(['__proto__', 'constructor', 'toString'])('keeps the remote tombstone for special ID %s over a stale edit', id => {
+    const before = fixtureState({ routines: [{ id, name: 'Original', ex: [] }] })
+    const [, op] = change(before, n => { n.routines[0].name = 'Offline' })
+    const remote = fixtureState({ deleted: { routines: Object.fromEntries([[id, 200]]) } })
+    const result = merge(remote, op)
+    const after = decode({ ...encode(remote), ...result.documentsToWrite })
+    expect(after.routines).toEqual([])
+    expect(Object.hasOwn(after.deleted.routines, id)).toBe(true)
+    expect(after.deleted.routines[id]).toBe(200)
+    expect(Object.values(result.confirmedDocuments).find(r => r.payload.id === id).deletedAt).toBe(200)
+  })
+  it('acknowledges unrelated changes while a unit job pauses a pending numeric upload', () => {
+    const before = fixtureState(), [first, acknowledged] = change(before, n => { n.sound = false }, 'op-ack')
+    const [next, numeric] = change(first, n => { n.targetW = 80 }, 'op-numeric')
+    const envelope = fixtureEnvelope({ state: next, pendingOperations: [acknowledged, numeric] })
+    const jobControl = { ...control, activeUnitJob: 'unit-job', dataRevision: 2 }
+    const confirmation = { ownerKey: owner.ownerKey, opId: acknowledged.opId, control: jobControl, documents: merge(before, acknowledged).confirmedDocuments }
+    const result = applyConfirmation(envelope, confirmation)
+    expect(result.state.targetW).toBe(80)
+    expect(result.state.sound).toBe(false)
+    expect(result.pendingOperations).toEqual([numeric])
+    expect(result.cloudGeneration).toBe(1)
+    expect(result.lastConfirmedControl).toEqual(jobControl)
+    expect(result.remoteMetadataByPath['settings/sound'].ackRevision).toBe(2)
+    expect(result.localRevision).toBe(1)
+    expect(envelope.pendingOperations).toEqual([acknowledged, numeric])
+    expect(() => mergeOperation(encode(first), numeric, { control: jobControl })).toThrow('unit-job-active')
+  })
+
 })

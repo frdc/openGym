@@ -559,12 +559,16 @@ const laterDel = (v, cur) => {
 export function mergeDeletions(a, b, { retainAllDeletions = false } = {}) {
   const out = {}
   for (const f of Object.keys(DEL_LISTS)) {
-    const x = isMap(a?.[f]) ? a[f] : {}, y = isMap(b?.[f]) ? b[f] : {}
+    const x = a && Object.hasOwn(a, f) && isMap(a[f]) ? a[f] : {}
+    const y = b && Object.hasOwn(b, f) && isMap(b[f]) ? b[f] : {}
     const m = { ...x }
     // On equal stamps the add-back (negative) wins, whichever copy is first: two devices whose
     // clocks were lifted from the same stamp can record an Undo and a removal at the same time,
     // and a first-wins tie kept a different record on each side (QA 2026-10-06).
-    for (const [k, v] of Object.entries(y)) if (!(k in m) || laterDel(v, m[k])) m[k] = v
+    for (const [k, v] of Object.entries(y)) if (!Object.hasOwn(m, k) || laterDel(v, m[k])) {
+      // Entity IDs are arbitrary; assignment to __proto__ would call an inherited setter.
+      Object.defineProperty(m, k, { value: v, enumerable: true, configurable: true, writable: true })
+    }
     if (Object.keys(m).length) out[f] = retainAllDeletions ? m : capStamps(m)
   }
   return Object.keys(out).length ? out : null
