@@ -1,0 +1,2 @@
+# Executed directly inside the Linux image even when built from a Windows checkout.
+web/05-check-base-path.sh text eol=lf

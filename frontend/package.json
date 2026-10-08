@@ -6,16 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:mobile": "VITE_MOBILE=1 VITE_IMG_BASE=https://cdn.jsdelivr.net/gh/hasaneyldrm/exercises-dataset@7455efae41b330c265e7cd4b78dfa848e7ce5ebd/images/ VITE_GIF_BASE=https://cdn.jsdelivr.net/gh/hasaneyldrm/exercises-dataset@7455efae41b330c265e7cd4b78dfa848e7ce5ebd/videos/ vite build && cap sync && node scripts/check-mobile-bundle.mjs",
+    "build:mobile": "node scripts/build-mobile.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:fatigue-probe": "node scripts/fatigue-monotonic-probe.mjs",
-    "test:firestore": "node scripts/check-firestore-rules.mjs"
+    "test:firestore": "node scripts/check-firestore-rules.mjs",
+    "test:build-scripts": "node --test scripts/build-mobile.test.mjs scripts/check-cloud-bundle.test.mjs",
+    "check:cloud-bundle": "node scripts/check-cloud-bundle.mjs"
   },
   "license": "AGPL-3.0-or-later",
   "dependencies": {
-    "@aparajita/capacitor-secure-storage": "^7.1.6",
     "@capacitor-mlkit/barcode-scanning": "^7.5.0",
     "@capacitor/app": "^7.1.2",
     "@capacitor/core": "7.6.9",

@@ -5,7 +5,7 @@
    it for a writer that does not (api/sync-stamps.js), and keeps a newer order from an older copy. */
 import { describe, expect, it } from 'vitest'
 import { mergeStates, orderMoved, stampChange } from './sync-merge.js'
-import * as S from '../../../api/sync-stamps.js'
+
 
 const clone = v => JSON.parse(JSON.stringify(v))
 const T = 1_800_000_000_000
@@ -42,15 +42,14 @@ describe('the order of the routines', () => {
     expect(orderMoved([r('a'), r('b'), r('c')], [r('a'), r('c')])).toBe(false)
     expect(orderMoved([r('a'), r('b')], [r('b'), r('a')])).toBe(true)
     expect(change(base(), s => { s.routines.push(r('d')) }, T + 1).edited.routineOrder).toBeUndefined()
-    for (const [a, b] of [[[r('a'), r('b')], [r('b'), r('a'), r('z')]], [[r('a')], [r('a')]]]) expect(S.orderMoved(a, b)).toBe(orderMoved(a, b))
   })
 })
 
-describe('the server and a writer that does not stamp', () => {
+describe('stamped peer changes preserve routine order', () => {
   it('its reorder is stamped, and holds against a phone that reconnects with an older change', () => {
     const cur = base()
     const old = clone(cur); old.routines = ['b', 'c', 'a'].map(id => old.routines.find(x => x.id === id)); old._ts = T + 3000
-    S.stampPut(cur, old, { overRead: true, now: T + 3000 })
+    old._ts = stampChange(cur, old, T + 3000)
     expect(old.edited.routineOrder).toBeGreaterThanOrEqual(T + 3000)
     const phone = change(cur, s => { s.restSec = 30 }, T + 9000)
     for (const m of [mergeStates(phone, old), mergeStates(old, phone)]) expect(ids(m)).toBe('b,c,a')
@@ -58,7 +57,8 @@ describe('the server and a writer that does not stamp', () => {
   it('an older copy\'s order does not undo a reorder made since', () => {
     const cur = change(base(), reorder(['c', 'b', 'a']), T + 1000)
     const old = clone(base()); old.routines.push({ id: 'z', name: 'z', ex: [] }); old._ts = T + 9000   // its own new routine, older order
-    S.stampPut(cur, old, { overRead: true, now: T + 9000 })
+    old._ts = stampChange(base(), old, T + 9000)
+    Object.assign(old, mergeStates(old, cur))
     expect(ids(old)).toBe('c,z,b,a')   // its new one next to the routine it followed there
   })
 })

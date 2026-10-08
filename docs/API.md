@@ -1,14 +1,5 @@
-# HTTP API
+# Retired HTTP API
 
-The complete openGym HTTP API — every route of `api/server.js`, with auth,
-request/response schemas and the env-dependent behavior — is documented as a
-hand-written OpenAPI 3.1 spec:
+The Node HTTP account/pairing, whole-profile sync, media upload and Coach API are not part of this adaptation. Their package, OpenAPI generator and generated website reference were retired. There is no replacement `/api` proxy.
 
-- **Spec (source of truth):** [`api/openapi.yaml`](../api/openapi.yaml)
-- **Browsable (Swagger UI):** https://opengym.duarte-santos.ch/api.html
-
-Lint it after changing routes:
-
-```sh
-npx --yes @redocly/cli lint api/openapi.yaml
-```
+The official Firebase SDK supplies configured Auth/Firestore access under `users/{uid}/apps/opengym`; see the approved design and README.md. Shared backups remain training-only. Existing raw legacy files are recovery evidence and must not be deleted or relabelled as Firebase ownership.

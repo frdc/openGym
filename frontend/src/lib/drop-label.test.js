@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { changeTitle } from './coach.js'
+
 
 // "Drop {0}" labels a drop set's sub-row ("Drop 1", lighter weight right after the set), sitting
 // next to the ✕ that removes it. It once also titled the Coach's "remove this exercise" change,
@@ -22,7 +22,4 @@ describe('the drop-set sub-row label', () => {
     }
   })
 
-  it('is not what the Coach titles an exercise it takes out', () => {
-    expect(changeTitle({ type: 'remove-exercise', target: { exId: 'bench' } }, {})).toMatch(/^Remove /)
-  })
 })

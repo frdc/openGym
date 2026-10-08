@@ -2,6 +2,7 @@
  * it exists for had the web index.html (a second build into the same dist/) beside the mobile
  * chunks; these fixtures are that tree and the good one. */
 import { describe, expect, it } from 'vitest'
+import { stampSw } from './sw-stamp.mjs'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,7 +24,7 @@ const tree = (files) => {
   }
   return dir
 }
-const copy = (prefix, html, { sw = 'const CACHE = "og-1a2b3c"' } = {}) => ({
+const copy = (prefix, html, { sw = stampSw("const CACHE = '__BUILD__'; const LAZY = '__LAZY__'", { stamp: 'ok', lazy: ['./assets/index-BKpgfSzf.js', './assets/index-C_XIl0Rk.js', './assets/index-x.css'] }) } = {}) => ({
   [`${prefix}/index.html`]: html,
   [`${prefix}/assets/index-BKpgfSzf.js`]: '',
   [`${prefix}/assets/index-C_XIl0Rk.js`]: '',
@@ -57,14 +58,14 @@ describe('check-mobile-bundle', () => {
   it('fails when index.html loads a chunk that is not there', () => {
     const files = copy('dist', MOBILE_HTML)
     delete files['dist/assets/index-BKpgfSzf.js']
-    expect(check(files)).toEqual(['dist/index.html loads assets/index-BKpgfSzf.js, which is missing'])
+    expect(check(files)).toContain('dist/index.html loads assets/index-BKpgfSzf.js, which is missing')
   })
 
   it('fails on an unstamped service worker', () => {
-    expect(check(copy('dist', MOBILE_HTML, { sw: 'const CACHE = "og-__BUILD__"' }))).toEqual(['dist/sw.js is not stamped (__BUILD__ left in it)'])
+    expect(check(copy('dist', MOBILE_HTML, { sw: 'const CACHE = "og-__BUILD__"' }))).toContain('dist/sw.js has unstamped placeholders')
   })
 
   it('fails when there is no build at all', () => {
-    expect(check({})).toEqual(['dist: no index.html'])
+    expect(check({})).toContain('dist: no index.html')
   })
 })

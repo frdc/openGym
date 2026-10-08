@@ -27,11 +27,12 @@ vi.mock('../lib/rest-alert.js', () => ({
   bindNativeRest: vi.fn(cb => { h.native = cb }),
 }))
 vi.mock('../lib/sound.js', () => ({ beep: vi.fn(), chime: vi.fn(), vibrate: vi.fn(), alertBuzz: vi.fn() }))
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({ ok: true })) }))
 
 import { useUI } from './useUI.js'
 import { useStore } from './useStore.js'
-import { api } from '../lib/api.js'
+let api
+beforeEach(() => { api = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected timer transport')) })
+afterEach(() => { api.mockRestore() })
 import { armRestAlert, disarmRestAlert, holdRestAlert } from '../lib/rest-alert.js'
 import { beep, chime } from '../lib/sound.js'
 

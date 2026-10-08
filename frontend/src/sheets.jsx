@@ -1099,8 +1099,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
       id = 'c' + uid()
       update(s => { const c = { id, n: name, bp, desc: d, tg, sm, muscleGroups: groups, primaries: prim, secondaries: sm, eq, custom: true }; extra(c); (s.customEx = s.customEx || []).push(c) })
     }
-    // The file goes to the server now rather than after the state's own debounce: another device
-    // that sees the reference first shows a tile until it arrives.
+    // Own media remains in the local archive for the captured owner.
 
     close()
     toast(existing ? t('Saved') : t('“{0}” created', name))

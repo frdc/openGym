@@ -1,52 +1,52 @@
-#!/usr/bin/env node
-/* Run after `npm run build:mobile`'s `cap sync`: is what went into the native shells the phone
- * build, whole?
- *
- * A web `vite build` that runs into the same dist/ between the mobile build and `cap sync` (two
- * builds in one worktree) leaves the web index.html beside the mobile chunks, and the APK then
- * opens the web app: no Android-only settings, a service worker, the passkey login screen. Each
- * copy is checked for
- *   - the flavour tag the mobile build writes into index.html (vite.config.js, `opengym-flavor`),
- *   - every script and stylesheet index.html loads, present beside it,
- *   - a stamped service worker (no `__BUILD__` left in sw.js).
- *
- * Usage: node scripts/check-mobile-bundle.mjs [frontend dir]   — exit code 1 on any problem. */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const COPIES = [
-  'dist',
-  'android/app/src/main/assets/public',
-  'ios/App/App/public',
-]
-
-export function checkCopy(dir) {
-  const problems = []
-  const html = join(dir, 'index.html')
+export function filesUnder(dir, prefix = '') {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true }).flatMap(item => item.isDirectory()
+    ? filesUnder(join(dir, item.name), prefix + item.name + '/') : [prefix + item.name]).sort()
+}
+export function checkCopy(dir, { mobile = true } = {}) {
+  const problems = [], html = join(dir, 'index.html')
   if (!existsSync(html)) return [`${dir}: no index.html`]
   const text = readFileSync(html, 'utf8')
-  if (!/<meta\s+name="opengym-flavor"\s+content="mobile"/.test(text))
-    problems.push(`${dir}/index.html is not the mobile build (no opengym-flavor meta) — another build ran into dist/?`)
+  if (mobile && !/<meta\s+name="opengym-flavor"\s+content="mobile"/.test(text))
+    problems.push(`${dir}/index.html is not the mobile build (no opengym-flavor meta)`)
   for (const [, ref] of text.matchAll(/(?:src|href)="\.?\/?(assets\/[^"]+\.(?:js|css))"/g))
     if (!existsSync(join(dir, ref))) problems.push(`${dir}/index.html loads ${ref}, which is missing`)
   const sw = join(dir, 'sw.js')
-  if (existsSync(sw) && readFileSync(sw, 'utf8').includes('__BUILD__'))
-    problems.push(`${dir}/sw.js is not stamped (__BUILD__ left in it)`)
+  if (!existsSync(sw)) return [...problems, `${dir}: no sw.js`]
+  const source = readFileSync(sw, 'utf8')
+  if (source.includes('__BUILD__') || source.includes('__LAZY__')) problems.push(`${dir}/sw.js has unstamped placeholders`)
+  let lazy = []
+  try {
+    const literal = source.match(/\bconst LAZY\s*=\s*("(?:[^"\\]|\\.)*")/)[1]
+    lazy = JSON.parse(JSON.parse(literal))
+    if (!Array.isArray(lazy) || lazy.some(p => typeof p !== 'string' || !/^\.\/assets\/[\w./-]+\.(?:js|css)$/.test(p) || p.includes('..'))) throw new Error('invalid lazy path')
+  } catch { problems.push(`${dir}/sw.js has no valid lazy precache list`); lazy = [] }
+  for (const file of filesUnder(join(dir, 'assets')).filter(p => /\.(?:js|css)$/.test(p)))
+    if (!lazy.includes('./assets/' + file)) problems.push(`${dir}/assets/${file} missing from SW precache`)
+  for (const file of lazy) if (!existsSync(join(dir, file))) problems.push(`${dir}/sw.js precaches missing ${file}`)
   return problems
 }
-
-export function checkMobileBundle(root) {
-  const copies = COPIES.map(rel => join(root, rel)).filter((dir, i) => i === 0 || existsSync(dir))
-  return copies.flatMap(checkCopy)
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const root = resolve(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), '..'))
-  const problems = checkMobileBundle(root)
-  if (problems.length) {
-    for (const p of problems) console.error('✗ ' + p)
-    process.exit(1)
+export function checkMobileBundle(root, { ios = false } = {}) {
+  const dist = join(root, 'dist'), copies = ['android/app/src/main/assets/public', ...(ios ? ['ios/App/App/public'] : [])]
+  const problems = checkCopy(dist), original = filesUnder(dist)
+  for (const copy of copies) {
+    const dir = join(root, copy); problems.push(...checkCopy(dir))
+    // Capacitor adds cordova.js/plugin files. Every Vite output must match exactly.
+    for (const file of original) {
+      const target = join(dir, file)
+      if (!existsSync(target) || !readFileSync(join(dist, file)).equals(readFileSync(target))) problems.push(`${copy}/${file} differs from dist or is missing`)
+    }
+    for (const file of filesUnder(join(dir, 'assets'))) if (!original.includes('assets/' + file)) problems.push(`${copy}/assets/${file} is stale`)
   }
-  console.log('Mobile bundle OK in ' + COPIES.filter(rel => existsSync(join(root, rel))).join(', ') + '.')
+  return problems
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2), root = resolve(args.find(arg => arg !== '--ios') || join(dirname(fileURLToPath(import.meta.url)), '..'))
+  const problems = checkMobileBundle(root, { ios: args.includes('--ios') })
+  if (problems.length) { for (const p of problems) console.error('✗ ' + p); process.exitCode = 1 }
+  else console.log('Mobile bundle OK: dist and Android byte-identical' + (args.includes('--ios') ? ', iOS checked.' : '; iOS excluded (explicit --ios required).'))
 }

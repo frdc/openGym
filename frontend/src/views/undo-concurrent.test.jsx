@@ -19,7 +19,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn(), useParams: () => ({}) }))
 vi.mock('../lib/sound.js', () => ({ beep: vi.fn(), chime: vi.fn(), vibrate: vi.fn(), alertBuzz: vi.fn(), unlock: vi.fn() }))
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({})), beacon: vi.fn(), appBase: () => '/' }))
 vi.mock('../components/Media.jsx', () => ({ Thumb: () => null }))
 vi.mock('../components/BodyMap.jsx', () => ({ default: () => null }))
 
@@ -29,7 +28,7 @@ import { deleteRoutineWithUndo, takeOutOfLoop } from './Plan.jsx'
 import { removeRoutineExercise } from './RoutineEdit.jsx'
 import { mergeStates, stampChange } from '../lib/sync-merge.js'
 import { saveRotation } from '../lib/rotation.js'
-import { stampPut } from '../../../api/sync-stamps.js'
+
 
 const clone = v => JSON.parse(JSON.stringify(v))
 const S = () => useStore.getState().S
@@ -161,7 +160,7 @@ describe('Undo of a routine swiped away in Plan, with an older app (v1.3.9) on t
     const server = clone(S())
     // v1.3.9 comes back: 409, its merge, its push over that revision
     const pushed = v139Merge(old, server)
-    stampPut(server, pushed, { overRead: true, stamped: false, now: Date.now() + 1 })
+    pushed._ts = stampChange(server, pushed, Date.now() + 1)
     expect(pushed.routines.find(r => r.id === 'b').name).toBe('Pull heavy')
     for (const m of both(S(), pushed)) {
       expect(m.routines.map(r => r.id)).toEqual(['a', 'b', 'c'])
@@ -181,7 +180,7 @@ describe('Undo of a routine swiped away in Plan, with an older app (v1.3.9) on t
     expect(S().routines.find(r => r.id === 'b')._ts).toBeUndefined()
     const server = clone(S())
     const pushed = v139Merge(old, server)
-    stampPut(server, pushed, { overRead: true, stamped: false, now: Date.now() + 1 })
+    pushed._ts = stampChange(server, pushed, Date.now() + 1)
     expect(pushed.routines.find(r => r.id === 'b').name).toBe('Pull heavy')
     for (const m of both(S(), pushed)) {
       expect(m.routines.map(r => r.id)).toEqual(['a', 'b', 'c'])

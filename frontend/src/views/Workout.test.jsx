@@ -104,10 +104,6 @@ vi.mock('../components/DurationWheel.jsx', () => ({ durationSheet: mocks.duratio
 vi.mock('../components/WorkoutSettingsSheet.jsx', () => ({ workoutSettingsSheet: mocks.workoutSettingsSheet }))
 // api.js reads navigator.userAgent at module scope. This file installs its own DOM inside the
 // tests rather than declaring a vitest environment, so it must not depend on an ambient one.
-vi.mock('../lib/api.js', () => ({
-  api: vi.fn(() => Promise.resolve({})),
-  IS_APPLE: false, IS_ANDROID: false, BIO: 'biometrics',
-}))
 
 let dom
 let root

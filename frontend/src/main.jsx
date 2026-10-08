@@ -14,8 +14,8 @@ createRoot(document.getElementById('root')).render(
   <StrictMode><App /></StrictMode>
 )
 
-// The photos and videos of custom exercises, in every build (the phone and the demo included):
-// uploads of what the server lacks, the local clean-up, and the plan's files kept offline.
+// Own photos and videos stay in the local media archive for the current owner.
+// Lifecycle handling preserves local references and pending backup work.
 startLocalMedia({ appStore: useStore })
 
 // Android 15 does not resize the page for the soft keyboard; the app says how much it covers and

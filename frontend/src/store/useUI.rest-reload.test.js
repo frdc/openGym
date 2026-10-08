@@ -14,11 +14,12 @@ beforeEach(async () => { uiRuntime.fixture.begin(); await uiRuntime.fixture.prep
 afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({ ok: true })) }))
 const { chime } = vi.hoisted(() => ({ chime: vi.fn() }))
 vi.mock('../lib/sound.js', () => ({ beep: vi.fn(), chime, vibrate: vi.fn(), alertBuzz: vi.fn() }))
 
-import { api } from '../lib/api.js'
+let api
+beforeEach(() => { api = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected timer transport')) })
+afterEach(() => { api.mockRestore() })
 import { useUI, restoreRest, REST_KEY } from './useUI.js'
 import { useStore } from './useStore.js'
 

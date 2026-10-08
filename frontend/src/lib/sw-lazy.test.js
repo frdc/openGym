@@ -1,7 +1,7 @@
 /* The code the app splits off and loads on demand (the photo and video ingest, the QR reader, the
  * local Coach) was cached only once the page had needed it with a network. The first photo added
  * offline after an update had no ingest to run. The build now lists those chunks into sw.js and
- * the install fetches them, best effort, leaving the big language packs to load as they always did. */
+ * the install requires them, including the locale, instruction and exercise-name packs. */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
@@ -55,7 +55,7 @@ describe('the worker keeps the on-demand code too', () => {
     expect(asked).toEqual(['index.html', './assets/index-new.js'])
   })
 
-  it('the build lists code and styles, not the language packs', () => {
+  it('the build lists code, styles and all language packs', () => {
     const chunk = (...moduleIds) => ({ type: 'chunk', moduleIds })
     const bundle = {
       'assets/index-a.js': chunk('/app/frontend/src/main.jsx'),
@@ -66,7 +66,7 @@ describe('the worker keeps the on-demand code too', () => {
       'assets/index-f.css': { type: 'asset' },
       'icon-512.png': { type: 'asset' },
     }
-    expect(lazyAssets(bundle)).toEqual(['./assets/index-a.js', './assets/index-f.css', './assets/media-ingest-b.js'])
+    expect(lazyAssets(bundle)).toEqual(['./assets/de-c.js', './assets/de-d.js', './assets/index-a.js', './assets/index-f.css', './assets/media-ingest-b.js', './assets/ru-e.js'])
   })
 
   it('the build stamps the worker with both', () => {
