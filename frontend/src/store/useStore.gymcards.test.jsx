@@ -4,19 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../lib/api.js', () => ({ api: vi.fn(), setRemoteAuth: vi.fn() }))
 
-import { DEF, useStore } from './useStore.js'
+import { runtime } from './cloud-test-runtime.js'
 
 const clone = value => JSON.parse(JSON.stringify(value))
 
-beforeEach(() => {
-  localStorage.clear()
-  useStore.setState({ S: clone(DEF), user: null, ready: false })
-})
-
-afterEach(() => {
-  localStorage.clear()
-  useStore.setState({ S: clone(DEF), user: null, ready: false })
-})
+let useStore, harness
+beforeEach(async () => { harness = await runtime(); useStore = harness.store })
 
 // gymCards is plain profile data — it rides the same update()/persist() path as everything else,
 // with no backend or schema change. These pin the contract the check-in view relies on: a fresh
@@ -27,7 +20,7 @@ describe('gymCards state', () => {
     expect(useStore.getState().S.gymCards).toEqual([])
   })
 
-  it('adds a card via update and persists it to localStorage', () => {
+  it('adds a card via update and confirms its durable envelope', async () => {
     useStore.getState().update(s => {
       s.gymCards.push({ id: 'c1', label: 'FitZone', value: 'ABC123', fmt: 'qrcode' })
     }, false)
@@ -37,7 +30,8 @@ describe('gymCards state', () => {
     expect(cards[0]).toMatchObject({ id: 'c1', label: 'FitZone', value: 'ABC123', fmt: 'qrcode' })
 
     // persist() writes the whole state under the app's storage key — the card must be in it.
-    const saved = JSON.parse(localStorage.getItem('gym_state_v1'))
+    await useStore.getState().flushLocal()
+    const saved = (await harness.saved()).state
     expect(saved.gymCards).toHaveLength(1)
     expect(saved.gymCards[0].value).toBe('ABC123')
   })
@@ -77,9 +71,10 @@ describe('lastGymCardId', () => {
     expect(useStore.getState().S.lastGymCardId).toBeNull()
   })
 
-  it('persists to localStorage like any other field', () => {
+  it('persists the selected card in its owner envelope', async () => {
     useStore.getState().update(s => { s.lastGymCardId = 'c9' }, false)
-    const saved = JSON.parse(localStorage.getItem('gym_state_v1'))
+    await useStore.getState().flushLocal()
+    const saved = (await harness.saved()).state
     expect(saved.lastGymCardId).toBe('c9')
   })
 

@@ -22,7 +22,7 @@ const initializeOperation = (op, control) => !op || op.generation !== null || !c
  * bindAuth resolves after local readiness; cloud work proceeds independently.
  */
 export function createSyncBridge({ storage, codec = defaultCodec, remote, clock = globalThis,
-  newId = () => crypto.randomUUID(), onState, onStatus } = {}) {
+  newId = () => crypto.randomUUID(), onState, onStatus, guestBaseline = DEF } = {}) {
   const status = createSyncStatus(onStatus), contexts = new Map(), localFailures = new WeakSet()
   let active = null, epoch = 0, highestAuthEpoch = -1
   const now = () => clock.now?.() ?? Date.now()
@@ -141,6 +141,15 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       await storage.open(); assertCurrent(ctx)
       const envelope = await storage.read(owner.ownerKey); assertCurrent(ctx)
       ctx.envelope = envelope || makeEnvelope(owner, DEF)
+      // Migration runs before hydrate/bindAuth. Choose IDs outside replayable reducers.
+      if (ctx.envelope.state.active && !ctx.envelope.localMetadata?.activeSessionToken) {
+        const token = newId()
+        ctx.envelope = await storage.commit(owner.ownerKey, current => {
+          const value = current || ctx.envelope
+          return { ...value, localMetadata: { ...value.localMetadata,
+            activeSessionToken: value.state.active ? value.localMetadata?.activeSessionToken || token : null } }
+        }); assertCurrent(ctx)
+      }
       initializeIntents(ctx, ctx.envelope.lastConfirmedControl)
       ctx.stopStorage = storage.subscribe(owner.ownerKey, async () => {
         if (!valid(ctx)) return
@@ -163,7 +172,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
   async function stageGuestChoice(ctx) {
     const guestOwner = makeOwner(ctx.owner.projectId)
     const guest = await storage.read(guestOwner.ownerKey); assertCurrent(ctx)
-    if (!guest || JSON.stringify(guest.state) === JSON.stringify(DEF)) return
+    if (!guest || JSON.stringify(guest.state) === JSON.stringify(DEF) || JSON.stringify(guest.state) === JSON.stringify(guestBaseline)) return
     const recoveryId = `guest:${guest.ownerKey}:${guest.localRevision}`
     await durable(ctx, current => {
       if (current.adoptionDecision) return current
@@ -301,13 +310,15 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (ctx.running) { await ctx.running; assertCurrent(ctx) }
     await startSync(ctx)
   }
-  async function recordChange({ previous, next, kind = 'edit', scheduleRemote = true }) {
+  async function recordChange({ previous, next, kind = 'edit', scheduleRemote = true, activeSessionToken, replaceActive = false }) {
     const ctx = active
     if (!ctx?.envelope || !status.get().localReady) throw failure('local-not-ready')
     const operation = codec.prepareOperation(previous, next, { ownerKey: ctx.owner.ownerKey, opId: newId(), kind,
       generation: ctx.envelope.lastConfirmedControl ? ctx.envelope.cloudGeneration : ctx.initialControl?.generation ?? null, unitVersion: ctx.envelope.unitProjectionVersion ?? ctx.envelope.lastConfirmedControl?.unitVersion ?? 1 })
     if (operation) operation.unitProvenance = ctx.envelope.lastConfirmedControl ? 'confirmed' : 'unproven'
-    ctx.intents.push({ previous: clone(previous), next: clone(next), operation })
+    if (activeSessionToken === undefined) activeSessionToken = next.active
+      ? (previous.active && previous.active.id === next.active.id ? memory(ctx).localMetadata?.activeSessionToken : null) || newId() : null
+    ctx.intents.push({ previous: clone(previous), next: clone(next), operation, activeSessionToken, replaceActive })
     emit(ctx, { local: 'saving', cloud: authenticated(ctx) ? 'pending' : 'auth-required' }); publish(ctx)
     const saved = await persistIntents(ctx)
     if (valid(ctx) && scheduleRemote) void startSync(ctx)
@@ -317,7 +328,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (!['add', 'keep'].includes(choice)) throw failure('invalid-adoption-choice')
     const ctx = active; assertCurrent(ctx)
     await flush(ctx); assertCurrent(ctx)
-    const opId = newId()
+    const opId = newId(), adoptionToken = newId()
     await durable(ctx, current => {
       if (current.adoptionDecision?.status !== 'pending') return current
       let next = clone(current)
@@ -326,7 +337,8 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
         if (!copy) throw failure('missing-recovery-copy')
         const operation = codec.prepareOperation(DEF, copy.state, { ownerKey: ctx.owner.ownerKey, opId, kind: 'adoption',
           generation: next.lastConfirmedControl ? next.cloudGeneration : null, unitVersion: next.lastConfirmedControl?.unitVersion || 1 })
-        next = codec.mergeLocalDraft(next, { previous: DEF, next: copy.state, operation })
+        next = codec.mergeLocalDraft(next, { previous: DEF, next: { ...copy.state, active: next.state.active || copy.state.active || null }, operation,
+          activeSessionToken: next.state.active ? next.localMetadata?.activeSessionToken || adoptionToken : copy.state.active ? adoptionToken : null })
       }
       next.adoptionDecision = { ...next.adoptionDecision, status: choice }
       return next
@@ -334,7 +346,12 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (valid(ctx)) await syncNow()
   }
   const jobs = createJobCoordinator({ context: () => active, durable, flush, current: assertCurrent, remote, newId, now, syncNow })
-  return { reset: jobs.reset, importBackup: jobs.importBackup, changeUnit: jobs.changeUnit, hydrate, bindAuth, unbindAuth, recordChange, flushLocal: () => flush(active), syncNow, resolveAdoption,
+  return { reset: jobs.reset, importBackup: jobs.importBackup, changeUnit: jobs.changeUnit, hydrate, bindAuth, unbindAuth, recordChange, flushLocal: () => flush(active),
+    flushOwner: ownerKey => {
+      const ctx = contexts.get(ownerKey)
+      if (!ctx) return Promise.reject(failure('unknown-owner-context'))
+      return flush(ctx)
+    }, syncNow, resolveAdoption,
     readRemote: async () => { const ctx = active; if (!authenticated(ctx)) throw failure('auth-required'); return refresh(ctx) },
     getUnsynced: () => { const envelope = active?.envelope && memory(active), count = (envelope?.pendingOperations.length || 0) + (envelope?.pendingJobs.length || 0);
       return { count, blocked: status.get().cloud === 'blocked' || envelope?.adoptionDecision?.status === 'pending' ? count : [...(envelope?.pendingOperations || []), ...(envelope?.pendingJobs || [])].filter(x => x.blockedReason).length } },

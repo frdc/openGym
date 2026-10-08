@@ -3,7 +3,7 @@
  * @typedef {{schemaVersion:1, generation:number, dataRevision:number, unitVersion:number, activeUnitJob:null|string, lastResetOpId:null|string}} Control
  * @typedef {{schemaVersion:1, generation:number, unitVersion:number, dataUnit:null|'kg'|'lb', payload:*, stamps:Object, deletedAt:null|number, appliedOpId:null|string}} Record
  * @typedef {{opId:string, ownerKey:string, generation:number, unitVersion:number, kind:string, paths:string[], readPaths:string[], payloads:Object<string,Record>, blockedReason:null|string,unitProvenance?:'confirmed'|'unproven'}} Operation
- * @typedef {{schemaVersion:1, ownerKey:string, localRevision:number, cloudGeneration:number, state:Object, remoteMetadataByPath:Object<string,{record:Record,ackRevision:number}>, pendingOperations:Operation[], pendingJobs:Array<Job|ResetJob|CleanupJob>, adoptionDecision:*, recoveryCopies:Object[], lastConfirmedControl:null|Control,unitProjectionVersion?:number}} Envelope
+ * @typedef {{schemaVersion:1, ownerKey:string, localRevision:number, cloudGeneration:number, state:Object, remoteMetadataByPath:Object<string,{record:Record,ackRevision:number}>, pendingOperations:Operation[], pendingJobs:Array<Job|ResetJob|CleanupJob>, adoptionDecision:*, recoveryCopies:Object[], lastConfirmedControl:null|Control,unitProjectionVersion?:number,localMetadata?:{activeSessionToken:null|string,seededRecoveryIds?:string[]}}} Envelope
  * @typedef {{ownerKey:string, opId:string, control:Control, documents:Object<string,Record>}} Confirmation
  * @typedef {{control:Control, documents:Object<string,Record>}} Profile
  * @typedef {{remoteProfile:Profile, remoteState:Object}} DomainContext
@@ -38,5 +38,5 @@ export function makeOwner(projectId, uid = null) {
 export function makeEnvelope(owner, state) {
   return { schemaVersion: 1, ownerKey: owner.ownerKey, localRevision: 0, cloudGeneration: 1,
     state: structuredClone(state), remoteMetadataByPath: {}, pendingOperations: [], pendingJobs: [],
-    adoptionDecision: null, recoveryCopies: [], lastConfirmedControl: null }
+    adoptionDecision: null, recoveryCopies: [], lastConfirmedControl: null, localMetadata: { activeSessionToken: null } }
 }

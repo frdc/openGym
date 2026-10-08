@@ -296,7 +296,7 @@ function mergeOperationDocuments(remoteByPath, operation, { control, domainConte
 }
 
 function assertOwner(envelope, ownerKey) { if (ownerKey !== envelope.ownerKey) throw new Error('owner-mismatch') }
-export function mergeLocalDraft(currentEnvelope, { previous, next, operation }) {
+export function mergeLocalDraft(currentEnvelope, { previous, next, operation, activeSessionToken, replaceActive = false }) {
   if (operation) assertOwner(currentEnvelope, operation.ownerKey)
   const out = copy(currentEnvelope)
   // Existing domain merge joins concurrent tabs; the running session belongs to this local profile.
@@ -310,6 +310,11 @@ export function mergeLocalDraft(currentEnvelope, { previous, next, operation }) 
   }
   // A stale empty tab cannot erase a workout started by another tab.
   if (!previous.active && !next.active && currentEnvelope.state.active) out.state.active = copy(currentEnvelope.state.active)
+  if (replaceActive) out.state.active = copy(next.active || null)
+  // Metadata follows the resulting active overlay, including a newer tab's draft.
+  if (!out.state.active) out.localMetadata = { ...out.localMetadata, activeSessionToken: null }
+  else if ((replaceActive || !same(previous.active, next.active)) && activeSessionToken !== undefined)
+    out.localMetadata = { ...out.localMetadata, activeSessionToken }
   for (const f of ['workouts', 'customEx']) for (const entity of out.state[f] || []) {
     const changed = (next[f] || []).find(e => e.id === entity.id), before = (previous[f] || []).find(e => e.id === entity.id)
     if (changed && !same(splitMedia(before || {}).overlay, splitMedia(changed).overlay)) {

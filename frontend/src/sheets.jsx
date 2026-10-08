@@ -2727,37 +2727,54 @@ function WorkoutComplete({ close }) {
 }
 export const workoutCompleteSheet = () => ui().openSheet(close => <WorkoutComplete close={close} />, { kind: 'center' })
 
-export function saveWorkoutEdits(onExit = () => nav('/history')) {
-  // A save decision left open after the editor already closed (a second prompt from a route
-  // exit that raced the first save) has nothing to save or delete: it only finishes leaving.
-  if (!S().active?.editingWorkoutId) { onExit(); return }
-  // An edit that unticked or removed every set would save a workout with nothing in it, which
-  // the history would still list and count as a training day. Deleting it is what that edit
-  // means; Keep editing goes back to the sets.
-  if (editLeftEmpty(S().active)) {
-    confirmSheet({
-      title: t('Delete workout?'),
+// Observe the expected post-action context. A later owner/draft transition cancels
+// all success effects, even when another draft is opened and closed during the write.
+function workoutSaveGuard() {
+  const initial = useStore.getState()
+  let valid = initial.localReady
+  const stop = useStore.subscribe(current => {
+    if (!current.localReady || current.ownerKey !== initial.ownerKey || current.activeSessionToken !== initial.activeSessionToken) valid = false
+  })
+  return { current: () => valid, async flush() { try { await useStore.getState().flushLocal(); return valid } finally { stop() } } }
+}
+
+export async function saveWorkoutEdits(onExit = () => nav('/history')) {
+  const original = S().active
+  if (!original?.editingWorkoutId) {
+    const guard = workoutSaveGuard()
+    try { if (await guard.flush()) onExit() } catch (error) { if (guard.current()) toast(t(error.message)) }
+    return
+  }
+  const save = async deleting => {
+    let guard
+    try {
+      if (deleting) useStore.getState().deleteHistoryEdit(); else useStore.getState().saveHistoryEdit()
+      useUI.getState().stopRest(); useUI.getState().stopWork()
+      guard = workoutSaveGuard()
+      if (!await guard.flush()) return
+      void useStore.getState().autoBackupNow().catch(() => {})
+      toast(t(deleting ? 'Workout deleted' : 'Workout updated'))
+      onExit()
+    } catch (error) {
+      if (!guard || guard.current()) {
+        // The saved intent remains retryable; keep the editor open after a failed write.
+        if (guard && !S().active) {
+          useStore.getState().update(s => { s.active = structuredClone(original) }, false)
+          try { await useStore.getState().flushLocal() } catch { /* Keep the original save error and retryable editor. */ }
+        }
+        toast(t(error.message))
+      }
+    }
+  }
+  if (editLeftEmpty(original)) {
+    confirmSheet({ title: t('Delete workout?'),
       message: t('No sets are left in this workout, so there is nothing to save. Delete it from your history?') + mediaGoesToo(editedRecord(S())),
       confirmText: t('Delete workout'), cancelText: t('Keep editing'), danger: true,
-      onConfirm: () => {
-        useStore.getState().deleteHistoryEdit()
-        useUI.getState().stopRest()
-        useUI.getState().stopWork()
-        useStore.getState().autoBackupNow()
-        toast(t('Workout deleted'))
-        onExit()
-      },
+      onConfirm: () => save(true),
     })
     return
   }
-  try {
-    useStore.getState().saveHistoryEdit()
-    useUI.getState().stopRest()
-    useUI.getState().stopWork()
-    useStore.getState().autoBackupNow()
-    toast(t('Workout updated'))
-    onExit()
-  } catch (error) { toast(t(error.message)) }
+  return save(false)
 }
 
 // The one save prompt that may be open: { id, onExit }. Closing the editor and a route exit
@@ -2826,7 +2843,7 @@ export function finishWorkout() {
   const total = setUnitsTotal(A.entries)
   if (!done) { confirmSheet({ title: t('Nothing logged yet'), message: t('You haven’t checked off any sets. Finish the workout anyway?'), confirmText: t('Finish anyway'), onConfirm: doFinishWorkout }); return }
   if (done < total) { confirmSheet({ title: t('Finish early?'), message: tn('{0} set still unchecked. Finish the workout now?', '{0} sets still unchecked. Finish the workout now?', total - done), confirmText: t('Finish workout'), onConfirm: doFinishWorkout }); return }
-  doFinishWorkout()
+  return doFinishWorkout()
 }
 // The workout screen's Finish pill (v1.3.11): one sheet with both ways out, Finish and save or
 // Discard. It says what finishWorkout's confirm would have said about sets still unchecked, so
@@ -2848,7 +2865,7 @@ export function finishWorkoutSheet({ onDiscard } = {}) {
     ],
   })
 }
-function doFinishWorkout() {
+async function doFinishWorkout() {
   const st = S()
   const A = st.active
   if (!A) return
@@ -2896,13 +2913,15 @@ function doFinishWorkout() {
     // A rotation pass this app manages starts its next pass the moment the last session lands
     // (lib/rotation.js). A planner's queue is left alone: it completes and waits for its writer.
     refillAfter(s, w)
-  })
-  useStore.getState().autoBackupNow()
+  }, true, { kind: 'finish' })
   useUI.getState().stopRest()
   // A hold still counting (a plank left unchecked, then Finish early) goes with the workout, as
   // on Discard: its bar is app-wide and would chime over the summary, and its callback writes
   // into s.active, which is gone. What it held is not logged, like any set left unchecked.
   useUI.getState().stopWork()
+  const guard = workoutSaveGuard()
+  try { if (!await guard.flush()) return } catch (error) { if (guard.current()) toast(t(error.message)); return }
+  void useStore.getState().autoBackupNow().catch(() => {})
   beep(snd(), 880, 0.15); beep(snd(), 1100, 0.15, 0.18); beep(snd(), 1320, 0.3, 0.36)
   ui().openSheet(close => <FinishSummary w={shown} prs={prs} e1prs={e1prs} close={close} />, { kind: 'center', locked: true })
 }

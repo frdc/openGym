@@ -134,7 +134,7 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
         const state = { ...clone(DEF), lang: value.state.lang, langAuto: value.state.langAuto === true, weighIn: false, gifSize: 'mini', resetAt: Math.max(time, highestStamp(value.state) + 1) }
         const job = { jobId: key(opId), ownerKey: value.ownerKey, kind: 'reset', generation: baseGeneration, status: 'pending',
           reset: { opId, baseGeneration, nextGeneration: baseGeneration == null ? null : baseGeneration + 1 }, paths: Object.keys(value.remoteMetadataByPath) }
-        return { ...value, state, cloudGeneration: baseGeneration == null ? value.cloudGeneration : baseGeneration + 1, remoteMetadataByPath: {}, pendingOperations: [],
+        return { ...value, state, localMetadata: { ...value.localMetadata, activeSessionToken: null }, cloudGeneration: baseGeneration == null ? value.cloudGeneration : baseGeneration + 1, remoteMetadataByPath: {}, pendingOperations: [],
           pendingJobs: ctx.owner.uid ? [...value.pendingJobs.filter(j => j.kind === 'cleanup'), job] : [], unitProjectionVersion: value.lastConfirmedControl?.unitVersion || 1,
           recoveryCopies: [...value.recoveryCopies, { recoveryId: job.jobId, reason: 'reset', ownerKey: value.ownerKey, state: clone(value.state), pendingOperations: clone(value.pendingOperations), pendingJobs: clone(value.pendingJobs) }] }
       })
@@ -206,7 +206,7 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
     const ctx = requireContext(); await flush(ctx)
     const source = sanitizeAccent(await prepareLegacyState({ ...clone(DEF), ...clone(backup) })); current(ctx)
     if (authenticated(ctx) && source.unit !== ctx.envelope.state.unit) await changeUnit(source.unit)
-    const opId = newId(), time = now()
+    const opId = newId(), time = now(), importedActiveToken = source.active ? newId() : null
     await durable(ctx, value => {
       const preview = mergeWith?.state || null, before = value.state
       const stamp = Math.max(time, highestStamp(before) + 1, highestStamp(source) + 1, highestStamp(preview) + 1)
@@ -225,7 +225,7 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
       const job = createJob({ ownerKey: value.ownerKey, generation: value.cloudGeneration, kind: 'import', opId, paths, payloads: operation?.payloads || {}, referenceDocuments: Object.fromEntries(Object.entries(value.remoteMetadataByPath).map(([path, meta]) => [path, meta.record])), options: { sourceVersion: unitVersion, targetVersion: unitVersion } })
       job.source = clone(source)
       if (operation?.blockedReason) { job.blockedReason = operation.blockedReason; job.status = 'blocked' }
-      return { ...value, state: next, pendingJobs: ctx.owner.uid && paths.length ? [...value.pendingJobs, job] : value.pendingJobs }
+      return { ...value, state: next, localMetadata: { ...value.localMetadata, activeSessionToken: before.active ? value.localMetadata?.activeSessionToken || importedActiveToken : importedActiveToken }, pendingJobs: ctx.owner.uid && paths.length ? [...value.pendingJobs, job] : value.pendingJobs }
     })
     if (authenticated(ctx)) await syncNow()
   }

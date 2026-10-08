@@ -216,28 +216,27 @@ export async function syncReminder(S, interactive = false) {
 
 // Capacitor emits appStateChange when the native shell returns to the foreground. The visibility
 // listener also covers WebView/browser transitions, and both are harmless on a non-mobile build.
-let reminderSyncStarted = false
 export function initReminderSync(getState) {
-  if (!MOBILE || reminderSyncStarted) return
-  reminderSyncStarted = true
+  if (!MOBILE) return () => {}
   const resync = () => {
-    if (document.visibilityState === 'hidden') return
-    syncReminder(getState()).catch(() => {})
+    const state = getState()
+    if (document.visibilityState !== 'hidden' && state) void syncReminder(state)
   }
   document.addEventListener('visibilitychange', resync)
-  import('@capacitor/app').then(({ App }) => {
-    App.addListener('appStateChange', ({ isActive }) => { if (isActive) resync() })
-  }).catch(() => {})
+  const stop = onAppActive(resync)
+  return () => { document.removeEventListener('visibilitychange', resync); stop() }
 }
 
-// Runs cb whenever the native shell returns to the foreground — the store pulls the account's
-// state then, so a phone that sat in a pocket all afternoon shows what the desktop did. No-op
-// off mobile; the store's own visibility/focus listeners cover the browser.
-export function onAppActive(cb) {
-  if (!MOBILE) return
-  import('@capacitor/app').then(({ App }) => {
-    App.addListener('appStateChange', ({ isActive }) => { if (isActive) cb() })
+// The returned disposer also removes a native registration resolving after disposal.
+export function onAppActive(cb, onInactive = () => {}) {
+  let stopped = false, handle
+  if (MOBILE) import('@capacitor/app').then(async ({ App }) => {
+    const listener = await App.addListener('appStateChange', ({ isActive }) => {
+      if (!stopped) { if (isActive) cb(); else onInactive() }
+    })
+    if (stopped) await listener.remove(); else handle = listener
   }).catch(() => {})
+  return () => { stopped = true; void handle?.remove() }
 }
 
 // WKWebView can't do blob-URL downloads, so the backup goes out through the OS share sheet
