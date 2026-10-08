@@ -197,10 +197,14 @@ describe('the redirects nginx sends', () => {
 // script nginx's entrypoint runs before it renders the template. Run here with sh, as it is there.
 describe('the web container refuses a BASE_PATH it cannot serve', () => {
   const WEB = join(dirname(fileURLToPath(import.meta.url)), '../../../web')
+  // Windows has no POSIX sh on PATH; Git Bash runs the same container script.
+  const shell = process.platform === 'win32'
+    ? join(process.env.ProgramFiles || 'C:/Program Files', 'Git/bin/bash.exe')
+    : 'sh'
   const check = value => {
     const env = { PATH: process.env.PATH }
     if (value !== undefined) env.BASE_PATH = value
-    return spawnSync('sh', [join(WEB, '05-check-base-path.sh')], { env, encoding: 'utf8' })
+    return spawnSync(shell, [join(WEB, '05-check-base-path.sh')], { env, encoding: 'utf8' })
   }
 
   it.each([[undefined], [''], ['/gym'], ['/a/b'], ['/g+ym']])('starts with BASE_PATH=%s', value => {

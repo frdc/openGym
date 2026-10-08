@@ -2,10 +2,15 @@
  * it exists for had the web index.html (a second build into the same dist/) beside the mobile
  * chunks; these fixtures are that tree and the good one. */
 import { describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { checkMobileBundle } from './check-mobile-bundle.mjs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// Run the CLI with native Node, as build:mobile does. Vite's SSR transform leaves a CRLF
+// shebang inside the module body on Windows, which makes the imported script invalid.
+const script = join(dirname(fileURLToPath(import.meta.url)), 'check-mobile-bundle.mjs')
 
 const MOBILE_HTML = '<head><meta name="opengym-flavor" content="mobile"><script type="module" crossorigin src="./assets/index-BKpgfSzf.js"></script><link rel="stylesheet" href="./assets/index-x.css"></head>'
 const WEB_HTML = '<head><script type="module" crossorigin src="./assets/index-C_XIl0Rk.js"></script><link rel="stylesheet" href="./assets/index-x.css"></head>'
@@ -25,15 +30,23 @@ const copy = (prefix, html, { sw = 'const CACHE = "og-1a2b3c"' } = {}) => ({
   [`${prefix}/assets/index-x.css`]: '',
   [`${prefix}/sw.js`]: sw,
 })
-const check = files => {
+const check = (files, expectedStatus = 1) => {
   const dir = tree(files)
-  try { return checkMobileBundle(dir).map(p => p.replace(dir + '/', '')) }
+  try {
+    const result = spawnSync(process.execPath, [script, dir], { encoding: 'utf8' })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(expectedStatus)
+    if (expectedStatus === 0) expect(result.stdout).toContain('Mobile bundle OK')
+    return result.stderr.trim().split(/\r?\n/).filter(Boolean)
+      .map(p => p.replace(/^✗ /, '').replaceAll('\\', '/')
+        .replace(dir.replaceAll('\\', '/') + '/', ''))
+  }
   finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
 describe('check-mobile-bundle', () => {
   it('passes a mobile build synced into android', () => {
-    expect(check({ ...copy('dist', MOBILE_HTML), ...copy('android/app/src/main/assets/public', MOBILE_HTML) })).toEqual([])
+    expect(check({ ...copy('dist', MOBILE_HTML), ...copy('android/app/src/main/assets/public', MOBILE_HTML) }, 0)).toEqual([])
   })
 
   it('fails when the synced index.html is the web build (two builds into one dist/)', () => {
