@@ -69,7 +69,7 @@ export function createWorkoutStore(options = {}) {
   let bridge, session, client, bootPromise, stopped = false, epoch = 0, authEpoch = 0, transition = null
   let envelope = null, desiredUser = null, importRead = null, adopting = null, persistRequested = false
   let lastForeground = -Infinity, backupTimer = null
-  const departures = new Map(), disposers = []
+  const departures = new Map(), disposers = [], authWaiters = new Set()
   let latestStatus = { ownerKey: null, localReady: false, local: 'loading', cloud: 'unconfigured', localRevision: 0, pendingCount: 0, blockedCount: 0, localError: null, cloudError: null }
   const store = create((set, get) => {
     const localFailure = error => { if (stopped || ['stale-context', 'stale-auth-epoch'].includes(error?.code)) return; latestStatus = { ...latestStatus, local: 'error', localError: info(error) }; set({ sync: compatibilityStatus(latestStatus) }) }
@@ -322,14 +322,28 @@ export function createWorkoutStore(options = {}) {
         const assertDeparture = () => { if (stopped || epoch !== capturedEpoch || get().ownerKey !== capturedKey || !get().localReady) throw failure('stale-context') }
         await bridge.syncNow(); assertDeparture()
         const left = get().unsyncedChanges()
+        if (capturedKey === guest.ownerKey && !get().user) return left
         if (left.owed && !force) return left
         const { useUI } = await import('./useUI.js'); assertDeparture()
         useUI.getState().abandonWork?.(); assertDeparture()
         useUI.getState().stopRest?.(); useUI.getState().stopWork?.()
         await get().flushLocal(); assertDeparture()
-        // An SDK request already sent cannot be cancelled; no later UI success is applied to B.
-        await capturedSession.signOut()
-        if (get().user || get().ownerKey !== guest.ownerKey || !get().localReady) throw failure('stale-context')
+        // SDK signOut may resolve before its Auth observer finishes opening Guest.
+        // Only that next confirmed owner epoch can complete this departure.
+        let stop = () => {}, cancel
+        const guestReady = new Promise((resolve, reject) => {
+          const finish = error => { stop(); authWaiters.delete(cancel); error ? reject(error) : resolve() }
+          cancel = () => finish(failure('stale-context'))
+          const check = () => {
+            if (stopped || session !== capturedSession || epoch > capturedEpoch + 1 || (epoch > capturedEpoch && (desiredUser || transition?.owner.ownerKey !== guest.ownerKey))) { cancel(); return }
+            if (epoch === capturedEpoch + 1 && get().localReady && get().ownerKey === guest.ownerKey && !get().user) finish()
+          }
+          authWaiters.add(cancel); stop = store.subscribe(check); check()
+        })
+        try {
+          await Promise.all([guestReady, Promise.resolve().then(() => { assertDeparture(); return capturedSession.signOut() })])
+          if (stopped || session !== capturedSession || epoch !== capturedEpoch + 1 || get().user || get().ownerKey !== guest.ownerKey || !get().localReady) throw failure('stale-context')
+        } finally { stop(); authWaiters.delete(cancel) }
         return { ...left, ...(left.owed ? { stashed: true } : {}) }
       },
       async resolveAdoption(choice) {
@@ -392,7 +406,7 @@ export function createWorkoutStore(options = {}) {
       async stashedMediaHashes() { requireReady(); return new Set((envelope?.recoveryCopies || []).flatMap(c => [...referencedHashes(c.state)])) },
       async autoBackupNow() { const context = get().getContext(), S = clone(get().S); if (!context.localReady) return; await get().flushLocal(); if (MOBILE && !stopped && get().localReady && get().ownerKey === context.ownerKey && epoch === context.epoch && S.autoBackup) return writeAutoBackup(S) },
       loadConfig: async () => get().config, refreshConfig: async () => get().config,
-      async dispose() { stopped = true; ++epoch; session?.stop(); for (const stop of disposers.splice(0)) stop(); clearTimeout(backupTimer); if (bridge) await bridge.unbindAuth().catch(() => {}); hide() },
+      async dispose() { stopped = true; ++epoch; for (const cancel of [...authWaiters]) cancel(); session?.stop(); for (const stop of disposers.splice(0)) stop(); clearTimeout(backupTimer); if (bridge) await bridge.unbindAuth().catch(() => {}); hide() },
     }
   })
   return store
