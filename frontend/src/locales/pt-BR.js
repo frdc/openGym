@@ -1028,10 +1028,10 @@ export const PT_BR_OVERRIDES = {
   'Next: {0}, today': 'Próximo: {0}, hoje',
   'Next: {0}': 'Próximo: {0}',
   'Next week starts {0}': 'A próxima semana começa em {0}',
-  'Week complete, ask the coach': 'Semana concluída, pergunte ao Coach',
+  'Week complete': 'Semana concluída',
   'Up next': 'Próximo',
   'Later': 'Depois',
-  'Coach week': 'Semana do Coach',
+  'Planned sessions': 'Sessões planejadas',
   'Your loop': 'Seu ciclo',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': 'Rotação',

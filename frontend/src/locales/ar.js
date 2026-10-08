@@ -1728,10 +1728,10 @@ export default {
   'Next: {0}, today': 'التالي: {0}، اليوم',
   'Next: {0}': 'التالي: {0}',
   'Next week starts {0}': 'يبدأ الأسبوع التالي {0}',
-  'Week complete, ask the coach': 'اكتمل الأسبوع، اسأل المدرب',
+  'Week complete': 'اكتمل الأسبوع',
   'Up next': 'التالي',
   'Later': 'لاحقًا',
-  'Coach week': 'أسبوع المدرب',
+  'Planned sessions': 'الجلسات المخطط لها',
   'Your loop': 'دورتك',
 
   'Rotation': 'التناوب',

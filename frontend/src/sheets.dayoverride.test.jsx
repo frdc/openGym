@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-// The day sheet's header names the plan the day would have without its override. In a coach
+// The day sheet's header names the plan the day would have without its override. In a plan
 // week that is the queue's session for the day, in front of the weekday's own routines — the
 // same answer the Home row gives — not the weekday list alone. The list itself puts the
-// week's remaining sessions first under 'Coach week': picking one pins it to the day (the
+// week's remaining sessions first under 'Planned sessions': picking one pins it to the day (the
 // same per-date override), and one already pinned to another day shows that day.
 
 const uiRuntime = vi.hoisted(() => ({ fixture: null }))
@@ -60,7 +60,7 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => { mounted.splice(0).forEach(r => r.unmount()) }) })
 
-describe('Day sheet header in a coach week', () => {
+describe('Day sheet header in a plan week', () => {
   it('names the queue session for today, with the weekday\'s own routine after it', async () => {
     await setS()
     dayOverrideSheet(todayISO())
@@ -89,7 +89,7 @@ describe('Day sheet header in a coach week', () => {
   })
 })
 
-describe('Day sheet list in a coach week', () => {
+describe('Day sheet list in a plan week', () => {
   it('a fulfilled pin — the session pinned here already done — reads as no change; the clear row stays', async () => {
     await setS({ dayPlan: { [todayISO()]: 'd1' }, workouts: [logged('d1')] })
     dayOverrideSheet(todayISO())
@@ -114,17 +114,17 @@ describe('Day sheet list in a coach week', () => {
     expect(rowOf((await renderTop()), 'US W1 D2').querySelector('.ss').textContent).toBe(fmtDate(todayISO(), true))
   })
 
-  it('lists the remaining sessions first under Coach week, a done session down in the plain list', async () => {
+  it('lists the remaining sessions first under Planned sessions, a done session down in the plain list', async () => {
     await setS({ workouts: [logged('d1')] })
     dayOverrideSheet(todayISO())
     const host = (await renderTop())
-    expect(heading(host)).toBe('Coach week')
-    const [coach, plain] = lists(host)
-    expect(coach).toEqual(['US W1 D2'])
+    expect(heading(host)).toBe('Planned sessions')
+    const [planned, plain] = lists(host)
+    expect(planned).toEqual(['US W1 D2'])
     expect(plain).toEqual(['US W1 D1', 'Core', 'Rest / skip this day'])
   })
 
-  it('your own loop is headed Your loop, not Coach week', async () => {
+  it('your own loop is headed Your loop', async () => {
     await setS({ queue: { ...queue, rotationId: 'r1' }, rotation: { id: 'r1', sequence: ['d1', 'd2'], label: 'Rotation' } })
     try {
     dayOverrideSheet(todayISO())
@@ -132,7 +132,7 @@ describe('Day sheet list in a coach week', () => {
     } finally { await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, rotation: null } })); }
   })
 
-  it('picking a coach row pins that session to the day', async () => {
+  it('picking a planned session row pins that session to the day', async () => {
     const friday = daysFromToday(2)
     await setS()
     dayOverrideSheet(friday)

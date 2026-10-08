@@ -1375,7 +1375,7 @@ export default {
   'Next: {0}, today': 'Sıradaki: {0}, bugün',
   'Next: {0}': 'Sıradaki: {0}',
   'Next week starts {0}': 'Gelecek hafta {0} başlıyor',
-  'Week complete, ask the coach': 'Hafta tamamlandı, koça sor',
+  'Week complete': 'Hafta tamamlandı',
   'Up next': 'Sıradaki',
   'Later': 'Daha sonra',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1678,7 +1678,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': 'Koç bu telefonda kurulu değil. Ayarlar → Yapay Zekâ Koçu bölümüne bak.',
   'Your AI provider couldn’t answer.': 'Yapay zekâ sağlayıcın yanıt veremedi.',
   'Something went wrong on this phone.': 'Bu telefonda bir şeyler ters gitti.',
-  'Coach week': 'Koç haftası',
+  'Planned sessions': 'Planlanan seanslar',
   'Your loop': 'Döngün',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': 'Rotasyon',

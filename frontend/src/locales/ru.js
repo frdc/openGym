@@ -1346,7 +1346,7 @@ export default {
   'Next: {0}, today': 'Далее: {0}, сегодня',
   'Next: {0}': 'Далее: {0}',
   'Next week starts {0}': 'Следующая неделя начнётся {0}',
-  'Week complete, ask the coach': 'Неделя завершена, спросите тренера',
+  'Week complete': 'Неделя завершена',
   'Up next': 'Далее',
   'Later': 'Позже',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1634,7 +1634,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': 'Тренер не настроен на этом телефоне. Проверьте Настройки → ИИ-тренер.',
   'Your AI provider couldn’t answer.': 'Ваш провайдер ИИ не смог ответить.',
   'Something went wrong on this phone.': 'На этом телефоне что-то пошло не так.',
-  'Coach week': 'Неделя тренера',
+  'Planned sessions': 'Запланированные тренировки',
   'Your loop': 'Твой круг',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': 'Ротация',

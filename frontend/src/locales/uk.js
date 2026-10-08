@@ -1672,10 +1672,10 @@ export default {
   'Next: {0}, today': 'Далі: {0}, сьогодні',
   'Next: {0}': 'Далі: {0}',
   'Next week starts {0}': 'Наступний тиждень починається {0}',
-  'Week complete, ask the coach': 'Тиждень завершено, звернися до тренера',
+  'Week complete': 'Тиждень завершено',
   'Up next': 'Далі',
   'Later': 'Пізніше',
-  'Coach week': 'Тиждень тренера',
+  'Planned sessions': 'Заплановані тренування',
   'Your loop': 'Твоє коло',
 
   'Rotation': 'Ротація',

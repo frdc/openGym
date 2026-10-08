@@ -1378,7 +1378,7 @@ export default {
   'Next: {0}, today': 'Következő: {0}, ma',
   'Next: {0}': 'Következő: {0}',
   'Next week starts {0}': 'A következő hét kezdete: {0}',
-  'Week complete, ask the coach': 'A hét kész, kérdezd az edzőt',
+  'Week complete': 'A hét kész',
   'Up next': 'Következő',
   'Later': 'Később',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1681,7 +1681,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': 'Az Edző nincs beállítva ezen a telefonon. Nézd meg itt: Beállítások → MI-edző.',
   'Your AI provider couldn’t answer.': 'Az MI-szolgáltatód nem tudott válaszolni.',
   'Something went wrong on this phone.': 'Hiba történt ezen a telefonon.',
-  'Coach week': 'Edzői hét',
+  'Planned sessions': 'Tervezett edzések',
   'Your loop': 'A te köröd',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': 'Rotáció',

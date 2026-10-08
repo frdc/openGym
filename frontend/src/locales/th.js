@@ -1386,7 +1386,7 @@ export default {
   'Next: {0}, today': 'ถัดไป: {0}, วันนี้',
   'Next: {0}': 'ถัดไป: {0}',
   'Next week starts {0}': 'สัปดาห์หน้าเริ่ม {0}',
-  'Week complete, ask the coach': 'จบสัปดาห์แล้ว ถามโค้ช',
+  'Week complete': 'จบสัปดาห์แล้ว',
   'Up next': 'ถัดไป',
   'Later': 'ภายหลัง',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1689,7 +1689,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': 'ยังไม่ได้ตั้งค่าโค้ชบนโทรศัพท์นี้ ตรวจสอบที่ ตั้งค่า → โค้ช AI',
   'Your AI provider couldn’t answer.': 'ผู้ให้บริการ AI ของคุณตอบกลับไม่ได้',
   'Something went wrong on this phone.': 'มีบางอย่างผิดพลาดบนโทรศัพท์นี้',
-  'Coach week': 'สัปดาห์ของโค้ช',
+  'Planned sessions': 'เซสชันที่วางแผนไว้',
   'Your loop': 'การวนรอบของคุณ',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': 'การหมุนเวียน',

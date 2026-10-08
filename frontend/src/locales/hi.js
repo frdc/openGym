@@ -1375,7 +1375,7 @@ export default {
   'Next: {0}, today': 'अगला: {0}, आज',
   'Next: {0}': 'अगला: {0}',
   'Next week starts {0}': 'अगला सप्ताह {0} से शुरू होगा',
-  'Week complete, ask the coach': 'सप्ताह पूरा हुआ, कोच से पूछें',
+  'Week complete': 'सप्ताह पूरा हुआ',
   'Up next': 'अगला',
   'Later': 'बाद में',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1678,7 +1678,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': 'इस फ़ोन पर कोच सेट नहीं है। सेटिंग्स → AI कोच देखें।',
   'Your AI provider couldn’t answer.': 'आपका AI प्रदाता जवाब नहीं दे सका।',
   'Something went wrong on this phone.': 'इस फ़ोन पर कुछ गड़बड़ हो गई।',
-  'Coach week': 'कोच का सप्ताह',
+  'Planned sessions': 'नियोजित सत्र',
   'Your loop': 'आपका चक्र',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': 'रोटेशन',

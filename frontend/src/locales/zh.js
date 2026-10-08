@@ -1375,7 +1375,7 @@ export default {
   'Next: {0}, today': '下一个：{0}，今天',
   'Next: {0}': '下一个：{0}',
   'Next week starts {0}': '下周于 {0} 开始',
-  'Week complete, ask the coach': '本周已完成，请咨询教练',
+  'Week complete': '本周已完成',
   'Up next': '下一个',
   'Later': '稍后',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1678,7 +1678,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': '此手机上尚未设置教练。请查看“设置 → AI 教练”。',
   'Your AI provider couldn’t answer.': '你的 AI 提供商未能给出回答。',
   'Something went wrong on this phone.': '此手机上出了点问题。',
-  'Coach week': '教练周',
+  'Planned sessions': '计划训练',
   'Your loop': '你的循环',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': '轮换',

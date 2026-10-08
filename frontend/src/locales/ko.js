@@ -1375,7 +1375,7 @@ export default {
   'Next: {0}, today': '다음: {0}, 오늘',
   'Next: {0}': '다음: {0}',
   'Next week starts {0}': '다음 주는 {0}에 시작됩니다',
-  'Week complete, ask the coach': '주 완료, 코치에게 문의하세요',
+  'Week complete': '주 완료',
   'Up next': '다음',
   'Later': '나중에',
   // --- combine routines / layout / deload (v1.3.6) ---
@@ -1678,7 +1678,7 @@ export default {
   'The Coach isn’t set up on this phone. Check Settings → AI Coach.': '이 휴대폰에는 코치가 설정되어 있지 않습니다. 설정 → AI 코치를 확인하세요.',
   'Your AI provider couldn’t answer.': 'AI 제공자가 응답하지 못했습니다.',
   'Something went wrong on this phone.': '이 휴대폰에서 문제가 발생했습니다.',
-  'Coach week': '코치 주간',
+  'Planned sessions': '예정된 세션',
   'Your loop': '내 순환',
   // Rotation (lib/rotation.js) — an in-app alternative to the weekday plan.
   'Rotation': '로테이션',
