@@ -283,14 +283,14 @@ export default function Settings({ page = null, find = null, via = null }) {
     return confirmSheet({
     title: t('Reset everything?'),
     message: user
-      ? t('Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.')
-      : t('Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.'),
-    confirmText: t('Delete everything'), danger: true,
+      ? t('Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.')
+      : t('Resets the active profile on this device. Local recovery copies and original photos and videos are retained.'),
+    confirmText: t('Reset'), danger: true,
     onConfirm: async () => {
       if (!current()) return
       await resetAll()
       if (!current()) return
-      nav('/home'); toast(t('All data reset'))
+      nav('/home'); toast(t(user ? 'Active profile reset on this device. Check cloud status for account confirmation.' : 'Active profile reset on this device. Local recovery copies and original media are retained.'))
       clearMediaAfterReset(current).catch(() => {})
     },
     })

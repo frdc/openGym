@@ -1,5 +1,11 @@
 // German UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Die Anmeldung per E-Mail und Passwort ist für diese App nicht aktiviert. Wende dich an die Administration. Du kannst dieses Gerät weiterhin lokal nutzen.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Setzt das aktive Profil auf diesem Gerät und das Konto auf anderen Geräten zurück, sobald diese sich verbinden. Lokale Wiederherstellungskopien und originale Fotos und Videos bleiben erhalten.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Setzt das aktive Profil auf diesem Gerät zurück. Lokale Wiederherstellungskopien und originale Fotos und Videos bleiben erhalten.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Aktives Profil auf diesem Gerät zurückgesetzt. Prüfe den Cloud-Status zur Bestätigung für das Konto.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Aktives Profil auf diesem Gerät zurückgesetzt. Lokale Wiederherstellungskopien und originale Medien bleiben erhalten.",
+
   // --- generic ---
   'Confirm': 'Bestätigen',
   'Cancel': 'Abbrechen',
@@ -472,8 +478,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'Speichert nach jedem beendeten Training oder jeder bearbeiteten Routine eine datierte Kopie in „Dokumente/openGym“ und behält die neuesten {0}. Richte eine Sync-App auf diesen Ordner aus oder kopiere sie von Hand.',
   'Reset everything?': 'Alles zurücksetzen?',
   'Reset everything': 'Alles zurücksetzen',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Löscht Plan, Trainings, Körpergewicht, Fotos und Videos auf diesem Gerät. Das kann nicht rückgängig gemacht werden.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Löscht Plan, Trainings, Körpergewicht, Fotos und Videos aus deinem Profil auf diesem Server und auf allen angemeldeten Geräten. Das kann nicht rückgängig gemacht werden.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'Synchronisierung fehlgeschlagen: Der Server hat den Upload als zu groß abgelehnt. Deine Änderungen sind noch nicht auf dem Server angekommen.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'Auf diesem Gerät ist kein Speicher mehr frei: Die Änderung ist nicht auf ihm gespeichert. Angemeldet geht sie trotzdem an den Server.',
   'Delete everything': 'Alles löschen',

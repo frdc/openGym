@@ -13,7 +13,8 @@ import { getMediaStore, legacyMediaStore } from '../lib/media-store.js'
 import { createOfflineStorage } from '../lib/cloud/offline-store.js'
 import { createLegacyReader, migrateLegacy } from '../lib/cloud/legacy-migration.js'
 import { makeOwner, makeEnvelope, recoverableBy, trainingState } from '../lib/cloud/model.js'
-import { prepareOperation, decodeState, encodeState } from '../lib/cloud/codec.js'
+import { decodeState, encodeState } from '../lib/cloud/codec.js'
+import { bulkAdmissionJob } from '../lib/cloud/sync-jobs.js'
 import { createSyncBridge } from '../lib/cloud/sync-bridge.js'
 import { createFirebaseClient, readFirebaseConfig } from '../lib/cloud/firebase-client.js'
 import { createAuthSession } from '../lib/cloud/auth-session.js'
@@ -92,22 +93,20 @@ export function createWorkoutStore(options = {}) {
       registerCustom([])
       set({ S: freshState(), ownerKey: null, activeSessionToken: null, ready: false, localReady: false, user: null, recoveryCopies: [], adoptionDecision: null })
     }
+    function seedAdmission(value, copy) {
+      if (value.localMetadata?.seededRecoveryIds?.includes(copy.recoveryId)) return value
+      const owner = JSON.parse(value.ownerKey)
+      const job = owner[2] ? bulkAdmissionJob(value, value.state, { opId: `migration:${copy.recoveryId}`, sourceKind: 'migration', source: copy.state }) : null
+      return { ...value, pendingJobs: job ? [...value.pendingJobs, job] : value.pendingJobs,
+        localMetadata: { ...value.localMetadata, seededRecoveryIds: [...(value.localMetadata?.seededRecoveryIds || []), copy.recoveryId] } }
+    }
     async function prepareOwner(owner, token) {
-      await migrateLegacy({ storage, legacyReader, owner, newId })
+      await migrateLegacy({ storage, legacyReader, owner, newId, onAdmit: seedAdmission })
       if (token !== epoch || stopped) throw failure('stale-context')
       const current = await storage.read(owner.ownerKey)
       if (!current) await storage.commit(owner.ownerKey, value => value || makeEnvelope(owner, freshState()))
-      else {
-        const admitted = current.recoveryCopies.filter(c => c.status === 'adopted' && !(current.localMetadata?.seededRecoveryIds || []).includes(c.recoveryId))
-        if (admitted.length) {
-          const operation = prepareOperation(DEF, current.state, { ownerKey: owner.ownerKey, opId: newId(), kind: 'migration', generation: current.lastConfirmedControl ? current.cloudGeneration : null, unitVersion: current.lastConfirmedControl?.unitVersion || 1 })
-          const ids = admitted.map(c => c.recoveryId)
-          await storage.commit(owner.ownerKey, value => {
-            if (ids.every(id => value.localMetadata?.seededRecoveryIds?.includes(id))) return value
-            return { ...value, pendingOperations: operation ? [...value.pendingOperations, operation] : value.pendingOperations,
-              localMetadata: { ...value.localMetadata, seededRecoveryIds: [...new Set([...(value.localMetadata?.seededRecoveryIds || []), ...ids])] } }
-          })
-        }
+      else if (current.recoveryCopies.some(c => c.status === 'adopted' && !current.localMetadata?.seededRecoveryIds?.includes(c.recoveryId))) {
+        await storage.commit(owner.ownerKey, value => value.recoveryCopies.filter(c => c.status === 'adopted').reduce(seedAdmission, value))
       }
       if (token !== epoch || stopped) throw failure('stale-context')
     }

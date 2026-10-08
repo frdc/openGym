@@ -427,3 +427,29 @@ describe('durable synchronization coordinator', () => {
     }
   })
 })
+
+
+describe('reset uses synchronized status and retry', () => {
+  it.each(['reset', 'cleanup'])('keeps durable local reset honest after unavailable %s and retries its stable identity', async stage => {
+    vi.useFakeTimers()
+    const { bridge, remote, storage, statuses } = setup()
+    await bind(bridge); await bridge.syncNow()
+    expect(statuses.at(-1).cloud).toBe('synced')
+    const method = stage === 'reset' ? 'commitReset' : 'readOldGenerationPaths'
+    const original = remote[method], calls = []
+    remote[method] = async (...args) => { calls.push(structuredClone(args)); throw Object.assign(new Error('offline'), { code: 'unavailable' }) }
+    await expect(bridge.reset()).resolves.toBeUndefined()
+    const saved = await storage.read(owner.ownerKey)
+    expect(saved.recoveryCopies.some(c => c.reason === 'reset')).toBe(true)
+    expect(statuses.at(-1)).toMatchObject({ local: 'saved', cloud: 'waiting', pendingCount: 1, cloudError: { code: 'unavailable' } })
+    expect(statuses.at(-1).retryAt).toBeGreaterThan(Date.now())
+    expect(statuses.some(s => s.cloud === 'pending' && s.pendingCount === 1)).toBe(true)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls).toHaveLength(2)
+    if (stage === 'reset') expect(calls[1][1].opId).toBe(calls[0][1].opId)
+    remote[method] = original
+    await bridge.onForeground()
+    expect((await storage.read(owner.ownerKey)).pendingJobs).toEqual([])
+    expect(statuses.at(-1)).toMatchObject({ local: 'saved', cloud: 'synced', retryAt: null })
+  })
+})

@@ -1,5 +1,11 @@
 // Russian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Вход по почте и паролю не включён для этого приложения. Обратитесь к администратору. Вы можете продолжать пользоваться устройством локально.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Сбрасывает активный профиль на этом устройстве и аккаунт на других устройствах после их подключения. Локальные копии для восстановления и оригиналы фото и видео сохраняются.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Сбрасывает активный профиль на этом устройстве. Локальные копии для восстановления и оригиналы фото и видео сохраняются.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Активный профиль сброшен на этом устройстве. Проверьте статус облака для подтверждения сброса аккаунта.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Активный профиль сброшен на этом устройстве. Локальные копии для восстановления и оригинальные медиафайлы сохраняются.",
+
   'Confirm': 'Подтвердить',
   'Cancel': 'Отмена',
   'Press back again to exit': 'Нажмите «Назад» ещё раз, чтобы выйти',
@@ -447,8 +453,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'Сохраняет копию с датой в папку «Документы/openGym» после завершения тренировки или редактирования программы и хранит {0} последних. Направьте на эту папку приложение синхронизации или скопируйте файлы вручную.',
   'Reset everything?': 'Сбросить всё?',
   'Reset everything': 'Сбросить всё',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Удаляет план, тренировки, вес тела, фото и видео на этом устройстве. Отменить нельзя.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Удаляет план, тренировки, вес тела, фото и видео из профиля на этом сервере и со всех устройств, где выполнен вход. Отменить нельзя.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'Синхронизация не удалась: сервер отклонил загрузку как слишком большую. Твои изменения не дошли до сервера.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'На этом устройстве нет места: изменение на нём не сохранено. Если вы вошли в аккаунт, оно всё равно уйдёт на сервер.',
   'Delete everything': 'Удалить всё',

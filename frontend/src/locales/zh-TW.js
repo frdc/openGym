@@ -1,4 +1,10 @@
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "此應用程式尚未啟用電子郵件與密碼登入。請聯絡管理員。你可以繼續在此裝置上本機使用。",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "重設此裝置上的目前個人檔案，並在其他裝置連線時重設帳戶。本機復原副本與原始相片及影片會保留。",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "重設此裝置上的目前個人檔案。本機復原副本與原始相片及影片會保留。",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "此裝置上的目前個人檔案已重設。請查看雲端狀態以確認帳戶重設。",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "此裝置上的目前個人檔案已重設。本機復原副本與原始媒體會保留。",
+
   'Confirm': '確認',
   'Cancel': '取消',
   'Press back again to exit': '再按一次返回以退出',
@@ -452,8 +458,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': '完成訓練或編輯課表後，會在「文件/openGym」儲存一份註明日期的備份，並保留最新的 {0} 份。可以讓同步軟體同步該資料夾，或手動複製出來。',
   'Reset everything?': '重設所有資料？',
   'Reset everything': '重設全部內容',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': '將刪除本裝置上的所有計畫、訓練紀錄、體重、相片與影片。此操作無法復原。',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': '將從此伺服器及所有已登入裝置中徹底刪除個人檔案的計畫、紀錄、體重、相片與影片。此操作無法復原。',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': '同步失敗：伺服器因檔案過大而拒絕上傳。你的變更尚未同步至伺服器。',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': '此裝置儲存空間已滿：變更未能儲存於本機。若處於登入狀態，資料仍會同步至伺服器。',
   'Delete everything': '全部刪除',

@@ -87,14 +87,21 @@ function createFSBackend({
         try { const c = await core(); if (c?.Capacitor?.convertFileSrc) convert = u => c.Capacitor.convertFileSrc(u) } catch { /* the raw URI then */ }
       } catch { return false }
       try { await FS.mkdir({ ...opts(DIR), recursive: true }) } catch { /* already there */ }
-      try {
-        const r = await FS.readFile({ ...opts(INDEX), encoding: Encoding.UTF8 })
-        const parsed = JSON.parse(r.data)
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid-media-index')
-        recs = parsed
-      } catch (error) {
+      let damaged = false
+      let indexText
+      try { indexText = (await FS.readFile({ ...opts(INDEX), encoding: Encoding.UTF8 })).data }
+      catch (error) {
         if (!/does not exist|not found|ENOENT/i.test(String(error?.message || error?.code))) throw error
-        recs = {}
+      }
+      recs = {}
+      if (indexText !== undefined) {
+        try {
+          const parsed = JSON.parse(indexText)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.entries(parsed).some(([h, r]) =>
+            !/^[a-f0-9]{64}$/.test(h) || !r || typeof r !== 'object' || !MEDIA_MIMES[r.mime]
+            || (r.hash !== undefined && r.hash !== h) || !Number.isFinite(r.size) || r.size < 0)) throw new Error('invalid-media-index')
+          recs = parsed
+        } catch { damaged = true }
       }
       let names = []
       try {
@@ -103,7 +110,19 @@ function createFSBackend({
         names = r.files.map(f => (typeof f === 'string' ? f : f?.name)).filter(Boolean)
       } catch (error) { throw error }
       const present = new Set(names)
-      let changed = false
+      // Preserve exact native bytes before reconstruction can rewrite the only index.
+      // A content-addressed copy makes repeated interrupted recoveries idempotent.
+      if (damaged) {
+        const raw = (await FS.readFile(opts(INDEX))).data
+        if (typeof raw !== 'string') throw new Error('invalid-media-index-evidence')
+        const evidence = DIR + '/index.corrupt-' + await sha256Hex(new TextEncoder().encode(raw)) + '.json'
+        let prior
+        try { prior = (await FS.readFile(opts(evidence))).data }
+        catch (error) { if (!/does not exist|not found|ENOENT/i.test(String(error?.message || error?.code))) throw error }
+        if (prior === undefined) await FS.writeFile({ ...opts(evidence), data: raw, recursive: true })
+        if ((await FS.readFile(opts(evidence))).data !== raw) throw new Error('media-index-evidence-mismatch')
+      }
+      let changed = damaged
       // Entries whose file is gone: the file was never renamed into place, or was deleted.
       for (const [h, r] of Object.entries(recs)) {
         if (!/^[a-f0-9]{64}$/.test(h) || !r || !MEDIA_MIMES[r.mime]) throw new Error('invalid-media-index')
@@ -119,7 +138,7 @@ function createFSBackend({
           const blob = await readFileBlob(name)
           const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer())
           const sniffed = sniffKind(head)
-          if ((await hash(blob)) !== m[1] || !sniffed || !MEDIA_MIMES[sniffed.mime]) continue // quarantine uncertain originals
+          if ((await hash(blob)) !== m[1] || !sniffed || !MEDIA_MIMES[sniffed.mime] || fileName(m[1], sniffed.mime) !== name) continue // quarantine uncertain originals
           recs[m[1]] = { hash: m[1], mime: sniffed.mime, size: blob.size, putAt: Date.now(), shownAt: 0, pending: false, rejected: false }
           changed = true
         } catch (error) { throw error } // IO is not evidence that an original can be deleted

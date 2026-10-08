@@ -60,6 +60,7 @@ describe('bridge durable jobs', () => {
   it('persists immutable reset intent before sending and ignores an old-generation late ACK in the same auth epoch', async () => {
     const { bridge, remote, storage } = setupBridge()
     await bind(bridge)
+    const statuses = []; bridge.subscribeStatus(s => statuses.push(s))
     let release, started
     const gate = new Promise(r => { release = r }), ready = new Promise(r => { started = r }), original = remote.commitOperation
     remote.commitOperation = async (...args) => { const result = await original(...args); started(); await gate; return result }
@@ -73,9 +74,12 @@ describe('bridge durable jobs', () => {
       expect(saved.pendingJobs.find(j => j.kind === 'reset').reset).toEqual(request)
       return reset(o, request)
     }
-    await bridge.reset()
-    release(); await sending
+    const resetting = bridge.reset()
+    for (let i = 0; i < 30; i++) await Promise.resolve()
+    expect((await storage.read(owner.ownerKey)).pendingJobs.some(j => j.kind === 'reset')).toBe(true)
+    release(); await sending; await resetting
     const saved = await storage.read(owner.ownerKey)
+    expect(statuses.some(s => s.cloud === 'synced' && s.pendingCount > 0)).toBe(false)
     expect(saved.cloudGeneration).toBe(2)
     expect(saved.lastConfirmedControl.generation).toBe(2)
     expect(saved.state.targetW).toBe(fixtureState().targetW)
@@ -349,7 +353,7 @@ describe('Task 6 review: durable reset cleanup', () => {
     await storage.commit(owner.ownerKey, value => ({ ...value, remoteMetadataByPath: {} }))
     const remove = remote.deleteOldGeneration
     remote.deleteOldGeneration = async () => { throw Object.assign(new Error('cleanup-failed'), { code: 'permission-denied' }) }
-    await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+    await expect(bridge.reset()).resolves.toBeUndefined()
     const reset = await storage.read(owner.ownerKey)
     expect(reset.pendingJobs[0]).toMatchObject({ kind: 'cleanup', generation: 1 })
     expect(reset.pendingJobs[0].paths.length).toBeGreaterThan(0)
@@ -374,9 +378,9 @@ describe('Task 6 review: durable reset cleanup', () => {
     await bind(bridge)
     const remove = remote.deleteOldGeneration; let calls = 0
     remote.deleteOldGeneration = async (...args) => { if (++calls >= 2) throw Object.assign(new Error('cleanup-failed'), { code: 'permission-denied' }); return remove(...args) }
-    await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+    await expect(bridge.reset()).resolves.toBeUndefined()
     expect((await storage.read(owner.ownerKey)).pendingJobs[0]).toMatchObject({ kind: 'cleanup', completedParts: 1 })
-    await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+    await expect(bridge.reset()).resolves.toBeUndefined()
     const pending = (await storage.read(owner.ownerKey)).pendingJobs
     expect(pending.filter(j => j.kind === 'cleanup').map(j => j.generation).sort()).toEqual([1, 2])
     expect((await remote.readProfileFromServer(owner)).control.generation).toBe(3)
@@ -396,7 +400,7 @@ it('persists cleanup-only intent before the first enumeration request and retrie
     expect((await storage.read(owner.ownerKey)).pendingJobs[0]).toMatchObject({ kind: 'cleanup', generation: 1, paths: [] })
     throw Object.assign(new Error('enumeration-failed'), { code: 'permission-denied' })
   }
-  await expect(bridge.reset()).rejects.toMatchObject({ code: 'permission-denied' })
+  await expect(bridge.reset()).resolves.toBeUndefined()
   await bridge.unbindAuth(); remote.readOldGenerationPaths = read
   const reload = createSyncBridge({ storage, remote }); await bind(reload)
   expect((await storage.read(owner.ownerKey)).pendingJobs).toEqual([])
@@ -413,7 +417,7 @@ it('replays the same reset when local persistence fails at the ACK-to-cleanup tr
     if (failOnce) { failOnce = false; storage.failNextCommit(Object.assign(new Error('quota'), { code: 'storage-full' })) }
     return control
   }
-  await expect(bridge.reset()).rejects.toMatchObject({ code: 'storage-full' })
+  await expect(bridge.reset()).resolves.toBeUndefined()
   expect((await storage.read(owner.ownerKey)).pendingJobs[0]).toMatchObject({ kind: 'reset', reset: { baseGeneration: 1, nextGeneration: 2 } })
   await bridge.unbindAuth()
   const reload = createSyncBridge({ storage, remote }); await bind(reload)

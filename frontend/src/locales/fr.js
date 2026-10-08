@@ -1,5 +1,11 @@
 // French UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "La connexion par e-mail et mot de passe n’est pas activée pour cette application. Contactez l’administrateur. Vous pouvez continuer à utiliser cet appareil localement.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Réinitialise le profil actif sur cet appareil et le compte sur les autres appareils lorsqu’ils se connectent. Les copies locales de récupération et les photos et vidéos originales sont conservées.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Réinitialise le profil actif sur cet appareil. Les copies locales de récupération et les photos et vidéos originales sont conservées.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Profil actif réinitialisé sur cet appareil. Consultez l’état du cloud pour confirmer la réinitialisation du compte.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Profil actif réinitialisé sur cet appareil. Les copies locales de récupération et les médias originaux sont conservés.",
+
   'Confirm': 'Confirmer',
   'Cancel': 'Annuler',
   'Press back again to exit': 'Appuyez de nouveau pour quitter',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'Enregistre une copie datée dans Documents/openGym après chaque séance terminée ou routine modifiée, et garde les {0} plus récentes. Pointe une appli de synchro sur ce dossier, ou copie-le à la main.',
   'Reset everything?': 'Tout réinitialiser ?',
   'Reset everything': 'Tout réinitialiser',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Supprime ton plan, tes séances, ton poids corporel, tes photos et tes vidéos sur cet appareil. Irréversible.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Supprime ton plan, tes séances, ton poids corporel, tes photos et tes vidéos de ton profil sur ce serveur et sur tous les appareils connectés. Irréversible.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'Échec de la synchronisation : le serveur a refusé l’envoi, trop volumineux. Tes modifications n’ont pas atteint le serveur.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'Cet appareil n’a plus d’espace de stockage : la modification n’y est pas enregistrée. Connecté, elle part quand même vers le serveur.',
   'Delete everything': 'Tout supprimer',

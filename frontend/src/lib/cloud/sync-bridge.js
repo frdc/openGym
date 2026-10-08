@@ -1,5 +1,5 @@
 import { prepareLegacyState } from './legacy-migration.js'
-import { blockedImportError, createJobCoordinator, reconcileJobUnits } from './sync-jobs.js'
+import { blockedImportError, bulkAdmissionJob, externalStateInUnit, initializeBulkJobs, createJobCoordinator, reconcileJobUnits } from './sync-jobs.js'
 import * as defaultCodec from './codec.js'
 import { makeEnvelope, makeOwner, recoverableBy, trainingState } from './model.js'
 import { DEF } from '../../store/state-defaults.js'
@@ -53,6 +53,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (!valid(ctx) || !ctx.envelope) return
     const envelope = memory(ctx)
     emit(ctx, { ownerKey: ctx.owner.ownerKey, localReady: true, localRevision: ctx.envelope.localRevision,
+      ...(status.get().cloud === 'synced' && (envelope.pendingOperations.length || envelope.pendingJobs.length) ? { cloud: 'pending' } : {}),
       pendingCount: envelope.pendingOperations.length + envelope.pendingJobs.length, blockedCount: envelope.pendingOperations.filter(x => x.blockedReason).length + envelope.pendingJobs.filter(x => x.blockedReason).length })
     try { onState?.(clone(envelope.state), clone(envelope)) } catch { /* UI cannot reject persistence */ }
   }
@@ -229,9 +230,9 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     status.update({ ownerKey: null, localReady: false, local: 'loading', cloud: 'auth-required', localError: null, cloudError: null, retryAt: null, pendingCount: 0, blockedCount: 0 })
     await flush(old)
   }
-  function integrate(current, profile, initialControl, history) {
+  function integrate(current, profile, initialControl, history, initialProfile) {
     const { control, documents } = profile
-    let next = clone(current)
+    let next = initializeBulkJobs(current, initialProfile, initialControl)
     if (next.pendingJobs.some(j => j.kind === 'reset')) return next
     const previousControl = next.lastConfirmedControl
     if (previousControl && (control.generation < previousControl.generation || (control.generation === previousControl.generation && control.dataRevision < previousControl.dataRevision))) return next
@@ -239,7 +240,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     // Unknown generations are assigned only after this server-confirmed Profile.
     next.pendingOperations = next.pendingOperations.map(op => initializeOperation(op, initialControl))
     const retired = next.pendingOperations.filter(op => op.generation !== control.generation)
-    if (retired.length || (previousControl && next.cloudGeneration !== control.generation)) {
+    if (retired.length || next.pendingJobs.some(j => j.sourceKind && j.generation !== control.generation) || (previousControl && next.cloudGeneration !== control.generation)) {
       const retiredJobs = next.pendingJobs.filter(j => j.kind !== 'cleanup' && j.generation !== control.generation)
       next.recoveryCopies.push({ recoveryId: `generation:${next.cloudGeneration}:${next.localRevision}`, ownerKey: next.ownerKey, reason: 'generation-mismatch', state: clone(next.state), pendingOperations: clone(retired), pendingJobs: clone(retiredJobs) })
       next.pendingJobs = next.pendingJobs.filter(j => !retiredJobs.some(old => old.jobId === j.jobId))
@@ -259,9 +260,10 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     const profile = await remote.readProfileFromServer(ctx.owner); assertCurrent(ctx)
     if (!profile?.control || profile.fromCache || profile.hasPendingWrites) throw failure('server-required')
     initializeIntents(ctx, profile.control)
+    ctx.initialProfile ||= { control: clone(profile.control), documents: profile.documents['settings/unit'] ? { 'settings/unit': clone(profile.documents['settings/unit']) } : {} }
     const initialControl = clone(ctx.initialControl)
     const history = remote.readJobs ? await remote.readJobs(ctx.owner) : []; assertCurrent(ctx)
-    await durable(ctx, current => integrate(current, profile, initialControl, history)); assertCurrent(ctx)
+    await durable(ctx, current => integrate(current, profile, initialControl, history, ctx.initialProfile)); assertCurrent(ctx)
     return clone(profile)
   }
   async function runSync(ctx) {
@@ -306,7 +308,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       ctx.attempt = 0; cancelTimer(ctx)
       const blocked = ctx.envelope.pendingJobs.map(blockedImportError).find(Boolean)
       if (blocked) { cloudError(ctx, blocked); return }
-      emit(ctx, { cloud: 'synced', cloudError: null, retryAt: null })
+      emit(ctx, { cloud: ctx.intents.length || ctx.envelope.pendingOperations.length || ctx.envelope.pendingJobs.length ? 'pending' : 'synced', cloudError: null, retryAt: null })
     } catch (error) { cloudError(ctx, error, operation) }
   }
   function startSync(ctx) {
@@ -350,10 +352,11 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       if (choice === 'add') {
         const copy = next.recoveryCopies.find(x => x.recoveryId === next.adoptionDecision.recoveryId)
         if (!copy) throw failure('missing-recovery-copy')
-        const operation = codec.prepareOperation(DEF, copy.state, { ownerKey: ctx.owner.ownerKey, opId, kind: 'adoption',
-          generation: next.lastConfirmedControl ? next.cloudGeneration : null, unitVersion: next.lastConfirmedControl?.unitVersion || 1 })
-        next = codec.mergeLocalDraft(next, { previous: DEF, next: { ...copy.state, active: next.state.active || copy.state.active || null }, operation,
+        const projection = next.lastConfirmedControl ? externalStateInUnit(copy.state, next.state.unit) : copy.state
+        const job = bulkAdmissionJob(next, copy.state, { opId, sourceKind: 'adoption' })
+        next = codec.mergeLocalDraft(next, { previous: DEF, next: { ...projection, active: next.state.active || projection.active || null }, operation: null,
           activeSessionToken: next.state.active ? next.localMetadata?.activeSessionToken || adoptionToken : copy.state.active ? adoptionToken : null })
+        if (job) next.pendingJobs.push(job)
       }
       next.adoptionDecision = { ...next.adoptionDecision, status: choice }
       return next
@@ -374,9 +377,11 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
       if (copy.decision) return current
       let next = clone(current)
       if (choice === 'add') {
-        const operation = codec.prepareOperation(DEF, prepared, { ownerKey: ctx.owner.ownerKey, opId, kind: 'recovery', generation: next.lastConfirmedControl ? next.cloudGeneration : null, unitVersion: next.lastConfirmedControl?.unitVersion || 1 })
-        next = codec.mergeLocalDraft(next, { previous: DEF, next: { ...prepared, active: next.state.active || prepared.active || null }, operation,
+        const projection = next.lastConfirmedControl ? externalStateInUnit(prepared, next.state.unit) : prepared
+        const job = bulkAdmissionJob(next, prepared, { opId, sourceKind: 'recovery', source: copy.state })
+        next = codec.mergeLocalDraft(next, { previous: DEF, next: { ...projection, active: next.state.active || projection.active || null }, operation: null,
           activeSessionToken: next.state.active ? next.localMetadata?.activeSessionToken || sessionToken : prepared.active ? sessionToken : null })
+        if (ctx.owner.uid && job) next.pendingJobs.push(job)
       }
       next.recoveryCopies = next.recoveryCopies.map(item => item.recoveryId === recoveryId ? { ...item, decision: choice } : item)
       return next

@@ -31,6 +31,53 @@ export function createJob({ ownerKey, generation, kind, opId, paths, options = {
   return { jobId: key(opId), ownerKey, generation, kind, options: clone(options), totalParts: parts.length, completedParts: 0, preparedParts: 0, lastPartId: null, status: 'pending',
     parts: parts.map((paths, i) => ({ partId: String(i).padStart(6, '0'), paths, status: 'pending', sourceVersion: options.sourceVersion, targetVersion: options.targetVersion })), payloads: clone(payloads) }
 }
+/** External profiles declare units, not an account's historical unit version.
+ * Source identity is chosen by the caller before any replayable local reducer. */
+export function externalStateInUnit(prepared, targetUnit) {
+  const unit = prepared.unit ?? DEF.unit
+  if (!['kg', 'lb'].includes(unit) || !['kg', 'lb'].includes(targetUnit)) fail('invalid-unit')
+  const normalized = convertStateUnit({ ...clone(prepared), unit }, targetUnit)
+  delete normalized.unitSet
+  return normalized
+}
+export function bulkAdmissionJob(envelope, prepared, { opId, sourceKind, source = prepared } = {}) {
+  const unit = prepared.unit ?? DEF.unit
+  if (!['kg', 'lb'].includes(unit)) fail('invalid-unit')
+  const proven = !!envelope.lastConfirmedControl
+  const targetUnit = proven ? envelope.state.unit : unit
+  const normalized = externalStateInUnit(prepared, targetUnit)
+  const version = envelope.unitProjectionVersion ?? envelope.lastConfirmedControl?.unitVersion ?? 1
+  const generation = proven ? envelope.cloudGeneration : null
+  const op = codec.prepareOperation({ ...DEF, unit: targetUnit }, normalized, { ownerKey: envelope.ownerKey, opId, kind: sourceKind, generation, unitVersion: version })
+  if (!op) return null
+  // Changing the account unit belongs exclusively to the unit-job protocol.
+  op.paths = op.paths.filter(path => path !== 'settings/unit'); delete op.payloads['settings/unit']
+  if (!op.paths.length) return null
+  const job = createJob({ ownerKey: envelope.ownerKey, generation: generation ?? 1, kind: 'import', opId, paths: op.paths, payloads: op.payloads,
+    referenceDocuments: Object.fromEntries(Object.entries(envelope.remoteMetadataByPath).map(([path, meta]) => [path, meta.record])),
+    options: { sourceVersion: version, targetVersion: version } })
+  return { ...job, generation, sourceKind, source: clone(source), ...(!proven ? { preparedSource: clone(prepared) } : {}),
+    unitProvenance: proven ? 'confirmed' : 'external', ...(op.blockedReason ? { blockedReason: op.blockedReason, status: 'blocked' } : {}) }
+}
+
+/** Seal external admission exactly once at the first server proof. */
+export function initializeBulkJobs(envelope, profile, initialControl) {
+  const next = clone(envelope)
+  if (!next.pendingJobs.some(job => job.sourceKind && job.generation === null)) return next
+  const targetUnit = codec.decodeState(profile.documents, { generation: profile.control.generation }).unit
+  let initialized = false
+  next.pendingJobs = next.pendingJobs.map(job => {
+    if (!job.sourceKind || job.generation !== null) return job
+    initialized = true
+    const value = { ...next, state: { ...next.state, unit: targetUnit }, cloudGeneration: initialControl.generation,
+      lastConfirmedControl: initialControl, unitProjectionVersion: initialControl.unitVersion }
+    const planned = bulkAdmissionJob(value, job.preparedSource, { opId: 'sealed', sourceKind: job.sourceKind, source: job.source })
+    return planned ? { ...planned, jobId: job.jobId } : { ...job, generation: initialControl.generation }
+  })
+  if (initialized && !next.lastConfirmedControl && next.state.unit !== targetUnit) next.state = convertStateUnit(next.state, targetUnit)
+  return next
+}
+
 export function jobManifest(job) {
   const { jobId, ownerKey, generation, kind, options, totalParts, completedParts, preparedParts, lastPartId, status } = job
   return clone({ jobId, ownerKey, generation, kind, options, totalParts, completedParts, preparedParts, lastPartId, status })
@@ -146,7 +193,8 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
           recoveryCopies: [...value.recoveryCopies, { recoveryId: job.jobId, reason: 'reset', ownerKey: value.ownerKey, state: clone(value.state), pendingOperations: clone(value.pendingOperations), pendingJobs: clone(value.pendingJobs) }] }
       })
     }
-    if (authenticated(ctx)) { await runReset(ctx); await runCleanup(ctx) }
+    current(ctx)
+    if (authenticated(ctx)) await syncNow()
   }
   async function runReset(ctx) {
     let job = ctx.envelope.pendingJobs.find(j => j.kind === 'reset')
@@ -250,6 +298,15 @@ export function createJobCoordinator({ context, durable, flush, current, remote,
       let job = original
       if (job.generation !== profile.control.generation) {
         await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.filter(j => j.jobId !== job.jobId), recoveryCopies: [...value.recoveryCopies, { recoveryId: job.jobId, reason: 'generation-mismatch', job: clone(job) }] })); continue
+      }
+      if (job.sourceKind && job.options.sourceVersion !== profile.control.unitVersion) {
+        if (manifests.some(j => j.jobId === job.jobId)) fail('unit-version-mismatch')
+        const op = normalizeOperation({ generation: job.generation, unitVersion: job.options.sourceVersion, unitProvenance: job.unitProvenance,
+          paths: Object.keys(job.payloads), payloads: job.payloads }, manifests.filter(j => j.status === 'complete'), profile.control.unitVersion)
+        const planned = createJob({ ownerKey: job.ownerKey, generation: job.generation, kind: 'import', opId: 'normalized', paths: op.paths,
+          payloads: op.payloads, referenceDocuments: profile.documents, options: { sourceVersion: op.unitVersion, targetVersion: op.unitVersion } })
+        job = { ...job, ...planned, jobId: job.jobId }
+        await durable(ctx, value => ({ ...value, pendingJobs: value.pendingJobs.map(j => j.jobId === job.jobId ? job : j) }))
       }
       if (job.blockedReason) {
         if (!blockedImportError(job)) fail(job.blockedReason)

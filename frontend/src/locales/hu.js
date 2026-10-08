@@ -1,5 +1,11 @@
 // Hungarian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Az e-mailes és jelszavas bejelentkezés nincs engedélyezve ebben az alkalmazásban. Keresd a rendszergazdát. Az eszközt továbbra is használhatod helyileg.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Visszaállítja az aktív profilt ezen az eszközön és a fiókot a többi eszközön, amikor azok csatlakoznak. A helyi helyreállítási másolatok és az eredeti fotók és videók megmaradnak.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Visszaállítja az aktív profilt ezen az eszközön. A helyi helyreállítási másolatok és az eredeti fotók és videók megmaradnak.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Az aktív profil visszaállítva ezen az eszközön. A fiók visszaállításának megerősítéséhez ellenőrizd a felhő állapotát.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Az aktív profil visszaállítva ezen az eszközön. A helyi helyreállítási másolatok és az eredeti médiafájlok megmaradnak.",
+
   // --- generic ---
   'Confirm': 'Megerősítés',
   'Cancel': 'Mégse',
@@ -457,8 +463,6 @@ export default {
   'Auto-backup on changes': 'Automatikus mentés módosításkor',
   'Reset everything?': 'Mindent visszaállítasz?',
   'Reset everything': 'Minden visszaállítása',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Törli a terved, edzéseid, testsúlyod, fotóid és videóid ezen az eszközön. Ez nem vonható vissza.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Törli a terved, edzéseid, testsúlyod, fotóid és videóid a profilodból ezen a szerveren és minden bejelentkezett eszközön. Ez nem vonható vissza.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'A szinkronizálás nem sikerült: a szerver túl nagynak találta a feltöltést és elutasította. A módosításaid nem jutottak el a szerverre.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'Ezen az eszközön elfogyott a tárhely: a módosítás nincs rajta elmentve. Bejelentkezve így is eljut a kiszolgálóra.',
   'Delete everything': 'Minden törlése',

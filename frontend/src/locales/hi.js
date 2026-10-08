@@ -1,5 +1,11 @@
 // Hindi UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "इस ऐप में ई-मेल और पासवर्ड से साइन इन चालू नहीं है। व्यवस्थापक से संपर्क करें। आप इस डिवाइस का स्थानीय रूप से उपयोग जारी रख सकते हैं।",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "इस डिवाइस पर सक्रिय प्रोफ़ाइल और अन्य डिवाइसों के कनेक्ट होने पर खाते को रीसेट करता है। स्थानीय रिकवरी प्रतियाँ और मूल फ़ोटो और वीडियो रखे जाते हैं।",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "इस डिवाइस पर सक्रिय प्रोफ़ाइल रीसेट करता है। स्थानीय रिकवरी प्रतियाँ और मूल फ़ोटो और वीडियो रखे जाते हैं।",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "इस डिवाइस पर सक्रिय प्रोफ़ाइल रीसेट हो गई। खाते के रीसेट की पुष्टि के लिए क्लाउड स्थिति देखें।",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "इस डिवाइस पर सक्रिय प्रोफ़ाइल रीसेट हो गई। स्थानीय रिकवरी प्रतियाँ और मूल मीडिया रखे जाते हैं।",
+
   'Confirm': 'पुष्टि करें',
   'Cancel': 'रद्द करें',
   'Press back again to exit': 'बाहर निकलने के लिए फिर से बैक दबाएँ',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'वर्कआउट खत्म करने या रूटीन एडिट करने के बाद Documents/openGym में तारीख़ वाली कॉपी सेव करता है और सबसे नई {0} कॉपी रखता है। उस फ़ोल्डर पर कोई सिंक ऐप लगाएँ, या उसे हाथ से कॉपी करें।',
   'Reset everything?': 'सब कुछ रीसेट करें?',
   'Reset everything': 'सब कुछ रीसेट करें',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'इस डिवाइस पर आपकी योजना, वर्कआउट, वज़न, फ़ोटो और वीडियो हट जाएँगे। इसे पूर्ववत नहीं किया जा सकता।',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'इस सर्वर पर आपकी प्रोफ़ाइल से और साइन इन किए हुए सभी डिवाइस से आपकी योजना, वर्कआउट, वज़न, फ़ोटो और वीडियो हट जाएँगे। इसे पूर्ववत नहीं किया जा सकता।',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'सिंक विफल: सर्वर ने अपलोड को बहुत बड़ा बताकर अस्वीकार कर दिया। आपके बदलाव सर्वर तक नहीं पहुँचे हैं।',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'इस डिवाइस में जगह नहीं बची: बदलाव इस पर सेव नहीं हुआ है। साइन इन होने पर यह फिर भी सर्वर तक पहुँच जाएगा।',
   'Delete everything': 'सब हटाएँ',

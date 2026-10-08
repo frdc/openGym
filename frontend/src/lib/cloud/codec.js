@@ -346,7 +346,11 @@ export function applyConfirmation(envelope, confirmation) {
   }
   out.pendingOperations = out.pendingOperations.filter(x => x.opId !== confirmation.opId)
   let documents = { ...current, ...accepted }
-  for (const op of out.pendingOperations) {
+  const pendingBulk = out.pendingJobs.filter(job => job.sourceKind).map(job => ({
+    opId: job.jobId, generation: job.generation, unitVersion: job.options.sourceVersion,
+    paths: Object.keys(job.payloads), payloads: job.payloads, blockedReason: job.blockedReason,
+  }))
+  for (const op of [...pendingBulk, ...out.pendingOperations]) {
     if (op.generation !== out.cloudGeneration) continue
     if (op.blockedReason || op.unitVersion !== confirmation.control.unitVersion) {
       for (const path of op.paths) if (current[path]) put(documents, path, current[path])

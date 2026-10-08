@@ -1,3 +1,4 @@
+import { useDurableSave } from '../lib/use-durable-save.js'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
@@ -153,6 +154,8 @@ export function openEditCard(card) {
 // updates that entry in place. The code always comes from a scan or a photo — there is no text
 // field for it — so an edit that only renames keeps the existing scanned code untouched.
 function CardSheet({ close, card }) {
+  const completion = useDurableSave()
+  const draftId = useRef(card?.id || null)
   const editing = !!card
   const [label, setLabel] = useState(card?.label || '')
   const [value, setValue] = useState(card?.value || '')
@@ -164,32 +167,17 @@ function CardSheet({ close, card }) {
     const trimmed = value.trim()
     if (!trimmed) { toast(t('Scan or import a code first')); return }
     const update = useStore.getState().update
-    if (editing) {
-      // The card can be removed on another device while this sheet is open. Checking inside the
-      // mutator returned from the MUTATOR, not from here, so the sheet still said "Card updated",
-      // closed, and pushed a write that changed nothing. Look first, and say what happened.
-      if (!(useStore.getState().S.gymCards || []).some(x => x.id === card.id)) {
-        toast(t('That card was removed on another device'))
-        close()
-        return
-      }
-      update(s => {
-        const c = (s.gymCards || []).find(x => x.id === card.id)
-        if (!c) return
-        c.label = label.trim() || t('Gym card')
-        c.value = trimmed
-      })
-      toast(t('Card updated'))
-    } else {
-      update(s => {
-        if (!Array.isArray(s.gymCards)) s.gymCards = []
-        const id = uid()
-        s.gymCards.push({ id, label: label.trim() || t('Gym card'), value: trimmed, fmt: 'qrcode' })
-        s.lastGymCardId = id
-      })
-      toast(t('Card added'))
+    if (editing && !(useStore.getState().S.gymCards || []).some(x => x.id === card.id)) {
+      toast(t('That card was removed on another device')); close(); return
     }
-    close()
+    const id = draftId.current ||= uid()
+    void completion.run(() => update(s => {
+      s.gymCards ||= []
+      let c = s.gymCards.find(x => x.id === id)
+      if (!c && editing) throw new Error('card-missing')
+      if (!c) { c = { id, fmt: 'qrcode' }; s.gymCards.push(c); s.lastGymCardId = id }
+      c.label = label.trim() || t('Gym card'); c.value = trimmed
+    }), () => { toast(t(editing ? 'Card updated' : 'Card added')); close() })
   }
 
   // Camera scan: in the app, hands off to the native scanner; in a browser, opens our own camera
@@ -246,7 +234,7 @@ function CardSheet({ close, card }) {
 
     {value.trim() && <div className="ci-qr-plate" style={{ alignSelf: 'center', marginBottom: 16 }}><QrCanvas value={value.trim()} size={150} /></div>}
 
-    <Button variant="primary" onClick={commit} disabled={busy || !value.trim()}>{editing ? t('Save card') : t('Save card')}</Button>
+    <Button variant="primary" onClick={commit} disabled={busy || completion.saving || !value.trim()}>{editing ? t('Save card') : t('Save card')}</Button>
 
     <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
   </>

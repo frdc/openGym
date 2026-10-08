@@ -1,5 +1,11 @@
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "تسجيل الدخول بالبريد الإلكتروني وكلمة المرور غير مفعّل لهذا التطبيق. تواصل مع المسؤول. يمكنك متابعة استخدام هذا الجهاز محليًا.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "يعيد تعيين الملف النشط على هذا الجهاز والحساب على الأجهزة الأخرى عند اتصالها. تُحتفظ بنسخ الاسترداد المحلية والصور ومقاطع الفيديو الأصلية.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "يعيد تعيين الملف النشط على هذا الجهاز. تُحتفظ بنسخ الاسترداد المحلية والصور ومقاطع الفيديو الأصلية.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "أُعيد تعيين الملف النشط على هذا الجهاز. تحقق من حالة السحابة لتأكيد إعادة تعيين الحساب.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "أُعيد تعيين الملف النشط على هذا الجهاز. تُحتفظ بنسخ الاسترداد المحلية وملفات الوسائط الأصلية.",
+
   'Confirm': 'تأكيد',
   'Cancel': 'إلغاء',
   'Press back again to exit': 'اضغط زر الرجوع مرة أخرى للخروج',
@@ -313,7 +319,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'يحفظ نسخة مؤرخة في مجلد «المستندات/openGym» بعد إنهاء تمرين أو تعديل روتين، ويحتفظ بأحدث {0} نسخة. وجّه تطبيق مزامنة إلى هذا المجلد، أو انسخها يدويًا.',
   'Reset everything?': 'إعادة تعيين كل شيء؟',
   'Reset everything': 'إعادة تعيين كل شيء',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'يحذف خطتك وتمارينك ووزن جسمك والصور ومقاطع الفيديو على هذا الجهاز. لا يمكن التراجع عن هذا.',
   'Delete everything': 'حذف كل شيء',
   'All data reset': 'تمت إعادة تعيين جميع البيانات',
   'Backup exported': 'تم تصدير النسخة الاحتياطية',
@@ -1268,7 +1273,6 @@ export default {
   '{0} %': '{0} %',
   '{0} MB': '{0} م.ب',
   'Checksum not available, so not installing': 'البصمة غير متاحة، لذا لن يتم التثبيت',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'يحذف خطتك وتدريباتك ووزن جسمك والصور ومقاطع الفيديو من ملفك على هذا الخادم وعلى كل جهاز مسجَّل الدخول. لا يمكن التراجع عن هذا.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'فشلت المزامنة: رفض الخادم الرفع لأنه كبير جدًا. لم تصل تغييراتك إلى الخادم.',
   'Add routine': 'إضافة روتين',
   'Bring another routine into this session': 'أضف روتينًا آخر إلى هذه الجلسة',

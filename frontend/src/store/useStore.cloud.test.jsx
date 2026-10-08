@@ -80,12 +80,18 @@ it('preserves Android file and session token after WebView eviction', async () =
   const reload = setup({ storage: createFsStorage(filesystem) }).store; await reload.getState().boot()
   expect(reload.getState().S).toMatchObject({ active: { id: 'native' }, targetW: 76 }); expect(reload.getState().activeSessionToken).toBe(token)
 })
-it('migrates admitted data before defaults and queues seed idempotently', async () => {
+it('migrates admitted Guest data before defaults and records admission idempotently without upload', async () => {
   const legacyReader = { read: async () => [{ sourceId: 'trusted', state: fixtureState({ targetW: 87 }), ownerKey: guest.ownerKey, identityProvider: 'guest' }] }
   const { store, storage } = setup({ legacyReader }); await store.getState().boot(); const saved = await storage.read(guest.ownerKey)
-  expect(saved.state.targetW).toBe(87); expect(saved.pendingOperations).toHaveLength(1)
+  expect(saved.state.targetW).toBe(87); expect(saved.pendingOperations).toEqual([]); expect(saved.pendingJobs).toEqual([])
+  expect(saved.localMetadata.seededRecoveryIds).toHaveLength(1)
+  expect(saved.recoveryCopies[0].state).toEqual(fixtureState({ targetW: 87 }))
+  expect(saved.localMetadata.seededRecoveryIds).toContain(saved.recoveryCopies[0].recoveryId)
   const reload = setup({ storage, legacyReader }).store; await reload.getState().boot()
-  expect((await storage.read(guest.ownerKey)).pendingOperations.map(x => x.opId)).toEqual(saved.pendingOperations.map(x => x.opId))
+  const reopened = await storage.read(guest.ownerKey)
+  expect(reopened.pendingOperations).toEqual([]); expect(reopened.pendingJobs).toEqual([])
+  expect(reopened.localMetadata.seededRecoveryIds).toEqual(saved.localMetadata.seededRecoveryIds)
+  expect(reopened.recoveryCopies).toEqual(saved.recoveryCopies); expect(reopened.state).toEqual(saved.state)
 })
 it('retains unknown Node recovery without adopting or uploading', async () => {
   const legacyReader = { read: async () => [{ sourceId: 'node', state: fixtureState({ targetW: 99 }), ownerMetadata: { owner: 'a' } }] }

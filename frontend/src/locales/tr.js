@@ -1,5 +1,11 @@
 // Turkish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Bu uygulamada e-posta ve parolayla giriş etkin değil. Yöneticiyle iletişime geçin. Bu cihazı yerel olarak kullanmaya devam edebilirsiniz.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Bu cihazdaki etkin profili ve diğer cihazlar bağlandığında hesabı sıfırlar. Yerel kurtarma kopyaları ve orijinal fotoğraf ve videolar korunur.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Bu cihazdaki etkin profili sıfırlar. Yerel kurtarma kopyaları ve orijinal fotoğraf ve videolar korunur.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Bu cihazdaki etkin profil sıfırlandı. Hesap sıfırlamasının onayı için bulut durumunu kontrol edin.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Bu cihazdaki etkin profil sıfırlandı. Yerel kurtarma kopyaları ve orijinal medya korunur.",
+
   'Confirm': 'Onayla',
   'Cancel': 'İptal',
   'Press back again to exit': 'Çıkmak için geri tuşuna tekrar basın',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'Bir antrenmanı bitirdikten ya da bir rutini düzenledikten sonra Belgeler/openGym klasörüne tarihli bir kopya kaydeder ve en yeni {0} kopyayı tutar. Bir senkronizasyon uygulamasını bu klasöre yönlendir ya da elle kopyala.',
   'Reset everything?': 'Her şey sıfırlansın mı?',
   'Reset everything': 'Her şeyi sıfırla',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Bu cihazdaki planını, antrenmanlarını, vücut ağırlığını, fotoğraflarını ve videolarını siler. Geri alınamaz.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Bu sunucudaki profilinden ve oturum açılmış tüm cihazlardan planını, antrenmanlarını, vücut ağırlığını, fotoğraflarını ve videolarını siler. Geri alınamaz.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'Eşitleme başarısız: sunucu yüklemeyi çok büyük diye reddetti. Değişikliklerin sunucuya ulaşmadı.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'Bu cihazda yer kalmadı: değişiklik cihaza kaydedilmedi. Oturum açıkken sunucuya yine de gidiyor.',
   'Delete everything': 'Her şeyi sil',

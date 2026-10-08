@@ -23,6 +23,6 @@ it('independent routine edits merge by entity stamps, not whole-profile timestam
 it('a reset queued during remote failure resumes without restoring pre-reset records', async () => {
  const h = await runtime({ cloud: true, profiles: { a: { workouts: [workout('old')] } } }); await h.auth('a'); await h.sync(); const port = h.remoteFor('a'), reset = port.commitReset
  port.commitReset = async () => { throw Object.assign(new Error('offline'), { code: 'unavailable' }) }
- await expect(h.store.getState().resetEverything()).rejects.toThrow('offline'); expect(h.store.getState().S.workouts).toEqual([]); expect((await h.saved()).pendingJobs[0].kind).toBe('reset')
+ await expect(h.store.getState().resetEverything()).resolves.toBeUndefined(); expect(h.store.getState().sync.cloud).toBe('waiting'); expect(h.store.getState().S.workouts).toEqual([]); expect((await h.saved()).pendingJobs[0].kind).toBe('reset')
  port.commitReset = reset; await h.sync(); expect((await h.remoteState('a')).workouts).toEqual([]); expect((await h.saved()).cloudGeneration).toBe(2)
 })

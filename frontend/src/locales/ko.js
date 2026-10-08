@@ -1,5 +1,11 @@
 // Korean UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "이 앱에서 이메일과 비밀번호 로그인이 활성화되지 않았습니다. 관리자에게 문의하세요. 이 기기에서 로컬로 계속 사용할 수 있습니다.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "이 기기의 활성 프로필을 초기화하고 다른 기기가 연결되면 계정도 초기화합니다. 로컬 복구 사본과 원본 사진 및 동영상은 보관됩니다.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "이 기기의 활성 프로필을 초기화합니다. 로컬 복구 사본과 원본 사진 및 동영상은 보관됩니다.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "이 기기의 활성 프로필이 초기화되었습니다. 계정 초기화 확인은 클라우드 상태를 확인하세요.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "이 기기의 활성 프로필이 초기화되었습니다. 로컬 복구 사본과 원본 미디어는 보관됩니다.",
+
   'Confirm': '확인',
   'Cancel': '취소',
   'Press back again to exit': '뒤로를 한 번 더 누르면 종료됩니다',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': '운동을 마치거나 루틴을 수정하면 날짜가 적힌 사본을 문서/openGym에 저장하고 최근 {0}개만 남깁니다. 동기화 앱이 그 폴더를 보게 하거나 직접 복사해 두세요.',
   'Reset everything?': '전부 초기화할까요?',
   'Reset everything': '전부 초기화',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': '이 기기의 계획, 운동, 체중, 사진과 동영상을 삭제합니다. 되돌릴 수 없어요.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': '이 서버의 프로필과 로그인된 모든 기기에서 계획, 운동, 체중, 사진과 동영상을 삭제합니다. 되돌릴 수 없어요.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': '동기화 실패: 서버가 업로드가 너무 크다며 거부했습니다. 변경 내용이 서버에 반영되지 않았습니다.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': '이 기기에 저장 공간이 없습니다: 변경 내용이 기기에 저장되지 않았습니다. 로그인 상태라면 서버로는 그대로 전송됩니다.',
   'Delete everything': '전부 삭제',

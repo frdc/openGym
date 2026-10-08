@@ -1,5 +1,11 @@
 // Ukrainian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Вхід за поштою та паролем не ввімкнено для цього застосунку. Зверніться до адміністратора. Ви можете й далі користуватися пристроєм локально.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Скидає активний профіль на цьому пристрої та обліковий запис на інших пристроях після їх підключення. Локальні копії для відновлення та оригінали фото й відео зберігаються.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Скидає активний профіль на цьому пристрої. Локальні копії для відновлення та оригінали фото й відео зберігаються.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Активний профіль скинуто на цьому пристрої. Перевірте стан хмари для підтвердження скидання облікового запису.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Активний профіль скинуто на цьому пристрої. Локальні копії для відновлення та оригінальні медіафайли зберігаються.",
+
   'Confirm': 'Підтвердити',
   'Cancel': 'Скасувати',
   'Press back again to exit': 'Натисни «Назад» ще раз, щоб вийти',
@@ -297,7 +303,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'Після завершення тренування або редагування програми зберігає копію з датою в папку «Документи/openGym» і тримає {0} найновіших. Спрямуй на цю папку застосунок синхронізації або скопіюй файл вручну.',
   'Reset everything?': 'Скинути все?',
   'Reset everything': 'Скинути все',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Видаляє план, тренування, вагу тіла, фото й відео на цьому пристрої. Скасувати неможливо.',
   'Delete everything': 'Видалити все',
   'All data reset': 'Усі дані скинуто',
   'Backup exported': 'Копію експортовано',
@@ -1152,7 +1157,6 @@ export default {
   'No weigh-ins yet. Log your weight to start the curve.': 'Записів поки немає. Внеси вагу, щоб почати криву.',
   "Music playing on this phone stops during a workout and does not resume by itself.": "Музика, що грає на цьому телефоні, зупиняється під час тренування і сама не відновлюється.",
   'The quieter three-beep sound from before 1.3.9, instead of the louder chime.': 'Тихіший звук із трьох сигналів, як до версії 1.3.9, замість гучнішого дзвону.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Видаляє план, тренування, вагу тіла, фото й відео з профілю на цьому сервері й на всіх пристроях, де виконано вхід. Скасувати неможливо.',
   "Sync failed: the server refused the upload as too large. Your changes have not reached the server.": "Синхронізація не вдалася: сервер відхилив завантаження як завелике. Твої зміни не дійшли до сервера.",
   "Cards": "Картки",
   "List": "Список",

@@ -58,3 +58,11 @@ it('mode changes invalidate pending results and duplicate submits cannot duplica
 it.each(['auth/user-disabled', 'auth/too-many-requests', 'auth/network-request-failed', 'auth/not-configured', 'unknown'])('does not expose provider details for %s', code => {
   expect(passwordError({ code, message: 'token=private' })).not.toContain('private')
 })
+
+it.each([false, true])('disabled password provider has configuration guidance for registration=%s', async signup => {
+  const message = 'E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.'
+  ;(signup ? register : login).mockRejectedValueOnce({ code: 'auth/operation-not-allowed' })
+  mount(signup); credentials(); if (signup) type('password-again', 'secret1'); await submit()
+  expect(host.querySelector('[role="alert"]').textContent).toBe(message)
+  expect(close).not.toHaveBeenCalled(); await click('Cancel'); expect(close).toHaveBeenCalledOnce()
+})

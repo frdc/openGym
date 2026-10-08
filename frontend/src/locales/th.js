@@ -1,5 +1,11 @@
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "แอปนี้ยังไม่ได้เปิดใช้การลงชื่อเข้าใช้ด้วยอีเมลและรหัสผ่าน โปรดติดต่อผู้ดูแลระบบ คุณยังใช้แอปบนอุปกรณ์นี้แบบภายในเครื่องได้",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "รีเซ็ตโปรไฟล์ที่ใช้งานบนอุปกรณ์นี้และบัญชีบนอุปกรณ์อื่นเมื่อเชื่อมต่อ สำเนากู้คืนในเครื่องและรูปภาพกับวิดีโอต้นฉบับจะยังคงอยู่",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "รีเซ็ตโปรไฟล์ที่ใช้งานบนอุปกรณ์นี้ สำเนากู้คืนในเครื่องและรูปภาพกับวิดีโอต้นฉบับจะยังคงอยู่",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "รีเซ็ตโปรไฟล์ที่ใช้งานบนอุปกรณ์นี้แล้ว ตรวจสอบสถานะคลาวด์เพื่อยืนยันการรีเซ็ตบัญชี",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "รีเซ็ตโปรไฟล์ที่ใช้งานบนอุปกรณ์นี้แล้ว สำเนากู้คืนในเครื่องและสื่อต้นฉบับจะยังคงอยู่",
+
   // --- generic ---
   'Confirm': 'ยืนยัน',
   'Cancel': 'ยกเลิก',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'บันทึกสำเนาที่มีวันที่กำกับไว้ใน Documents/openGym หลังจบการออกกำลังกายหรือแก้ไขรูทีน และเก็บไว้เฉพาะ {0} ฉบับล่าสุด ตั้งแอปซิงก์ให้ชี้มาที่โฟลเดอร์นี้ หรือคัดลอกออกไปเองก็ได้',
   'Reset everything?': 'รีเซ็ตทุกอย่าง?',
   'Reset everything': 'รีเซ็ตทุกอย่าง',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'จะลบแผน, การออกกำลังกาย, น้ำหนักตัว, รูปภาพ และวิดีโอบนเครื่องนี้ ไม่สามารถย้อนกลับได้',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'จะลบแผน, การออกกำลังกาย, น้ำหนักตัว, รูปภาพ และวิดีโอออกจากโปรไฟล์ของคุณบนเซิร์ฟเวอร์นี้ และจากทุกอุปกรณ์ที่เข้าสู่ระบบอยู่ ไม่สามารถย้อนกลับได้',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'ซิงค์ไม่สำเร็จ: เซิร์ฟเวอร์ปฏิเสธการอัปโหลดเพราะข้อมูลใหญ่เกินไป การเปลี่ยนแปลงของคุณยังไม่ถึงเซิร์ฟเวอร์',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'อุปกรณ์นี้ไม่มีที่ว่างเหลือ: การเปลี่ยนแปลงไม่ได้บันทึกไว้บนอุปกรณ์ หากลงชื่อเข้าใช้อยู่ ข้อมูลจะยังถูกส่งไปที่เซิร์ฟเวอร์',
   'Delete everything': 'ลบทุกอย่าง',

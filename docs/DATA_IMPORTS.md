@@ -82,8 +82,10 @@ library.
   workout or routine edit and keeps the newest 14. Point a sync app at that folder to get them off
   the phone — or, on Android, choose the sync app's own folder under Settings → Data & backup → **Backup folder**.
 
-If you host openGym yourself, backing up the `./data` folder covers every profile at once; see
-[backups](SELF_HOSTING.md#6-backups).
+A static host does not hold a backup of every profile. Export JSON or ZIP from each client,
+and copy native auto-backups off the phone; see [self-hosting](SELF_HOSTING.md).
+Optional Firestore synchronization does not back up local-only photos or videos. Use ZIP export
+to preserve those originals, and keep any Firestore administration backups separate.
 
 ## Your own CSV
 

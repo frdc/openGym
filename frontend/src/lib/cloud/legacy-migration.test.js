@@ -99,3 +99,9 @@ it('admits trusted Firebase/guest identities only into their exact classified ow
   expect((await migrateLegacy({ storage: fakeStorage(), legacyReader: reader(guestCopy), owner: guest })).envelope.state.workouts).toHaveLength(1)
   expect((await migrateLegacy({ storage: fakeStorage(), legacyReader: reader(guestCopy), owner })).envelope.state.workouts).toEqual([])
 })
+
+it('a failing atomic admission callback leaves no admission marker and never completes the untouched source', async()=>{
+  const item=source({adoptForOwnerKey:owner.ownerKey}),original=structuredClone(item),legacyReader=reader(item),storage=fakeStorage()
+  await expect(migrateLegacy({storage,legacyReader,owner,onAdmit:()=>{throw new Error('cannot-plan-source')}})).rejects.toThrow('cannot-plan-source')
+  expect(await storage.read(owner.ownerKey)).toBeNull();expect(legacyReader.markComplete).not.toHaveBeenCalled();expect(item).toEqual(original)
+})

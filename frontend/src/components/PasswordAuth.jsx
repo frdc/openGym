@@ -16,6 +16,7 @@ export function passwordError(error) {
     case 'auth/user-disabled': return t('This account has been disabled.')
     case 'auth/too-many-requests': return t('Too many attempts. Try again later.')
     case 'auth/network-request-failed': return t('Could not connect')
+    case 'auth/operation-not-allowed': return t('E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.')
     case 'auth/not-configured': return t('Cloud accounts are not configured. You can keep using this device locally.')
     default: return t('Sign-in failed')
   }

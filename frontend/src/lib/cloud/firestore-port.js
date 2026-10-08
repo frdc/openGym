@@ -170,10 +170,23 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
     if (!/^\d{6}$/.test(part.partId) || Number(part.partId) >= job.totalParts || !Array.isArray(part.paths) || !part.paths.length || part.paths.length > 20 || new Set(part.paths).size !== part.paths.length || part.sourceVersion !== job.options.sourceVersion || part.targetVersion !== job.options.targetVersion) fail('invalid-job-part')
     part.paths.forEach(validatePath)
   }
+  function bulkSource(job) {
+    if (job.sourceKind === undefined) return null
+    if (job.kind !== 'import' || !['adoption', 'recovery', 'migration'].includes(job.sourceKind) || !map(job.payloads)) fail('invalid-job')
+    const paths = job.parts?.flatMap(part => part.paths) || []
+    if (new Set(paths).size !== paths.length || paths.length !== Object.keys(job.payloads).length || paths.some(path => !Object.hasOwn(job.payloads, path))) fail('invalid-job')
+    for (const path of paths) importSourceValidation(job, () => {
+      validatePath(path)
+      const record = validateRecord(path, job.payloads[path])
+      if (record.generation !== job.generation || record.unitVersion !== job.options.sourceVersion) fail('invalid-document', path)
+    })
+    return job.payloads
+  }
   async function beginJob(owner, input) {
     const job = clone(input); checkJob(owner, job)
     if (job.parts?.length !== job.totalParts) fail('invalid-job')
     for (const part of job.parts) importSourceValidation(job, () => checkPart(job, part))
+    bulkSource(job)
     const jobPath = `jobs/${job.jobId}`
     await sdk.runTransaction(client.db, async tx => {
       const c = await tx.get(ref(owner)), existing = await tx.get(ref(owner, jobPath)); root(owner)
@@ -233,6 +246,7 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
   }
   async function commitJobPart(owner, input, inputPart) {
     const job = clone(input), part = clone(inputPart); checkJob(owner, job); checkPart(job, part)
+    const contextualSource = bulkSource(job)
     const jobPath = `jobs/${job.jobId}`, marker = `${job.jobId}:${part.partId}`
     const profile = job.kind === 'import' ? await readProfileFromServer(owner) : null
     if (job.kind === 'import') {
@@ -274,7 +288,7 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
         }
       } else {
         const operation = { opId: marker, ownerKey: owner.ownerKey, generation: job.generation, unitVersion: job.options.sourceVersion, kind: 'import', paths: part.paths, readPaths: [], blockedReason: null,
-          payloads: Object.fromEntries(part.paths.map(path => [path, job.payloads[path]])) }
+          payloads: contextualSource || Object.fromEntries(part.paths.map(path => [path, job.payloads[path]])) }
         documents = codec.mergeOperation(records, operation, { control, domainContext: { remoteProfile: profile, remoteState: codec.decodeState(profile.documents) } }).documentsToWrite
       }
       for (const [path, record] of Object.entries(documents)) validateRecord(path, record)

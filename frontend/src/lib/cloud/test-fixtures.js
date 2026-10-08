@@ -148,7 +148,7 @@ export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = nu
         const record = profile.documents[path] || codec.encodeState({ unit: job.options.from }, profile.control).documents[path]
         documents[path] = { ...transformUnitRecord(path, record, job), appliedOpId: marker }
       } else {
-        const op = { opId: marker, ownerKey: owner.ownerKey, generation: job.generation, unitVersion: job.options.sourceVersion, paths: part.paths, readPaths: [], payloads: Object.fromEntries(part.paths.map(p => [p, input.payloads[p]])), blockedReason: null }
+        const op = { opId: marker, ownerKey: owner.ownerKey, generation: job.generation, unitVersion: job.options.sourceVersion, paths: part.paths, readPaths: [], payloads: input.sourceKind ? input.payloads : Object.fromEntries(part.paths.map(p => [p, input.payloads[p]])), blockedReason: null }
         documents = codec.mergeOperation(profile.documents, op, { control: profile.control, domainContext: { remoteProfile: profile, remoteState: codec.decodeState(profile.documents) } }).documentsToWrite
       }
       profile = { control: { ...profile.control, dataRevision: profile.control.dataRevision + 1 }, documents: { ...profile.documents, ...documents } }

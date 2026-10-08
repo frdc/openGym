@@ -4,6 +4,12 @@
 import pt from './pt.js'
 
 export const PT_BR_OVERRIDES = {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "O acesso por e-mail e senha não está habilitado neste aplicativo. Fale com o administrador. Você pode continuar usando este dispositivo localmente.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Redefine o perfil ativo neste dispositivo e a conta nos outros dispositivos quando eles se conectarem. As cópias locais de recuperação e as fotos e vídeos originais são mantidos.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Redefine o perfil ativo neste dispositivo. As cópias locais de recuperação e as fotos e vídeos originais são mantidos.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Perfil ativo redefinido neste dispositivo. Confira o status da nuvem para confirmar a redefinição da conta.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Perfil ativo redefinido neste dispositivo. As cópias locais de recuperação e as mídias originais são mantidas.",
+
   '{0} set brings an {1} with it. Switch on Effort per set in Settings to see it.': '{0} série traz um {1} junto. Ative “Esforço por série” nas Configurações para ver.',
   'Add to this set': 'Adicionar a esta série',
   'Copy this exercise’s warm-up sets, and the rest and note from its Exercise settings, into the routine. A note added for today stays with this workout. Your workout history is kept.': 'Copia para a rotina as séries de aquecimento deste exercício, e o descanso e a anotação das Configurações do exercício dele. Uma anotação adicionada para hoje fica com este treino. Seu histórico de treinos é mantido.',
@@ -147,8 +153,6 @@ export const PT_BR_OVERRIDES = {
   'Import backup': 'Importar backup',
   'Reset everything?': 'Redefinir tudo?',
   'Reset everything': 'Redefinir tudo',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Exclui seu plano, seus treinos, seu peso corporal, suas fotos e seus vídeos deste dispositivo. Esta ação não pode ser desfeita.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Exclui seu plano, seus treinos, seu peso corporal, suas fotos e seus vídeos do seu perfil neste servidor e de todos os dispositivos conectados. Esta ação não pode ser desfeita.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'A sincronização falhou: o servidor recusou o envio por ser grande demais. Suas alterações não chegaram ao servidor.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'Este dispositivo está sem espaço: a alteração não está salva nele. Com a sessão iniciada, ela chega ao servidor de qualquer forma.',
   'Delete everything': 'Excluir tudo',

@@ -347,3 +347,60 @@ it('enumerates bounded retired-generation cleanup pages without relying on the o
   expect(h.rows.size).toBe(2)
   await expect(h.remote.readOldGenerationPaths(owner, { generation: 2 })).rejects.toMatchObject({ code: 'generation-mismatch' })
 })
+
+
+it('bounded bulk parts retain full validated workout correction context without writing contextual paths', async () => {
+  const h = harness(), w = { id: 'corrected', d: '2026-10-08', _ts: 1, entries: [{ id: '0025', sets: [{ w: 80, r: 5, done: true }], target: { mode: 'reps' } }] }
+  const before = fixtureState({ workouts: [w], exWeights: { '0025': { w: 80, d: w.d } } })
+  for (const [path, record] of Object.entries(codec.encodeState(before, initialControl()).documents)) h.rows.set(`${root}/${path}`, record)
+  const source = structuredClone(before); source.workouts[0]._ts = 10; source.workouts[0].note = 'n'.repeat(400000); source.workouts[0].entries[0].sets[0].w = 40; source.exWeights['0025'].w = 40
+  const job = jobs.bulkAdmissionJob({ ownerKey: owner.ownerKey, state: before, cloudGeneration: 1, lastConfirmedControl: initialControl(), remoteMetadataByPath: {} }, source, { opId: 'bulk-correction', sourceKind: 'recovery' })
+  expect(job.totalParts).toBeGreaterThan(1)
+  await h.remote.beginJob(owner, job)
+  for (const part of job.parts) {
+    const count = h.commits.length
+    await h.remote.commitJobPart(owner, job, part)
+    const domainWrites = h.commits.slice(count).flat().map(([path]) => path.slice(root.length + 1)).filter(path => !path.startsWith('jobs/') && path)
+    expect(domainWrites.every(path => part.paths.includes(path))).toBe(true)
+  }
+  await h.remote.finishJob(owner, job)
+  expect(codec.decodeState((await h.remote.readProfileFromServer(owner)).documents).exWeights['0025'].w).toBe(40)
+  expect(h.rows.get(`${root}/jobs/${job.jobId}`)).not.toHaveProperty('sourceKind')
+  expect(h.rows.get(`${root}/jobs/${job.jobId}`)).not.toHaveProperty('payloads')
+})
+it('rejects a bulk contextual record outside the admitted part union before creating a manifest', async () => {
+  const h = harness(), source = fixtureState({ targetW: 80 })
+  const job = jobs.bulkAdmissionJob({ ownerKey: owner.ownerKey, state: fixtureState(), cloudGeneration: 1, lastConfirmedControl: initialControl(), remoteMetadataByPath: {} }, source, { opId: 'invalid-context', sourceKind: 'recovery' })
+  job.payloads['settings/restSec'] = codec.encodeState(fixtureState(), initialControl()).documents['settings/restSec']
+  await expect(h.remote.beginJob(owner, job)).rejects.toMatchObject({ code: 'invalid-job' })
+  expect(h.commits).toHaveLength(0)
+})
+
+it.each([false,true])('bulk context/replay preserves newer concurrent workout correction (custom assistance=%s)',async assisted=>{
+  const h=harness(),id=assisted?'private-assist':'0025',oldWeight=assisted?20:80,newWeight=assisted?60:30
+  const w={id:'history',d:'2026-10-08',_ts:1,entries:[{id,sets:[{w:oldWeight,r:5,done:true}],target:{mode:'reps'}}]}
+  const before=fixtureState({workouts:[w],customEx:assisted?[{id,n:'My assistance',assisted:true,custom:true}]:[],exWeights:{[id]:{w:oldWeight,d:w.d}}})
+  for(const [path,record] of Object.entries(codec.encodeState(before,initialControl()).documents))h.rows.set(`${root}/${path}`,record)
+  const source=structuredClone(before);source.workouts[0]._ts=10;source.workouts[0].note='n'.repeat(400000);source.workouts[0].entries[0].sets[0].w=40;source.exWeights[id].w=40
+  const job=jobs.bulkAdmissionJob({ownerKey:owner.ownerKey,state:before,cloudGeneration:1,lastConfirmedControl:initialControl(),remoteMetadataByPath:{}},source,{opId:`source-${assisted}`,sourceKind:'recovery'})
+  await h.remote.beginJob(owner,job);await h.remote.commitJobPart(owner,job,job.parts[0])
+  expect(codec.decodeState((await h.remote.readProfileFromServer(owner)).documents).exWeights[id].w).toBe(40)
+  const current=await h.remote.readProfileFromServer(owner),previous=codec.decodeState(current.documents),next=structuredClone(previous)
+  next.workouts[0].entries[0].sets[0].w=newWeight;next.workouts[0]._ts=20;next.exWeights[id].w=newWeight;next._ts=stampChange(previous,next,20)
+  const newer=codec.prepareOperation(previous,next,{ownerKey:owner.ownerKey,opId:'newer',generation:1,unitVersion:1,kind:'edit'})
+  await h.remote.commitOperation(owner,newer,context(current))
+  const reopened=createFirestorePort({client:h.client,sdk:h.sdk})
+  for(const part of job.parts)await reopened.commitJobPart(owner,job,part)
+  await reopened.finishJob(owner,job)
+  const received=codec.decodeState((await reopened.readProfileFromServer(owner)).documents)
+  expect(received.workouts[0].entries[0].sets[0].w).toBe(newWeight)
+  expect(received.exWeights[id].w).toBe(newWeight)
+})
+it.each(['generation','unitVersion','payload'])('validates a contextual %s error even outside the first part',async field=>{
+  const h=harness(),source=fixtureState({targetW:80,workouts:[{id:'later',d:'2026-10-08',entries:[],note:'n'.repeat(400000)}]})
+  const job=jobs.bulkAdmissionJob({ownerKey:owner.ownerKey,state:fixtureState(),cloudGeneration:1,lastConfirmedControl:initialControl(),remoteMetadataByPath:{}},source,{opId:`invalid-${field}`,sourceKind:'adoption'})
+  const path=job.parts.at(-1).paths.at(-1)
+  if(field==='payload')job.payloads[path].payload.note='n'.repeat(930000);else job.payloads[path][field]=99
+  await expect(h.remote.beginJob(owner,job)).rejects.toMatchObject({code:field==='payload'?'document-too-large':'invalid-document',path,importSource:true})
+  expect(h.commits).toHaveLength(0)
+})

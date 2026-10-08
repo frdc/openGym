@@ -1,5 +1,11 @@
 // Simplified Chinese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "此应用尚未启用电子邮件和密码登录。请联系管理员。你可以继续在此设备上本地使用。",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "重置此设备上的当前档案，并在其他设备联网时重置账户。本地恢复副本和原始照片及视频会保留。",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "重置此设备上的当前档案。本地恢复副本和原始照片及视频会保留。",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "此设备上的当前档案已重置。请查看云端状态以确认账户重置。",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "此设备上的当前档案已重置。本地恢复副本和原始媒体会保留。",
+
   'Confirm': '确认',
   'Cancel': '取消',
   'Press back again to exit': '再按一次返回退出',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': '完成训练或编辑计划后，会在「文档/openGym」中保存一份带日期的副本，并保留最近的 {0} 份。可以让同步应用指向该文件夹，或手动复制出来。',
   'Reset everything?': '重置所有内容？',
   'Reset everything': '重置所有内容',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': '删除本设备上的计划、训练、体重、照片和视频。无法撤销。',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': '从此服务器上的档案以及所有已登录设备中删除计划、训练、体重、照片和视频。无法撤销。',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': '同步失败：服务器拒绝了上传，内容过大。你的更改尚未同步到服务器。',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': '此设备存储空间已满：更改未保存在设备上。已登录时，它仍会同步到服务器。',
   'Delete everything': '全部删除',

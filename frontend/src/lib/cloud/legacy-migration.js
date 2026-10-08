@@ -32,7 +32,7 @@ export async function prepareLegacyState(state) {
  * markComplete(sourceId,ownerKey,fingerprint), if supplied, runs after reread.
  * newId is reserved for callers; historical identities never use random IDs.
  */
-export async function migrateLegacy({ storage, legacyReader, owner, newId: _newId }) {
+export async function migrateLegacy({ storage, legacyReader, owner, newId: _newId, onAdmit }) {
   if (makeOwner(owner.projectId, owner.uid).ownerKey !== owner.ownerKey) throw storageError('invalid-owner')
   await storage.open()
   const sources = await legacyReader.read()
@@ -57,7 +57,7 @@ export async function migrateLegacy({ storage, legacyReader, owner, newId: _newI
     copies.push({ prepared, copy: { recoveryId, sourceId: source.sourceId, fingerprint, ...(source.identityProvider === 'firebase' ? { identityProvider: 'firebase', ownerKey: source.ownerKey } : {}), state: structuredClone(source.state), ownerMetadata: metadata, status: 'pending', reason } })
   }
   const committed = await storage.commit(owner.ownerKey, current => {
-    const next = structuredClone(current || makeEnvelope(owner, DEF))
+    let next = structuredClone(current || makeEnvelope(owner, DEF))
     let occupied = current !== null
     for (const { prepared, copy } of copies) {
       if (next.recoveryCopies.some(existing => existing.recoveryId === copy.recoveryId)) continue
@@ -68,6 +68,7 @@ export async function migrateLegacy({ storage, legacyReader, owner, newId: _newI
         occupied = true
       } else if (!saved.reason) saved.reason = 'destination-exists'
       next.recoveryCopies.push(saved)
+      if (saved.status === 'adopted' && onAdmit) next = onAdmit(next, saved)
     }
     return next
   })

@@ -61,7 +61,7 @@ beforeEach(() => {
   mocks.user = null
   mocks.coachLocal = null
   mocks.replaceState.mockClear()
-  mocks.resetEverything.mockClear()
+  mocks.resetEverything.mockReset()
   mocks.confirmSheet.mockClear()
   mocks.forgetCoach.mockClear()
   mocks.api.mockClear()
@@ -90,11 +90,15 @@ describe('Settings — reset everything', () => {
     let finish; mocks.resetEverything.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
     mount(); const dialog = openDialog()
     expect(dialog.title).toBe('Reset everything?')
-    expect(dialog.message).toContain('This cannot be undone.')
+    expect(dialog.confirmText).toBe('Reset')
+    expect(dialog.message).toContain('active profile')
+    expect(dialog.message).toContain('recovery copies')
+    expect(dialog.message).not.toContain('cannot be undone')
+    if (user) expect(dialog.message).toContain('when they connect')
     const resetting = dialog.onConfirm()
     expect(mocks.resetEverything).toHaveBeenCalledOnce(); expect(mocks.toast).not.toHaveBeenCalled()
     await act(async () => { finish(); await resetting })
-    expect(mocks.api).not.toHaveBeenCalled(); expect(mocks.forgetCoach).not.toHaveBeenCalled(); expect(mocks.toast).toHaveBeenCalledWith('All data reset')
+    expect(mocks.api).not.toHaveBeenCalled(); expect(mocks.forgetCoach).not.toHaveBeenCalled(); expect(mocks.toast).toHaveBeenCalledWith(user ? 'Active profile reset on this device. Check cloud status for account confirmation.' : 'Active profile reset on this device. Local recovery copies and original media are retained.')
   })
   it('does not run a reset confirmed after an account transition', async () => {
     mocks.user = { uid: 'A' }; mount(); const dialog = openDialog()

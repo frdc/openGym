@@ -1,5 +1,11 @@
 // Italian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "L’accesso con e-mail e password non è abilitato per questa app. Contatta l’amministratore. Puoi continuare a usare questo dispositivo localmente.",
+  "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Reimposta il profilo attivo su questo dispositivo e l’account sugli altri dispositivi quando si connettono. Le copie locali di recupero e le foto e i video originali vengono conservati.",
+  "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Reimposta il profilo attivo su questo dispositivo. Le copie locali di recupero e le foto e i video originali vengono conservati.",
+  "Active profile reset on this device. Check cloud status for account confirmation.": "Profilo attivo reimpostato su questo dispositivo. Controlla lo stato del cloud per la conferma dell’account.",
+  "Active profile reset on this device. Local recovery copies and original media are retained.": "Profilo attivo reimpostato su questo dispositivo. Le copie locali di recupero e i contenuti multimediali originali vengono conservati.",
+
   'Confirm': 'Conferma',
   'Cancel': 'Annulla',
   'Press back again to exit': 'Premi di nuovo indietro per uscire',
@@ -457,8 +463,6 @@ export default {
   'Saves a dated copy to Documents/openGym after finishing a workout or editing a routine, and keeps the newest {0}. Point a sync app at that folder, or copy it out by hand.': 'Salva una copia datata in Documenti/openGym dopo aver terminato un allenamento o modificato una routine, e tiene le {0} più recenti. Punta un’app di sincronizzazione su quella cartella, oppure copiala a mano.',
   'Reset everything?': 'Azzerare tutto?',
   'Reset everything': 'Azzera tutto',
-  'Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.': 'Elimina piano, allenamenti, peso corporeo, foto e video su questo dispositivo. Irreversibile.',
-  'Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.': 'Elimina piano, allenamenti, peso corporeo, foto e video dal tuo profilo su questo server e su tutti i dispositivi connessi. Irreversibile.',
   'Sync failed: the server refused the upload as too large. Your changes have not reached the server.': 'Sincronizzazione fallita: il server ha rifiutato il caricamento perché troppo grande. Le tue modifiche non hanno raggiunto il server.',
   'This device is out of storage: the change is not saved on it. Signed in, it still goes to the server.': 'Questo dispositivo non ha più spazio: la modifica non è salvata su di esso. Se hai effettuato l’accesso, arriva comunque al server.',
   'Delete everything': 'Elimina tutto',
