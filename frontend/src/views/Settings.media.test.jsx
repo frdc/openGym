@@ -270,3 +270,23 @@ describe('Settings — photos and videos', () => {
   })
 
 })
+
+it.each([
+  ['unavailable', 'Could not connect'],
+  ['firestore/unavailable', 'Could not connect'],
+  ['auth/network-request-failed', 'Could not connect'],
+  ['storage-full', 'Something went wrong'],
+  ['permission-denied', 'Something went wrong'],
+  ['invalid-document', 'Something went wrong'],
+])('backup preview reports %s without importing or claiming success', async (code, message) => {
+  await mount()
+  act(() => useStore.setState({ importConflict: async () => { throw Object.assign(new Error('private diagnostic'), {code}) } }))
+  const input=host.querySelector('input[type="file"][accept^=".json"]')
+  Object.defineProperty(input,'files',{value:[new File([JSON.stringify(stateWithPhoto())],'backup.json')],configurable:true})
+  act(()=>input.dispatchEvent(new Event('change',{bubbles:true})))
+  await until(()=>mocks.toast.mock.calls.length>0)
+  expect(mocks.toast).toHaveBeenCalledWith(message)
+  expect(mocks.toast).not.toHaveBeenCalledWith('Backup imported')
+  expect(mocks.importBackup).not.toHaveBeenCalled()
+  expect(mocks.confirmSheet).not.toHaveBeenCalled();expect(mocks.menuSheet).not.toHaveBeenCalled()
+})

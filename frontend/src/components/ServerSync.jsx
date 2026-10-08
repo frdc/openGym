@@ -53,7 +53,7 @@ export async function leaveServer(_kind, { exportBackup, exportBackupZip, done }
     const result = await useStore.getState().signOut()
     if (result.owed && !result.stashed) {
       if (useStore.getState().ownerKey !== key) return
-      ui().openSheet(close => <OwedSheet count={result.count} exportBackup={exportBackup} exportBackupZip={exportBackupZip} done={done} close={close} ownerKey={key} />, { kind: 'center' })
+      ui().openSheet(close => <OwedSheet count={result.count} exportBackup={exportBackup} exportBackupZip={exportBackupZip} done={done} close={close} ownerKey={key} />, { kind: 'center', accountAuth: true })
     } else if (!useStore.getState().user) done(result)
   } catch { if (useStore.getState().ownerKey === key) toast(t('Couldn’t keep a copy of the changes on this device. Nothing was removed.')) }
 }
@@ -63,7 +63,7 @@ export function OwedSheet({ count, exportBackup, exportBackupZip, done, close, o
   const mounted = useRef(true)
   const captured = useRef({ ...context(), ownerKey }).current
   const mayAct = () => mounted.current && current(captured)
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const run = async force => {
     if (busy || !mayAct()) return
     setBusy(true)

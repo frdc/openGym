@@ -242,7 +242,12 @@ export default function Settings({ page = null, find = null, via = null }) {
     // choice to merge those in instead (useStore importConflict / importBackup).
     let conflict
     try { conflict = await importConflict(read.state) }
-    catch { if (captured.current()) toast(t('Something went wrong')); return }
+    catch (error) {
+      const code = String(error?.code || '').replace(/^firestore\//, '')
+      const offline = ['unavailable', 'deadline-exceeded', 'network-request-failed', 'auth/network-request-failed'].includes(code)
+      if (captured.current()) toast(t(offline ? 'Could not connect' : 'Something went wrong'))
+      return
+    }
     if (!captured.current()) return
     if (conflict) {
       const n = conflict.workouts

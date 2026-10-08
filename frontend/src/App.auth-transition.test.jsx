@@ -6,6 +6,7 @@ import App from './App.jsx'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { openPasswordSignIn, openPasswordRegister } from './components/PasswordAuth.jsx'
+import { leaveServer } from './components/ServerSync.jsx'
 import { fakeStorage } from './lib/cloud/test-fixtures.js'
 import { makeOwner } from './lib/cloud/model.js'
 const h = vi.hoisted(() => ({ fixture: null }))
@@ -25,7 +26,7 @@ beforeEach(async () => {
   storage.read = async key => { if (key === owner.ownerKey) { await gate; if (failRead) { failRead = false; throw Object.assign(new Error('read unavailable'), {code:'storage-unavailable'}) } } return read(key) }
   login = vi.fn(async () => { transition = onUser({ uid: 'a', email: 'a@example.test' }); return { uid: 'a' } })
   register = vi.fn(async () => { transition = onUser({ uid: 'a', email: 'a@example.test' }); return { uid: 'a' } })
-  await h.fixture.prepare({}, { storage, authFactory: input => { onUser = input.onUser; return { ready: Promise.resolve(null), stop() {}, login, register } } })
+  await h.fixture.prepare({}, { storage, authFactory: input => { onUser = input.onUser; return { ready: Promise.resolve(null), stop() {}, login, register, signOut: () => onUser(null) } } })
   adoption = vi.spyOn(useStore.getState(), 'adoptProfile').mockResolvedValue(null)
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
   await act(async () => { root.render(<App />) })
@@ -93,4 +94,17 @@ it('ordinary domain sheets unmount during hydration instead of retaining their c
   await act(async () => { release(); await transition })
   expect(adoption).toHaveBeenCalledOnce()
   expect(useUI.getState().sheets).toHaveLength(1)
+})
+it('StrictMode forced sign-out acts once and closes its dialog after real guest hydration', async () => {
+  await act(async () => { release(); await onUser({uid:'a'}); root.render(<React.StrictMode><App /></React.StrictMode>) })
+  await act(async () => { useStore.getState().update(s => { s.routines.push({id:'pending-a',name:'Pending A',ex:[]}) }, false); await useStore.getState().flushLocal() })
+  const done=vi.fn()
+  await act(async () => { await leaveServer('signout',{exportBackup:vi.fn(),done}) })
+  expect(useUI.getState().sheets).toHaveLength(1)
+  expect(host.textContent).toContain('Sign out anyway')
+  await act(async () => { [...host.querySelectorAll('button')].find(b=>b.textContent==='Sign out anyway').click(); await new Promise(r=>setTimeout(r,20)) })
+  expect(useStore.getState()).toMatchObject({localReady:true,user:null})
+  expect(useUI.getState().sheets).toHaveLength(0)
+  expect(done).toHaveBeenCalledOnce()
+  expect(done.mock.calls[0][0]).toMatchObject({owed:true,stashed:true})
 })

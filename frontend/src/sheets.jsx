@@ -273,18 +273,33 @@ function BwSheet({ required, onDone, close }) {
   const unit = st.unit
   const bw = lastBW(st)
   const [v, setV] = useState(bw ? bw.w : 70)
-  const save = () => {
+  const [saving, setSaving] = useState(false)
+  const mounted = useRef(false), pending = useRef(false)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const save = async () => {
+    if (pending.current) return
     const n = Math.round((v || 0) * 10) / 10
     if (!n || n <= 0) { toast(t('Enter a valid weight')); return }
     if (bwTooHeavy(n, unit)) return
-    update(s => {
-      const iso = todayISO()
-      const ex = s.bodyweight.find(b => b.d === iso)
-      if (ex) { ex.w = n; ex.t = Date.now() } else s.bodyweight.push({ d: iso, w: n, t: Date.now() })
-      s.bodyweight.sort((a, b) => (a.d < b.d ? -1 : 1))
-    })
-    close()
-    if (onDone) onDone(n); else toast(t('Weight saved'))
+    pending.current = true; setSaving(true)
+    let guard
+    try {
+      update(s => {
+        const iso = todayISO()
+        const ex = s.bodyweight.find(b => b.d === iso)
+        if (ex) { ex.w = n; ex.t = Date.now() } else s.bodyweight.push({ d: iso, w: n, t: Date.now() })
+        s.bodyweight.sort((a, b) => (a.d < b.d ? -1 : 1))
+      })
+      guard = workoutSaveGuard()
+      if (!await guard.flush() || !mounted.current) return
+      close()
+      if (onDone) onDone(n); else toast(t('Weight saved'))
+    } catch {
+      if (mounted.current && (!guard || guard.current())) toast(t('Changes could not be saved on this device. Keep the app open and try again.'))
+    } finally {
+      pending.current = false
+      if (mounted.current) setSaving(false)
+    }
   }
   const recent = [...st.bodyweight].reverse().slice(0, 3)
   return <>
@@ -303,9 +318,9 @@ function BwSheet({ required, onDone, close }) {
     <div className="muted small">{required ? t('Slide or tap to set your weight. We ask before every workout so your curve stays honest.') : t('Today') + ', ' + fmtDate(todayISO(), true)}</div>
     <WeightInput value={v} setValue={setV} unit={unit} />
     <div style={{ height: 14 }} />
-    <Button variant="primary" onClick={save}>{required ? t('Save & start workout') : t('Save')}</Button>
+    <Button variant="primary" disabled={saving} onClick={save}>{required ? t('Save & start workout') : t('Save')}</Button>
     {required && <>
-      <div style={{ height: 8 }} /><Button variant="ghost" className="dim" onClick={() => { close(); onDone && onDone(null) }}>{t('Start without weighing in')}</Button>
+      <div style={{ height: 8 }} /><Button variant="ghost" className="dim" disabled={saving} onClick={() => { close(); onDone && onDone(null) }}>{t('Start without weighing in')}</Button>
       <div style={{ height: 2 }} /><Button variant="ghost" className="dim" icon="swap" onClick={() => closeThenNav(close, '/workout')}>{t('Choose a different workout')}</Button>
     </>}
     {!required && recent.length > 0 && <>
