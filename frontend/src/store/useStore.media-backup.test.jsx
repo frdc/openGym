@@ -85,3 +85,30 @@ it('a media backup scheduled by A cannot run for B after switching accounts', as
   await sleep(2300)
   expect(backups()).toHaveLength(0)
 })
+
+// I1: an addition's pending callback must not overwrite today's already-backed-up
+// photo/workout with a later removal. Seed through the real native backup writer.
+describe.each(['remove photo', 'delete workout', 'remove shared photo'])('pending backup then %s', action => {
+  it('preserves the exact existing daily file when removal happens before dispatch', async () => {
+    const workouts = [{ ...clone(W), media: [ref('a')] }]
+    if (action === 'remove shared photo') workouts.push({ ...clone(W), id: 'w2', media: [ref('a')] })
+    useStore = (await runtime({ initial: { autoBackup: true, workouts } })).store
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.setSystemTime(new Date('2026-10-08T12:00:00Z'))
+    try {
+      await useStore.getState().autoBackupNow()
+      const original = [...h.files].filter(([key]) => key.startsWith('DOCUMENTS/'))
+      expect(original).toHaveLength(1)
+      expect(JSON.parse(original[0][1]).workouts[0].media[0].hash).toBe('a'.repeat(64))
+      useStore.getState().update(s => { addWorkoutMedia(s, W, ref('b')) })
+      await vi.advanceTimersByTimeAsync(1000)
+      useStore.getState().update(s => {
+        if (action === 'delete workout') s.workouts = []
+        else removeWorkoutMedia(s, W, 'a'.repeat(64))
+      })
+      await useStore.getState().flushLocal()
+      await vi.advanceTimersByTimeAsync(2001)
+      expect([...h.files].filter(([key]) => key.startsWith('DOCUMENTS/'))).toEqual(original)
+    } finally { vi.useRealTimers() }
+  })
+})

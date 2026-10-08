@@ -252,7 +252,17 @@ export function createWorkoutStore(options = {}) {
         next._ts = stampChange(previous, next, Date.now())
         record(next, push, kind)
         const beforeMedia = referencedHashes({ workouts: previous.workouts })
-        if (MOBILE && next.autoBackup && [...referencedHashes({ workouts: next.workouts })].some(hash => !beforeMedia.has(hash))) {
+        const remainingWorkouts = new Map((next.workouts || []).map(w => [entryKey('workouts', w), w]))
+        const removed = (previous.workouts || []).some(w => {
+          const kept = remainingWorkouts.get(entryKey('workouts', w))
+          if (!kept) return true
+          const hashes = referencedHashes({ workouts: [kept] })
+          return [...referencedHashes({ workouts: [w] })].some(hash => !hashes.has(hash))
+        })
+        // A pending addition must not overwrite today's preserved photo/workout after a
+        // removal, even if another workout still refers to the same bytes.
+        if (removed || !next.autoBackup) { clearTimeout(backupTimer); backupTimer = null }
+        else if (MOBILE && [...referencedHashes({ workouts: next.workouts })].some(hash => !beforeMedia.has(hash))) {
           const captured = get().getContext()
           clearTimeout(backupTimer)
           backupTimer = setTimeout(() => {
