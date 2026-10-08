@@ -6,6 +6,7 @@
 - [Data imports](DATA_IMPORTS.md): supported training imports and sharing formats.
 - [HTTPS at home](SELF_HOSTING_HTTPS.md): general networking background.
 - [API retirement](API.md), [Coach retirement](AI_COACH.md), [Kubernetes status](SELF_HOSTING_KUBERNETES.md).
+- [Offline/Firestore verification](dev/OFFLINE_FIRESTORE_VERIFICATION.md): observed local gates, artifacts and remaining activation limits.
 - [Native regression map](NATIVE_REGRESSION_MAPPING.md), [retirement map](RETIRED_ARTIFACTS.md).
 - [Contributing](../CONTRIBUTING.md), [repository guidance](../CLAUDE.md), [approved architecture](superpowers/specs/2026-10-07-react-offline-firestore-design.md).
 

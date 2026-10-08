@@ -56,7 +56,7 @@ It would not be very nice to have to remember all the ports when we address our 
 Port 443 (https) can only be used once so we would let our proxy answer to that port.
 We configure the proxy to forward requests to our individual services like so:
 ```
-proxy :443 ──┬── openGym   :8080   (the web container; it forwards /api itself)
+proxy :443 ──┬── openGym   :8080   (the static web container)
              └── Nextcloud :8081
 ```
 Now we have a nice URL and can forget about the ports. The proxy reads the URL request and forwards it to the target service/host.
@@ -134,8 +134,8 @@ Additional info:
     }
     ```
 
-And that's about it. Now you should be able to access your opengym instance from your local network via https with working passkeys.  
-Be sure to update the openGym config accordingly (`RP_ID=opengym.myhomelab.dedyn.io`, `ORIGIN=https://opengym.myhomelab.dedyn.io` — see [SELF_HOSTING.md](./SELF_HOSTING.md#2-understand-the-passkey-requirement-important)).
+And that's about it. Now you should be able to access your opengym instance from your local network via HTTPS with a secure origin for the offline PWA.
+The adapted app uses local storage and optional Firebase email/password authentication. See [SELF_HOSTING.md](./SELF_HOSTING.md) for the public build-time Firebase configuration. The static container has no API proxy; the old passkey `RP_ID` and `ORIGIN` settings do not apply.
 
 **If the name does not resolve on your phone:** many home routers (Fritz!Box, some ISP boxes) have *DNS rebind protection* and silently drop public names that resolve to a private IP. Add `myhomelab.dedyn.io` to the router's rebind exception list, or run your own resolver.
 

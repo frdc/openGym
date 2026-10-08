@@ -10,6 +10,8 @@
 
 **What happens to backups?** JSON contains training state, not account identity, tokens or sync queues. Keep regular exports. Removing app storage can remove local-only media and archives. Physical media deletion is deliberately deferred when safe retention cannot be proven.
 
+**Can I restore a backup offline?** Guest import/export works locally. When signed in, restore needs a connection to preview the server profile before merging or replacing it. If you see “Could not connect”, reconnect and retry; the failed preview has not imported the backup.
+
 **Are reminders retained?** Android local reminders, rest alarms and session timer safeguards remain. The old server Web Push delivery is retired.
 
 **Where are Coach, passkeys, MCP and the APK updater?** They belong to the retired server edition. There is no adapted automatic update/download channel yet. Upstream releases are historical attribution.

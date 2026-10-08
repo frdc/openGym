@@ -29,3 +29,11 @@ The iOS source shell is retained with the obsolete vault pod removed. `build:mob
 ## Updates
 
 The upstream APK updater/download action is retired until an adapted signed release channel is reviewed. PWA service-worker updates remain. Inherited publishing, release/upload and mirror workflows are removed; compilation does not publish anything.
+
+## Verified local delivery
+
+See [Offline / Firestore verification](dev/OFFLINE_FIRESTORE_VERIFICATION.md) for exact product/artifact hashes, commands, actual device evidence and limits. An ordinary unconfigured APK stores training locally; cloud login requires a separately configured build. A demo-emulator APK is a distinct verification artifact requiring the named local servers and dedicated ADB reverse mappings. Preserve the ordinary APK before packaging demo assets and restore ordinary assets/configuration for the final local delivery. The seeded `VITE_DEMO` build flag is unrelated to Firebase emulator mode.
+
+Android process termination before a local save confirmation may lose that unconfirmed edit. Confirmed revisions are read back from the owner-specific two-slot archive; corruption of the newest slot falls back to the other valid slot. Clearing all app data or uninstalling can remove those files and local media. WebView-only data loss and full app-data deletion are different operations and must be described separately in verification evidence.
+
+Guest backup import/export works locally while offline. Signed-in backup restore requires a connection for the server-verified merge/replace preview; reconnect before importing. A connectivity failure leaves the backup unapplied and asks you to connect. Workouts and confirmed local training remain available offline.
