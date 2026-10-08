@@ -75,7 +75,7 @@ Versão inicial `1`; namespace exato `users/{uid}/apps/opengym`; projeto de emul
 
 IDs já existentes permanecem. Novos IDs/opIds vêm de um gerador injetável que usa `crypto.randomUUID`; migração de treino sem ID usa identidade histórica + `sha256Hex` existente, calculada antes da transação. Codificar IDs arbitrários em base64url UTF-8; pesagem usa a data `d`, não `d|t`. Não interpolar UID/caminhos recebidos de outro proprietário.
 
-## Tarefa 1: Codec e operações determinísticas
+## Task 1: Codec e operações determinísticas
 
 **Files:** criar `frontend/src/lib/cloud/model.js`, `codec.js`, `codec.test.js`, `test-fixtures.js`; extrair `DEF` para `frontend/src/store/state-defaults.js` e reexportá-lo em `useStore.js`. Consultar `sync-merge.js`, `units.js`, `history.js`, `rotation.js`, `session-edit.js` e `exercises.js` existentes; `betterWeight`/`beatsWeight` estão em `exercises.js`.
 
@@ -101,7 +101,7 @@ expect(Object.keys(DEF).filter(k => !(k in FIELD_POLICY))).toEqual([])
 - [ ] **Step 4 — Confirmar GREEN:** rodar o teste novo e `npm test -- src/lib/sync-merge.test.js src/lib/units.test.js src/lib/rotation.test.js src/lib/session-edit.test.js`; não alterar arredondamento de domínio para ajustar o codec.
 - [ ] **Step 5 — Commit:** `feat: add deterministic cloud state codec`.
 
-## Tarefa 2: Armazenamento durável, concorrência e migração
+## Task 2: Armazenamento durável, concorrência e migração
 
 **Files:** criar `frontend/src/lib/cloud/offline-store.js`, `offline-idb.js`, `offline-fs.js`, `legacy-migration.js` e testes homônimos; adaptar leitura legada de `frontend/src/lib/mobile.js`. Consultar os testes existentes `media-store-idb.test.js`, `media-store-fs.test.js`, `useStore.tabs-owner.test.jsx`, `useStore.restore.test.jsx`.
 
@@ -126,7 +126,7 @@ expect(await recovered.read(owner.ownerKey)).toMatchObject({localRevision:7})
 - [ ] **Step 4 — Confirmar GREEN:** os mesmos testes; também `npm test -- src/lib/media-store-idb.test.js src/lib/media-store-fs.test.js` após adaptar apenas fixture compartilhada se necessário.
 - [ ] **Step 5 — Commit:** `feat: persist state and pending operations atomically`.
 
-## Tarefa 3: Firebase modular e sessão Auth
+## Task 3: Firebase modular e sessão Auth
 
 **Files:** criar `frontend/src/lib/cloud/firebase-client.js`, `auth-session.js` e testes; `frontend/.env.example`; modificar `.gitignore`, `frontend/package.json`, `frontend/package-lock.json`.
 
@@ -149,7 +149,7 @@ expect(clientOptions.options.projectId).toBe('demo-opengym')
 - [ ] **Step 4 — Confirmar GREEN:** testes acima + `npm run build`; revisar `npm audit --omit=dev` e lockfile, separando avisos preexistentes. Não substituir pacotes por alternativas especulativas nem atualizar toda a árvore sem motivo.
 - [ ] **Step 5 — Commit:** `feat: add modular Firebase authentication`.
 
-## Tarefa 4: Transporte Firestore e regras do namespace
+## Task 4: Transporte Firestore e regras do namespace
 
 **Files:** criar `frontend/src/lib/cloud/firestore-port.js`, `firestore-port.test.js`; `firebase/opengym.rules`, `firebase/emulator.json`; `frontend/scripts/check-firestore-rules.mjs`; script `test:firestore` no package frontend.
 
@@ -173,7 +173,7 @@ expect(allAbsolutePaths.every(p => p.startsWith(`users/${uidA}/apps/opengym`))).
 - [ ] **Step 5 — Confirmar GREEN:** teste unitário e `firebase emulators:exec --project demo-opengym --config firebase/emulator.json --only auth,firestore "npm --prefix frontend run test:firestore"`, executado da raiz com CLI oficial disponível/temporária. Regras testadas permitem só o esperado; comportamento de contenção real do Firestore não é certificado pelo emulador.
 - [ ] **Step 6 — Commit:** `feat: sync isolated Firestore documents with validated rules`.
 
-## Tarefa 5: Coordenador de sync, confirmações e identidade
+## Task 5: Coordenador de sync, confirmações e identidade
 
 **Files:** criar `frontend/src/lib/cloud/sync-bridge.js`, `sync-status.js`, testes homônimos. Consumir interfaces das tarefas 1–4.
 
@@ -198,7 +198,7 @@ expect(remoteCommitsBeforeAdoption).toHaveLength(0)
 - [ ] **Step 5 — Confirmar GREEN:** testes novos + suite `src/lib/cloud`; testar dois bridges/fakes compartilhando a mesma conta, inclusive callback depois de `unbindAuth`.
 - [ ] **Step 6 — Commit:** `feat: coordinate durable offline synchronization`.
 
-## Tarefa 6: Reset e jobs retomáveis de importação/unidade
+## Task 6: Reset e jobs retomáveis de importação/unidade
 
 **Files:** criar `frontend/src/lib/cloud/sync-jobs.js`, `sync-jobs.test.js`; ampliar `firestore-port.js`, `sync-bridge.js`, regras e teste emulador.
 
@@ -222,7 +222,7 @@ expect(secondAttempt.transformedEntities).toHaveLength(0)
 - [ ] **Step 5 — Confirmar GREEN:** testes novos, os de port/bridge e script emulador cobrindo job ativo, versão incorreta, replay e exclusão condicional. Arrays grandes passam como partes; registro inválido permanece bloqueado sem truncamento.
 - [ ] **Step 6 — Commit:** `feat: resume profile resets imports and unit migrations`.
 
-## Tarefa 7: Conectar a camada nova ao store e ao treino
+## Task 7: Conectar a camada nova ao store e ao treino
 
 **Files:** modificar `frontend/src/store/useStore.js`, `frontend/src/sheets.jsx` finalização em 2851–2899, `frontend/src/lib/mobile.js`; criar `frontend/src/store/useStore.cloud.test.jsx`; adaptar testes `useStore.sync`, `adopt`, `adopt-hold`, `signin-safety`, `hold-signout`, `tabs-owner`, `quota`, `clock`, `unit-sync`, `reset-sync`, `import-check`, `import-restore`, `restore`, `kept-copy` (todos `.test.jsx`).
 
@@ -243,7 +243,7 @@ expect(storeB.getState().S.workouts).not.toContainEqual(expect.objectContaining(
 - [ ] **Step 5 — Confirmar GREEN:** `npm test -- src/store src/lib/finish-workout.test.js src/lib/session-edit.test.js src/lib/progression.test.js src/lib/history.test.js src/lib/rotation.test.js src/lib/onerm.test.js`; depois suite completa para detectar consumidores de métodos retirados.
 - [ ] **Step 6 — Commit:** `feat: connect workout state to offline Firestore persistence`.
 
-## Tarefa 8: Conta Firebase, status e retirada de Coach/UI servidor
+## Task 8: Conta Firebase, status e retirada de Coach/UI servidor
 
 **Files:** modificar `frontend/src/App.jsx`, `views/Login.jsx`, `views/MobileOnboarding.jsx`, `views/Settings.jsx`, `views/settings-pages.js`, `views/Plan.jsx`, `components/PasswordAuth.jsx`, `components/ServerSync.jsx`, `components/SyncBanner.jsx`, `lib/guest.js`, `lib/default-lang.js`, `store/useUI.js`, `views/Workout.jsx`, `frontend/public/sw.js`, `frontend/src/locales/*.js`; retirar `views/CoachChat.jsx`, `CoachIntake.jsx`, `CoachSetup.jsx`, `AdminCoach.jsx`, `Admin.jsx` e seus imports/CSS/testes exclusivos. Paths abreviados de views/components/lib/store estão sob `frontend/src`.
 
@@ -263,7 +263,7 @@ expect(syncViewForFailedLocalWrite.tone).toBe('bad')
 - [ ] **Step 4 — Confirmar GREEN:** testes acima, `npm test -- src/views src/components src/store/useUI.work-reload.test.js src/store/useUI.rest-reload.test.js`, `node scripts/check-locales.mjs`, `node scripts/check-source-strings.mjs`. SW preserva caches/chunks/offline; handlers de push e subscrição saem.
 - [ ] **Step 5 — Commit:** `feat: replace server account flows and remove Coach UI`.
 
-## Tarefa 9: Mídia local isolada por proprietário
+## Task 9: Mídia local isolada por proprietário
 
 **Files:** modificar `frontend/src/main.jsx`, `lib/media-store.js`, `media-store-idb.js`, `media-store-fs.js`, `backup-media.js`, `components/CustomMedia.jsx`, `CustomMediaField.jsx`, `WorkoutMedia.jsx`, `views/ProgressPhotos.jsx`, `views/Settings.jsx`, `sheets.jsx`; substituir `lib/media-sync.js` por `lib/local-media.js`; retirar `media-owed.js` quando seus consumidores forem migrados.
 
@@ -283,7 +283,7 @@ expect(unsyncedAfterLocalPhoto.count).toBe(0)
 - [ ] **Step 4 — Confirmar GREEN:** `npm test -- src/lib/media-store.test.js src/lib/media-store-idb.test.js src/lib/media-store-fs.test.js src/lib/backup-media.test.js src/lib/local-media.test.js src/lib/workout-media.test.js src/sheets.workout-media.test.jsx`; suíte completa identifica consumidores restantes.
 - [ ] **Step 5 — Commit:** `feat: preserve account-scoped local workout media`.
 
-## Tarefa 10: Artefatos estáticos/Android e dependências finais
+## Task 10: Artefatos estáticos/Android e dependências finais
 
 **Files:** `frontend/package.json`/lock, `frontend/vite.config.js`, novo `frontend/scripts/build-mobile.mjs`, `check-mobile-bundle.mjs`, novo `check-cloud-bundle.mjs`; `web/Dockerfile`, `web/nginx.conf.template`, `docker-compose.yml`, `.github/workflows/test.yml`, `docker-publish.yml`, `pages.yml`, `mirror.yml`, `.gitlab-ci.yml`, `.github/dependabot.yml`, README/CLAUDE/CONTRIBUTING/docs afetados. Retirar código Coach em `frontend/src/lib/coach*.js`, CSS, scripts `build-coach-assets.mjs`, `build-coach-library.mjs`, gerador API e pacotes API/MCP que deixam de pertencer aos artefatos desta adaptação. Não remover helpers puros compartilhados usados pelos treinos.
 
@@ -303,7 +303,7 @@ expect(updateDownloadTargets).toEqual([])
 - [ ] **Step 4 — Confirmar GREEN:** `npm run build`, `npm run build:mobile`, `npm run check:cloud-bundle`, testes dos scripts, `node scripts/check-mobile-bundle.mjs`. Revisar diff/lockfile: único acréscimo direto é Firebase, nenhum secret/token/payload pessoal foi versionado. Compile APK com JDK21 e `./gradlew.bat assembleDebug` em `frontend/android`; confirmar saída separadamente de cap sync.
 - [ ] **Step 5 — Commit:** `build: ship static Firebase web and Android artifacts`.
 
-## Tarefa 11: Verificação completa e entrega revisável
+## Task 11: Verificação completa e entrega revisável
 
 **Files:** criar `docs/dev/OFFLINE_FIRESTORE_VERIFICATION.md`, atualizar `docs/MOBILE.md`, `docs/README.md` e instrução de integração das regras `firebase/README.md`; corrigir apenas falhas reproduzidas descobertas na verificação.
 
