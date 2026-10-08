@@ -42,6 +42,30 @@ export async function nativeLoad() {
   } catch (e) { return null }   // first launch, or unreadable — localStorage copy takes over
 }
 
+// Migration needs to distinguish an absent mirror from damaged data or denied IO.
+// Existing nativeLoad/readJsonFile keep their legacy best-effort public behavior.
+export async function nativeLoadLegacyStrict({ loadFilesystem = () => import('@capacitor/filesystem') } = {}) {
+  const { Filesystem, Directory, Encoding } = await loadFilesystem()
+  async function read(path) {
+    let data
+    try { data = (await Filesystem.readFile({ path, directory: Directory.Data, encoding: Encoding.UTF8 })).data }
+    catch (error) {
+      if (['ENOENT', 'OS-PLUG-FILE-0008'].includes(error?.code) || /^(File does not exist|File not found)(\b|$)/i.test(error?.message || '')) return null
+      throw error
+    }
+    try {
+      const value = JSON.parse(data)
+      if (path === FILE && (!value || typeof value !== 'object' || Array.isArray(value))) throw new Error('invalid legacy state')
+      return value
+    }
+    catch (error) { throw Object.assign(new Error('legacy-corrupt', { cause: error }), { code: 'legacy-corrupt', path }) }
+  }
+  const state = await read(FILE)
+  if (state === null) return null
+  const ownerMetadata = await read('opengym-state-owner.json')
+  return { state, ownerMetadata }
+}
+
 export async function nativeSave(state) {
   try {
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
