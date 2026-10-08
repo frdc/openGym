@@ -159,7 +159,9 @@ function Shell() {
   const noTabs = inWorkout || needsMobileOnboarding
 
   const authed = user || isGuest
-  if (!localReady) return <LocalStartup />
+  // Keep the auth sheet's request alive while the owner archive hydrates. The
+  // keyed host hides/inerts it and tears down every ordinary domain sheet.
+  if (!localReady) return <><LocalStartup /><Modals key="modals" suspended /></>
 
   return (
     <>
@@ -195,7 +197,7 @@ function Shell() {
       <SyncBanner />
       {!noTabs && <TabBar onStart={startFlow} />}
       <RestTimer />
-      <Modals />
+      <Modals key="modals" />
       <Toast />
       <TimerFlash />
     </>

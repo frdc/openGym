@@ -211,9 +211,9 @@ export const useUI = create((set, get) => ({
     set(s => ({ timerFlashId: s.timerFlashId + 1 }))
   },
 
-  openSheet(render, { kind = 'sheet', locked = false } = {}) {
+  openSheet(render, { kind = 'sheet', locked = false, accountAuth = false } = {}) {
     const id = uid()
-    set(s => ({ sheets: [...s.sheets, { id, render, kind, locked }] }))
+    set(s => ({ sheets: [...s.sheets, { id, render, kind, locked, accountAuth }] }))
     const close = () => get().closeSheet(id)
     return { id, close, lock: v => set(s => ({ sheets: s.sheets.map(x => x.id === id ? { ...x, locked: v } : x) })) }
   },

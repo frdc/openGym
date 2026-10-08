@@ -80,6 +80,6 @@ function AccountForm({ close, initialMode = 'signin' }) {
 }
 export const PasswordSignInSheet = props => <AccountForm {...props} />
 export const PasswordRegisterForm = props => <AccountForm {...props} initialMode="register" />
-export const openPasswordSignIn = () => useUI.getState().openSheet(close => <PasswordSignInSheet close={close} />)
-export const openPasswordRegister = () => useUI.getState().openSheet(close => <PasswordRegisterForm close={close} />)
+export const openPasswordSignIn = () => useUI.getState().openSheet(close => <PasswordSignInSheet close={close} />, { accountAuth: true })
+export const openPasswordRegister = () => useUI.getState().openSheet(close => <PasswordRegisterForm close={close} />, { accountAuth: true })
 export const openPasswordReset = () => useUI.getState().openSheet(close => <AccountForm close={close} initialMode="reset" />)

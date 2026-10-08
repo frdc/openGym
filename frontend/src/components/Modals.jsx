@@ -146,7 +146,7 @@ function Sheet({ sheet }) {
   )
 }
 
-export default function Modals() {
+export default function Modals({ suspended = false }) {
   const sheets = useUI(s => s.sheets)
   const closeSheet = useUI(s => s.closeSheet)
   const prevLen = useRef(0)
@@ -261,8 +261,10 @@ export default function Modals() {
 
   if (!sheets.length) return null
   return (
-    <div id="modal-root" className="open">
-      {sheets.map(s => <Sheet key={s.id} sheet={s} />)}
+    <div id="modal-root" className="open" hidden={suspended} inert={suspended} style={suspended ? { display: 'none' } : undefined}>
+      {/* Only built-in account forms survive the local owner-loading barrier.
+          Domain sheets still unmount, so their old profile content is absent. */}
+      {sheets.filter(s => !suspended || s.accountAuth).map(s => <Sheet key={s.id} sheet={s} />)}
     </div>
   )
 }

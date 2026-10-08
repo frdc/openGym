@@ -28,7 +28,7 @@ const mount = async h => { await fixture.current.attach(h.store); act(() => root
 const click = async () => { await act(async () => { host.querySelector('button').click(); await Promise.resolve() }) }
 const failure = () => Object.assign(new Error('private-storage-diagnostic'), { code: 'storage-unavailable' })
 it('keeps normal loading content isolated and routes the App gate through startup recovery', async () => {
-  expect(appSource).toMatch(/if \(!localReady\) return <LocalStartup/)
+  expect(appSource).toMatch(/if \(!localReady\) return <><LocalStartup/)
   act(() => root.render(<LocalStartup />))
   expect(host.querySelector('button')).toBeNull(); expect(host.querySelector('[data-ready]')).toBeNull()
 })
