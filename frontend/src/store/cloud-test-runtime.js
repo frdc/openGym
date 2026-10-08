@@ -21,7 +21,7 @@ export async function runtime({ initial, storage = fakeStorage(initial ? { [owne
   }
   const remote = cloud ? new Proxy({}, { get: (_, method) => (o, ...args) => remoteFor(o.uid)[method](o, ...args) }) : null
   const authFactory = input => { onUser = input.onUser; return { ready: Promise.resolve(null), stop() {}, signOut: () => onUser(null) } }
-  const store = createWorkoutStore({ projectId, storage, remote, authFactory, legacyReader: { read: async () => [] }, lifecycle: false, ...options })
+  const store = createWorkoutStore({ client: null, config: {}, projectId, storage, remote, authFactory, legacyReader: { read: async () => [] }, lifecycle: false, ...options })
   runtimes.push(store); await store.getState().boot()
   return { store, storage, remoteFor, auth: user => onUser(typeof user === 'string' ? { uid: user } : user),
     saved: () => storage.read(store.getState().ownerKey),

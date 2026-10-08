@@ -68,7 +68,7 @@ export function createWorkoutStore(options = {}) {
   let bridge, session, client, bootPromise, stopped = false, epoch = 0, authEpoch = 0, transition = null
   let envelope = null, desiredUser = null, importRead = null, adopting = null, persistRequested = false
   let lastForeground = -Infinity, backupTimer = null
-  const failedOwners = new Map(), disposers = []
+  const departures = new Map(), disposers = []
   let latestStatus = { ownerKey: null, localReady: false, local: 'loading', cloud: 'unconfigured', localRevision: 0, pendingCount: 0, blockedCount: 0, localError: null, cloudError: null }
   const store = create((set, get) => {
     const localFailure = error => { if (stopped || ['stale-context', 'stale-auth-epoch'].includes(error?.code)) return; latestStatus = { ...latestStatus, local: 'error', localError: info(error) }; set({ sync: compatibilityStatus(latestStatus) }) }
@@ -109,9 +109,20 @@ export function createWorkoutStore(options = {}) {
       }
       if (token !== epoch || stopped) throw failure('stale-context')
     }
+    async function drainDepartures(retry = false) {
+      for (const [key, departure] of departures) {
+        await departure.pending
+        if (departure.error) {
+          if (!retry) throw departure.error
+          try { await bridge.flushOwner(key) }
+          catch (error) { departure.error = error; throw error }
+        }
+        if (departures.get(key) === departure) departures.delete(key)
+      }
+    }
     async function completeTransition(target) {
       try {
-        for (const key of failedOwners.keys()) { await bridge.flushOwner(key); failedOwners.delete(key) }
+        await drainDepartures(true)
         if (target.token !== epoch || stopped) return
         await prepareOwner(target.owner, target.token)
         if (target.user) await bridge.bindAuth({ owner: target.owner, user: target.user, authEpoch: ++authEpoch })
@@ -134,10 +145,18 @@ export function createWorkoutStore(options = {}) {
       const oldKey = get().ownerKey, oldState = get().S
       desiredUser = clean
       const target = transition = { owner, user: clean, token: ++epoch }
+      // Register the barrier before publishing hidden state or awaiting detach.
+      // Later Auth callbacks must also wait for this captured owner's local write.
+      let settle
+      const departure = oldKey ? { state: oldState, error: null, pending: new Promise(resolve => { settle = resolve }) } : null
+      if (departure) departures.set(oldKey, departure)
       hide()
-      try { await bridge.unbindAuth() }
-      catch (error) {
-        if (oldKey) failedOwners.set(oldKey, { state: oldState, error: info(error) })
+      try {
+        const detached = bridge.unbindAuth()
+        if (departure) void detached.then(settle, error => { departure.error = error; settle() })
+        await detached
+        await drainDepartures()
+      } catch (error) {
         if (target.token === epoch) localFailure(error)
         return
       }
@@ -231,8 +250,12 @@ export function createWorkoutStore(options = {}) {
       },
       async flushLocal() { if (bridge) await bridge.flushLocal() },
       async retryLocal() {
-        if (transition && !get().localReady) { await completeTransition(transition); if (!get().localReady) throw failure(get().sync.localError?.code || 'storage-unavailable') }
-        else await get().flushLocal()
+        try {
+          // Retained departures remain obligations even if a current view is ready.
+          await drainDepartures(true)
+          if (transition && !get().localReady) { await completeTransition(transition); if (!get().localReady) throw failure(get().sync.localError?.code || 'storage-unavailable') }
+          else await get().flushLocal()
+        } catch (error) { localFailure(error); throw error }
       },
       async syncNow() { requireReady(); await bridge.syncNow(); return get().sync },
       pushState() { return get().syncNow() },
@@ -266,7 +289,7 @@ export function createWorkoutStore(options = {}) {
       },
       async resumeAdoption(ask) { if (!ask) ask = (await import('../sheets.jsx')).askAddDeviceData; return get().adoptProfile(ask) },
       async keptChanges() { return (envelope?.recoveryCopies || []).filter(c => c.ownerKey === get().ownerKey).map(c => ({ server: projectId, uid: desiredUser?.uid || null, recoveryId: c.recoveryId, at: c.state?._ts || 0 })) },
-      async keptState(server, uid) { if (server !== projectId || uid !== (desiredUser?.uid || null) || !get().localReady) return null; return clone(failedOwners.get(get().ownerKey)?.state || envelope?.recoveryCopies.find(c => c.ownerKey === get().ownerKey)?.state || null) },
+      async keptState(server, uid) { if (server !== projectId || uid !== (desiredUser?.uid || null) || !get().localReady) return null; return clone(departures.get(get().ownerKey)?.state || envelope?.recoveryCopies.find(c => c.ownerKey === get().ownerKey)?.state || null) },
       async stashedMediaHashes() { requireReady(); return new Set((envelope?.recoveryCopies || []).flatMap(c => [...referencedHashes(c.state)])) },
       async autoBackupNow() { const key = get().ownerKey, S = clone(get().S); await get().flushLocal(); if (MOBILE && get().localReady && get().ownerKey === key && S.autoBackup) return writeAutoBackup(S) },
       loadConfig: async () => get().config, refreshConfig: async () => get().config,

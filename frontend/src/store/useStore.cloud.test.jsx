@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as stores from './useStore.js'
+import { runtime as cloudRuntime } from './cloud-test-runtime.js'
 import { fakeStorage, fakeFilesystem, fixtureState } from '../lib/cloud/test-fixtures.js'
 import { createFsStorage } from '../lib/cloud/offline-fs.js'
 import { makeOwner, makeEnvelope } from '../lib/cloud/model.js'
@@ -12,7 +13,7 @@ function setup(options = {}) {
   let listener
   const authFactory = ({ onUser }) => { listener = onUser; return { ready: Promise.resolve(null), stop() {}, signOut: async () => listener(null) } }
   const storage = options.storage || fakeStorage()
-  const store = stores.createWorkoutStore({ projectId, storage, authFactory, legacyReader: { read: async () => [] }, lifecycle: false, ...options })
+  const store = stores.createWorkoutStore({ client: null, config: {}, projectId, storage, authFactory, legacyReader: { read: async () => [] }, lifecycle: false, ...options })
   storesToStop.push(store)
   return { store, storage, auth: user => listener(user) }
 }
@@ -181,4 +182,63 @@ it('rejects an unclassified state field before installation instead of claiming 
  const { store, storage } = setup(); await store.getState().boot(); const before = structuredClone(store.getState().S)
  expect(() => store.getState().update(s => { s.unclassifiedSetting = 12 })).toThrow('unclassified-field:unclassifiedSetting')
  expect(store.getState().S).toEqual(before); await store.getState().flushLocal(); expect((await storage.read(guest.ownerKey)).pendingOperations).toEqual([])
+})
+
+it.each([false, true])('keeps C hidden through overlapping A→B→C departures (write fails=%s)', async fails => {
+ const h = await cloudRuntime({ cloud: true }), aKey = makeOwner(projectId, 'a').ownerKey, cKey = makeOwner(projectId, 'c').ownerKey
+ await h.auth('a'); await h.sync()
+ const commit = h.storage.commit, started = deferred(), gate = deferred(), producer = vi.fn(s => { s.targetW = 123 })
+ let fail = fails
+ h.storage.commit = async (key, reducer) => {
+  if (key === aKey) { started.resolve(); await gate.promise; if (fail) throw Object.assign(new Error('full'), { code: 'storage-full' }) }
+  return commit(key, reducer)
+ }
+ h.store.getState().update(producer, false); await started.promise
+ const b = h.auth('b')
+ expect(h.store.getState().localReady).toBe(false)
+ const published = [], stop = h.store.subscribe(s => { if (s.localReady) published.push({ key: s.ownerKey, weight: s.S.targetW }) })
+ const c = h.auth('c')
+ try {
+  // Drain every immediately runnable C hydration step while the A write stays held.
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(h.store.getState()).toMatchObject({ localReady: false, ownerKey: null })
+  expect(published).toEqual([])
+  gate.resolve(); await Promise.all([b, c])
+  if (fails) {
+   expect(h.store.getState()).toMatchObject({ localReady: false, sync: { local: 'error', localError: { code: 'storage-full' } } })
+   expect((await h.storage.read(aKey)).state.targetW).not.toBe(123)
+   fail = false; await h.store.getState().retryLocal()
+  }
+  expect(h.store.getState()).toMatchObject({ localReady: true, ownerKey: cKey, user: { uid: 'c' } })
+  expect((await h.storage.read(aKey)).state.targetW).toBe(123)
+  expect(published.length).toBeGreaterThan(0)
+  expect(published.every(s => s.key === cKey && s.weight !== 123)).toBe(true)
+  expect(producer).toHaveBeenCalledOnce()
+  expect(h.remoteFor('a').transactions).toEqual([])
+  expect(h.remoteFor('b').transactions).toEqual([])
+  expect((await h.remoteState('a')).targetW).not.toBe(123)
+ } finally { fail = false; gate.resolve(); await Promise.all([b, c]); stop() }
+})
+it('rapid same-owner Auth refresh waits for departing A and only publishes the latest C identity', async () => {
+ const h = await cloudRuntime({ cloud: true }), aKey = makeOwner(projectId, 'a').ownerKey
+ await h.auth('a'); await h.sync()
+ const commit = h.storage.commit, started = deferred(), gate = deferred()
+ h.storage.commit = async (key, reducer) => { if (key === aKey) { started.resolve(); await gate.promise }; return commit(key, reducer) }
+ h.store.getState().update(s => { s.targetW = 123 }, false); await started.promise
+ const b = h.auth('b')
+ expect(h.store.getState().localReady).toBe(false)
+ const names = [], stop = h.store.subscribe(s => { if (s.localReady) names.push(s.user?.displayName) })
+ const c = h.auth({ uid: 'c', displayName: 'old' }), refresh = h.auth({ uid: 'c', displayName: 'latest' })
+ try {
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(h.store.getState().localReady).toBe(false)
+  gate.resolve(); await Promise.all([b, c, refresh])
+  expect(h.store.getState().user).toMatchObject({ uid: 'c', displayName: 'latest' })
+  expect(names.length).toBeGreaterThan(0); expect(names.every(name => name === 'latest')).toBe(true)
+  const token = h.store.getState().activeSessionToken
+  await h.auth({ uid: 'c', displayName: 'ready refresh' })
+  expect(h.store.getState().activeSessionToken).toBe(token)
+  expect((await h.storage.read(aKey)).state.targetW).toBe(123)
+  expect(h.remoteFor('a').transactions).toEqual([])
+ } finally { gate.resolve(); await Promise.all([b, c, refresh]); stop() }
 })
