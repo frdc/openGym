@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createFsStorage } from './offline-fs.js'
 import { fakeFilesystem, fixtureEnvelope } from './test-fixtures.js'
-import { sha256Hex } from '../sha256.js'
+import { sha256Hex, sha256HexJs } from '../sha256.js'
 const key = fixtureEnvelope().ownerKey
 const save = n => current => ({ ...(current || fixtureEnvelope()), state: { ...fixtureEnvelope().state, workouts: [{ id: String(n) }] }, pendingOperations: [{ opId: 'op-' + n, ownerKey: key }] })
 describe('native two slot storage', () => {
@@ -93,4 +93,52 @@ it('compares the entire readback even if a wrong queue has a valid checksum and 
   const checksum = await sha256Hex(new TextEncoder().encode(JSON.stringify(wrong)))
   fs.transformNextWrite(() => JSON.stringify({ envelope: wrong, checksum }))
   await expect(s.commit(key, save(2))).rejects.toMatchObject({ code: 'storage-corrupt' })
+})
+
+
+it.each(['readRecoveryEnvelopes', 'read'])('%s holds both slot reads against concurrent factories', async method => {
+  const fs = fakeFilesystem()
+  // The fake bridge and synchronous hash finish only through Promise microtasks;
+  // no native IO, timers or hash-worker timing participates in this interleaving.
+  const a = createFsStorage({ ...fs, hash: sha256HexJs })
+  const b = createFsStorage({ ...fs, hash: sha256HexJs })
+  const withMedia = n => current => {
+    const next = save(n)(current)
+    next.state.workouts[0].media = [{ hash: 'photo-' + n }]
+    return next
+  }
+  await a.commit(key, withMedia(1))
+  await b.commit(key, withMedia(2))
+  let resume, signalPaused, pauseOnce = true
+  const gate = new Promise(resolve => { resume = resolve })
+  const paused = new Promise(resolve => { signalPaused = resolve })
+  const readFile = fs.mod.Filesystem.readFile
+  fs.mod.Filesystem.readFile = async options => {
+    const result = await readFile(options)
+    if (pauseOnce && options.path.endsWith('/slot-0.json')) {
+      pauseOnce = false
+      signalPaused()
+      await gate
+    }
+    return result
+  }
+  const inspection = a[method](key)
+  await paused
+  const writes = [b.commit(key, withMedia(3)), a.commit(key, withMedia(4))]
+  // One event-loop boundary drains all ready microtasks. Correctly queued writes
+  // remain blocked at the explicit read gate; unlocked writes finish before it.
+  await new Promise(setImmediate)
+  resume()
+  const snapshot = await inspection
+  await Promise.all(writes)
+  if (method === 'readRecoveryEnvelopes') {
+    expect(snapshot.map(envelope => envelope.localRevision)).toEqual([2, 1])
+    expect(snapshot.map(envelope => envelope.state.workouts[0].media[0].hash)).toEqual(['photo-2', 'photo-1'])
+  } else {
+    expect(snapshot.localRevision).toBe(2)
+    expect(snapshot.state.workouts[0].media[0].hash).toBe('photo-2')
+  }
+  const retained = await b.readRecoveryEnvelopes(key)
+  expect(retained.map(envelope => envelope.localRevision)).toEqual([4, 3])
+  expect(retained.map(envelope => envelope.state.workouts[0].media[0].hash)).toEqual(['photo-4', 'photo-3'])
 })

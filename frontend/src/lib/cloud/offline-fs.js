@@ -2,7 +2,7 @@ import { sha256Hex } from '../sha256.js'
 import { isMissingFile, normalizeStorageError, reduceEnvelope, revisionListeners, storageError, validateEnvelope, validateOwnerKey } from './offline-store.js'
 
 // A single native bridge may have several Storage instances. Share its per-owner
-// write lock, so each reducer runs against the last readback-confirmed revision.
+// operation queue, so slot reads stay coherent and reducers see the latest revision.
 const bridges = new WeakMap()
 export function createFsStorage({ loadFilesystem = () => import('@capacitor/filesystem'), hash = sha256Hex } = {}) {
   let opening, fs, locks
@@ -46,36 +46,36 @@ export function createFsStorage({ loadFilesystem = () => import('@capacitor/file
     if (slots.length === 2 && slots[0].envelope.localRevision === slots[1].envelope.localRevision && JSON.stringify(slots[0].envelope) !== JSON.stringify(slots[1].envelope)) throw storageError('storage-corrupt')
     return { dir, envelope: slots[0]?.envelope ?? null, index: slots[0]?.index ?? 1, envelopes: slots.map(slot => slot.envelope) }
   }
-  async function read(ownerKey) {
+  async function withOwnerLock(ownerKey, run) {
+    validateOwnerKey(ownerKey)
     await open()
-    await locks.get(ownerKey)?.catch(() => {})
-    return structuredClone((await latest(ownerKey)).envelope)
+    const operation = (locks.get(ownerKey) || Promise.resolve()).catch(() => {}).then(run)
+      .catch(error => { throw normalizeStorageError(error) })
+    locks.set(ownerKey, operation)
+    return await operation
+  }
+  function read(ownerKey) {
+    return withOwnerLock(ownerKey, async () => structuredClone((await latest(ownerKey)).envelope))
   }
   // Media GC must retain references from both slots. Fail closed if any existing
   // slot cannot be inspected, even when ordinary read can restore its sibling.
-  async function readRecoveryEnvelopes(ownerKey) {
-    await open()
-    await locks.get(ownerKey)?.catch(() => {})
-    return structuredClone((await latest(ownerKey, true)).envelopes)
+  // Hold the owner queue for both reads: later commits must not replace a slot
+  // between them and turn the result into an incoherent pair of revisions.
+  function readRecoveryEnvelopes(ownerKey) {
+    return withOwnerLock(ownerKey, async () => structuredClone((await latest(ownerKey, true)).envelopes))
   }
   function commit(ownerKey, reducer) {
-    const operation = (async () => {
-      validateOwnerKey(ownerKey)
-      await open()
-      const write = (locks.get(ownerKey) || Promise.resolve()).catch(() => {}).then(async () => {
-        const current = await latest(ownerKey)
-        const envelope = reduceEnvelope(ownerKey, current.envelope, reducer)
-        const content = JSON.stringify(envelope), checksum = await digest(content)
-        const path = `${current.dir}/slot-${1 - current.index}.json`
-        await fs.Filesystem.writeFile({ path, directory: fs.Directory.Data, encoding: fs.Encoding.UTF8, recursive: true, data: JSON.stringify({ envelope, checksum }) })
-        const verified = await readSlot(path, ownerKey)
-        if (JSON.stringify(verified) !== content) throw storageError('storage-corrupt')
-        observers.notify(verified)
-        return structuredClone(verified)
-      }).catch(error => { throw normalizeStorageError(error) })
-      locks.set(ownerKey, write)
-      return await write
-    })()
+    const operation = withOwnerLock(ownerKey, async () => {
+      const current = await latest(ownerKey)
+      const envelope = reduceEnvelope(ownerKey, current.envelope, reducer)
+      const content = JSON.stringify(envelope), checksum = await digest(content)
+      const path = `${current.dir}/slot-${1 - current.index}.json`
+      await fs.Filesystem.writeFile({ path, directory: fs.Directory.Data, encoding: fs.Encoding.UTF8, recursive: true, data: JSON.stringify({ envelope, checksum }) })
+      const verified = await readSlot(path, ownerKey)
+      if (JSON.stringify(verified) !== content) throw storageError('storage-corrupt')
+      observers.notify(verified)
+      return structuredClone(verified)
+    })
     pending.set(ownerKey, operation)
     operation.catch(() => {})
     return operation
