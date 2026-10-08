@@ -1,3 +1,4 @@
+import { jobManifest, transformUnitRecord } from './sync-jobs.js'
 import { doc, collection, query, where, orderBy, documentId, limit, startAfter, getDocFromServer, getDocsFromServer, runTransaction, onSnapshot } from 'firebase/firestore'
 import * as defaultCodec from './codec.js'
 import { FIELD_POLICY, MAX_DOCUMENT_BYTES, MAX_DOCUMENT_DEPTH, makeOwner } from './model.js'
@@ -144,6 +145,169 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
     })
     root(owner); cache.delete(owner.ownerKey); return control
   }
+  function checkJob(owner, job) {
+    root(owner)
+    if (job.ownerKey !== owner.ownerKey || !/^[A-Za-z0-9_-]{1,1500}$/.test(job.jobId) || !['unit', 'import'].includes(job.kind) || !integer(job.generation) || job.generation < 1 || !integer(job.totalParts) || !map(job.options)) fail('invalid-job')
+    const o = job.options
+    if (!integer(o.sourceVersion) || o.sourceVersion < 1 || !integer(o.targetVersion) || o.targetVersion !== o.sourceVersion + (job.kind === 'unit' ? 1 : 0)) fail('invalid-job')
+    const allowed = job.kind === 'unit' ? ['from','to','convert','sourceVersion','targetVersion','baseRevision','stamp'] : ['sourceVersion','targetVersion']
+    if (Object.keys(o).some(k => !allowed.includes(k)) || (job.kind === 'unit' && (!['kg','lb'].includes(o.from) || !['kg','lb'].includes(o.to) || typeof o.convert !== 'boolean' || !integer(o.baseRevision) || !integer(o.stamp)))) fail('invalid-job')
+  }
+  function sameJob(a, b) {
+    return ['jobId','ownerKey','generation','kind','totalParts'].every(k => a[k] === b[k]) && JSON.stringify(a.options) === JSON.stringify(b.options)
+  }
+  function checkPart(job, part) {
+    if (!/^\d{6}$/.test(part.partId) || Number(part.partId) >= job.totalParts || !Array.isArray(part.paths) || !part.paths.length || part.paths.length > 20 || new Set(part.paths).size !== part.paths.length || part.sourceVersion !== job.options.sourceVersion || part.targetVersion !== job.options.targetVersion) fail('invalid-job-part')
+    part.paths.forEach(validatePath)
+  }
+  async function beginJob(owner, input) {
+    const job = clone(input); checkJob(owner, job)
+    if (job.parts?.length !== job.totalParts) fail('invalid-job')
+    for (const part of job.parts) checkPart(job, part)
+    const jobPath = `jobs/${job.jobId}`
+    await sdk.runTransaction(client.db, async tx => {
+      const c = await tx.get(ref(owner)), existing = await tx.get(ref(owner, jobPath)); root(owner)
+      const control = validateControl(c.data())
+      if (existing.exists()) { if (!sameJob(existing.data(), job)) fail('job-mismatch'); return }
+      if (control.generation !== job.generation) fail('generation-mismatch')
+      if (control.activeUnitJob) fail('unit-job-active')
+      if (control.unitVersion !== job.options.sourceVersion) fail('unit-version-mismatch')
+      if (job.kind === 'unit') {
+        if (control.dataRevision !== job.options.baseRevision) fail('refresh-required')
+        tx.set(ref(owner), { ...control, activeUnitJob: job.jobId, dataRevision: control.dataRevision + 1 })
+      }
+      tx.set(ref(owner, jobPath), { ...jobManifest(job), completedParts: 0, preparedParts: 0, status: 'pending' })
+    })
+    cache.delete(owner.ownerKey)
+    // Freeze occurs BEFORE registration. Another device reconstructs unfinished
+    // unit registration from the frozen server profile, without the original source.
+    for (const part of job.parts) await sdk.runTransaction(client.db, async tx => {
+      const parent = await tx.get(ref(owner, jobPath)), stored = await tx.get(ref(owner, `${jobPath}/parts/${part.partId}`)); root(owner)
+      const manifest = parent.data()
+      if (!sameJob(manifest, job)) fail('job-mismatch')
+      if (stored.exists()) { if (JSON.stringify(stored.data().paths) !== JSON.stringify(part.paths)) fail('job-part-mismatch'); return }
+      if (manifest.status !== 'pending' || manifest.preparedParts !== Number(part.partId)) fail('job-part-order')
+      tx.set(ref(owner, `${jobPath}/parts/${part.partId}`), { ...part, status: 'pending' })
+      tx.set(ref(owner, jobPath), { ...manifest, preparedParts: manifest.preparedParts + 1 })
+    })
+    await sdk.runTransaction(client.db, async tx => {
+      const snap = await tx.get(ref(owner, jobPath)); root(owner)
+      const manifest = snap.data()
+      if (manifest.preparedParts !== manifest.totalParts) fail('job-incomplete')
+      if (manifest.status === 'pending') tx.set(ref(owner, jobPath), { ...manifest, status: 'running' })
+    })
+    root(owner)
+  }
+  async function readJobs(owner) {
+    const result = []; let cursor
+    do {
+      const constraints = [sdk.orderBy(sdk.documentId()), sdk.limit(100)]
+      if (cursor) constraints.push(sdk.startAfter(cursor))
+      const page = confirmed(await sdk.getDocsFromServer(sdk.query(sdk.collection(client.db, root(owner) + '/jobs'), ...constraints))); root(owner)
+      for (const item of page.docs) { const job = item.data(); checkJob(owner, job); result.push(job) }
+      cursor = page.docs.length === 100 ? page.docs.at(-1) : null
+    } while (cursor)
+    return result
+  }
+  async function readJobParts(owner, job) {
+    checkJob(owner, job)
+    const result = []; let cursor
+    do {
+      const constraints = [sdk.orderBy(sdk.documentId()), sdk.limit(100)]
+      if (cursor) constraints.push(sdk.startAfter(cursor))
+      const page = confirmed(await sdk.getDocsFromServer(sdk.query(sdk.collection(client.db, root(owner) + `/jobs/${job.jobId}/parts`), ...constraints))); root(owner)
+      for (const item of page.docs) { const part = item.data(); checkPart(job, part); result.push(part) }
+      cursor = page.docs.length === 100 ? page.docs.at(-1) : null
+    } while (cursor)
+    return result
+  }
+  async function commitJobPart(owner, input, inputPart) {
+    const job = clone(input), part = clone(inputPart); checkJob(owner, job); checkPart(job, part)
+    const jobPath = `jobs/${job.jobId}`, marker = `${job.jobId}:${part.partId}`
+    const profile = job.kind === 'import' ? await readProfileFromServer(owner) : null
+    if (job.kind === 'import') {
+      let requestBytes = 16384
+      for (const path of part.paths) {
+        validateRecord(path, job.payloads?.[path])
+        requestBytes += 2 * new TextEncoder().encode(JSON.stringify(job.payloads[path]) + JSON.stringify(profile.documents[path] || {})).length + 4096
+        if (requestBytes > 8 * 1024 * 1024) fail('job-part-too-large', path)
+      }
+    }
+    const confirmation = await sdk.runTransaction(client.db, async tx => {
+      const c = await tx.get(ref(owner)), j = await tx.get(ref(owner, jobPath)), p = await tx.get(ref(owner, `${jobPath}/parts/${part.partId}`)); root(owner)
+      const control = validateControl(c.data()), manifest = j.data(), stored = p.data()
+      if (!manifest || !sameJob(manifest, job) || !stored || JSON.stringify(stored.paths) !== JSON.stringify(part.paths)) fail('job-part-mismatch')
+      if (control.generation !== job.generation) fail('generation-mismatch')
+      if (stored.status === 'complete') return { ownerKey: owner.ownerKey, opId: marker, control, documents: {}, transformedEntities: [] }
+      if (manifest.status !== 'running') fail('job-not-ready')
+      if (control.unitVersion !== job.options.sourceVersion) fail('unit-version-mismatch')
+      if (job.kind === 'unit' ? control.activeUnitJob !== job.jobId : control.activeUnitJob !== null) fail('unit-job-active')
+      if (profile && !sameControl(profile.control, control)) fail('refresh-required')
+      const records = {}
+      for (const path of part.paths) {
+        const snap = await tx.get(ref(owner, path)); root(owner)
+        if (snap.exists()) {
+          const record = validateRecord(path, snap.data())
+          if (record.generation > control.generation) fail('invalid-document', path)
+          if (record.generation === control.generation) records[path] = record
+        }
+      }
+      let documents
+      if (job.kind === 'unit') {
+        documents = {}
+        for (const path of part.paths) {
+          let record = records[path]
+          if (!record && path === 'settings/unit') record = codec.encodeState({ unit: job.options.from }, { generation: job.generation, unitVersion: job.options.sourceVersion }).documents[path]
+          if (!record) fail('job-record-missing', path)
+          if (record.unitVersion !== job.options.sourceVersion) fail('unit-version-mismatch')
+          documents[path] = { ...transformUnitRecord(path, record, job), appliedOpId: marker }
+        }
+      } else {
+        const operation = { opId: marker, ownerKey: owner.ownerKey, generation: job.generation, unitVersion: job.options.sourceVersion, kind: 'import', paths: part.paths, readPaths: [], blockedReason: null,
+          payloads: Object.fromEntries(part.paths.map(path => [path, job.payloads[path]])) }
+        documents = codec.mergeOperation(records, operation, { control, domainContext: { remoteProfile: profile, remoteState: codec.decodeState(profile.documents) } }).documentsToWrite
+      }
+      for (const [path, record] of Object.entries(documents)) validateRecord(path, record)
+      const next = { ...control, dataRevision: control.dataRevision + 1 }; validateControl(next)
+      for (const [path, record] of Object.entries(documents)) tx.set(ref(owner, path), record)
+      tx.set(ref(owner), next)
+      tx.set(ref(owner, `${jobPath}/parts/${part.partId}`), { ...stored, status: 'complete' })
+      tx.set(ref(owner, jobPath), { ...manifest, completedParts: manifest.completedParts + 1, lastPartId: part.partId })
+      return { ownerKey: owner.ownerKey, opId: marker, control: next, documents, transformedEntities: Object.keys(documents) }
+    })
+    root(owner); cache.delete(owner.ownerKey); return confirmation
+  }
+  async function finishJob(owner, input) {
+    const job = clone(input); checkJob(owner, job)
+    const control = await sdk.runTransaction(client.db, async tx => {
+      const c = await tx.get(ref(owner)), j = await tx.get(ref(owner, `jobs/${job.jobId}`)); root(owner)
+      const control = validateControl(c.data()), manifest = j.data()
+      if (!manifest || !sameJob(manifest, job)) fail('job-mismatch')
+      if (control.generation !== job.generation) fail('generation-mismatch')
+      if (manifest.status === 'complete') return control
+      if (manifest.status !== 'running' || manifest.completedParts !== manifest.totalParts) fail('job-incomplete')
+      const next = job.kind === 'unit' ? { ...control, unitVersion: job.options.targetVersion, activeUnitJob: null, dataRevision: control.dataRevision + 1 } : control
+      if (job.kind === 'unit' && (control.activeUnitJob !== job.jobId || control.unitVersion !== job.options.sourceVersion)) fail('unit-version-mismatch')
+      validateControl(next)
+      if (job.kind === 'unit') tx.set(ref(owner), next)
+      tx.set(ref(owner, `jobs/${job.jobId}`), { ...manifest, status: 'complete' })
+      return next
+    })
+    root(owner); cache.delete(owner.ownerKey); return control
+  }
+  async function deleteOldGeneration(owner, { generation, paths }) {
+    root(owner)
+    if (!integer(generation) || generation < 1 || !Array.isArray(paths)) fail('invalid-cleanup')
+    paths.forEach(validatePath)
+    for (let i = 0; i < paths.length; i += 20) await sdk.runTransaction(client.db, async tx => {
+      const c = await tx.get(ref(owner)); root(owner)
+      if (validateControl(c.data()).generation <= generation) fail('generation-mismatch')
+      const removed = []
+      for (const path of paths.slice(i, i + 20)) { const snap = await tx.get(ref(owner, path)); root(owner); if (snap.exists() && validateRecord(path, snap.data()).generation === generation) removed.push(path) }
+      for (const path of removed) tx.delete(ref(owner, path))
+    })
+    root(owner)
+  }
   function watchControl(owner, onControl, onError) {
     let stopped = false
     const stop = sdk.onSnapshot(ref(owner), { includeMetadataChanges: true }, snap => {
@@ -157,5 +321,5 @@ export function createFirestorePort({ client, codec = defaultCodec, sdk = sdkDef
     }, error => { if (!stopped) onError(error) })
     return () => { if (!stopped) { stopped = true; stop() } }
   }
-  return { readProfileFromServer, watchControl, commitOperation, commitReset }
+  return { readProfileFromServer, watchControl, commitOperation, commitReset, beginJob, readJobs, readJobParts, commitJobPart, finishJob, deleteOldGeneration }
 }

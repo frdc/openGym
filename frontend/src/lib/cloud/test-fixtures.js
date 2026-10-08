@@ -1,3 +1,4 @@
+import { jobManifest, transformUnitRecord } from './sync-jobs.js'
 import * as defaultCodec from './codec.js'
 import { reduceEnvelope, validateEnvelope, validateOwnerKey } from './offline-store.js'
 import { DEF } from '../../store/state-defaults.js'
@@ -90,7 +91,7 @@ export function fakeStorage(initial = {}) {
 // Coordinator double only; permission/rules proofs live in check-firestore-rules.mjs.
 export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = null } = {}) {
   let profile = structuredClone(initialProfile), failure = null, repetitions = 1, delayed = false
-  const transactions = [], listeners = new Set(), callbacks = []
+  const transactions = [], listeners = new Set(), callbacks = [], jobs = new Map()
   const error = code => Object.assign(new Error(code), { code })
   const check = owner => { if (ownerKey === null) ownerKey = owner.ownerKey; if (owner.ownerKey !== ownerKey) throw error('owner-mismatch'); if (failure) { const e = failure; failure = null; throw e } }
   const notify = () => { for (const listener of listeners) { const value = structuredClone(profile.control), fn = () => listener.onControl(value); if (delayed) callbacks.push(fn); else fn() } }
@@ -113,6 +114,7 @@ export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = nu
     },
     async commitReset(owner, reset) {
       check(owner)
+      if (typeof reset.opId !== 'string' || !reset.opId || reset.opId.length > 1500 || !Number.isSafeInteger(reset.baseGeneration) || reset.baseGeneration < 1 || reset.nextGeneration !== reset.baseGeneration + 1) throw error('invalid-reset')
       if (profile.control.generation === reset.nextGeneration && profile.control.lastResetOpId === reset.opId) return structuredClone(profile.control)
       if (profile.control.generation !== reset.baseGeneration) throw error('generation-mismatch')
       if (reset.nextGeneration !== reset.baseGeneration + 1) throw error('invalid-reset')
@@ -120,6 +122,49 @@ export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = nu
       profile = { control: { ...profile.control, generation: reset.nextGeneration, dataRevision: profile.control.dataRevision + 1, lastResetOpId: reset.opId }, documents: {} }
       transactions.push({ kind: 'reset', ...reset }); notify(); return structuredClone(profile.control)
     },
+    async readJobs(owner) { check(owner); return structuredClone([...jobs.values()].map(jobManifest)) },
+    async readJobParts(owner, job) { check(owner); return structuredClone(jobs.get(job.jobId)?.parts || []) },
+    async beginJob(owner, input) {
+      check(owner)
+      if (jobs.has(input.jobId)) return
+      if (profile.control.generation !== input.generation) throw error('generation-mismatch')
+      if (profile.control.activeUnitJob) throw error('unit-job-active')
+      if (profile.control.unitVersion !== input.options.sourceVersion) throw error('unit-version-mismatch')
+      if (input.kind === 'unit' && input.options.baseRevision !== profile.control.dataRevision) throw error('refresh-required')
+      const job = structuredClone(input); job.preparedParts = job.totalParts; job.status = 'running'; jobs.set(job.jobId, job)
+      if (job.kind === 'unit') profile.control = { ...profile.control, activeUnitJob: job.jobId, dataRevision: profile.control.dataRevision + 1 }
+      notify()
+    },
+    async commitJobPart(owner, input, part) {
+      check(owner)
+      const job = jobs.get(input.jobId), stored = job?.parts.find(p => p.partId === part.partId), marker = `${input.jobId}:${part.partId}`
+      if (!stored) throw error('job-part-mismatch')
+      if (profile.control.generation !== input.generation) throw error('generation-mismatch')
+      if (stored.status === 'complete') return structuredClone({ ownerKey: owner.ownerKey, opId: marker, control: profile.control, documents: {}, transformedEntities: [] })
+      if (profile.control.unitVersion !== job.options.sourceVersion) throw error('unit-version-mismatch')
+      let documents = {}
+      if (job.kind === 'unit') for (const path of part.paths) {
+        const record = profile.documents[path] || codec.encodeState({ unit: job.options.from }, profile.control).documents[path]
+        documents[path] = { ...transformUnitRecord(path, record, job), appliedOpId: marker }
+      } else {
+        const op = { opId: marker, ownerKey: owner.ownerKey, generation: job.generation, unitVersion: job.options.sourceVersion, paths: part.paths, readPaths: [], payloads: Object.fromEntries(part.paths.map(p => [p, input.payloads[p]])), blockedReason: null }
+        documents = codec.mergeOperation(profile.documents, op, { control: profile.control, domainContext: { remoteProfile: profile, remoteState: codec.decodeState(profile.documents) } }).documentsToWrite
+      }
+      profile = { control: { ...profile.control, dataRevision: profile.control.dataRevision + 1 }, documents: { ...profile.documents, ...documents } }
+      stored.status = 'complete'; job.completedParts++; job.lastPartId = part.partId
+      transactions.push({ kind: 'part', jobId: job.jobId, partId: part.partId }); notify()
+      return structuredClone({ ownerKey: owner.ownerKey, opId: marker, control: profile.control, documents, transformedEntities: Object.keys(documents) })
+    },
+    async finishJob(owner, input) {
+      check(owner)
+      const job = jobs.get(input.jobId)
+      if (profile.control.generation !== input.generation) throw error('generation-mismatch')
+      if (job.status === 'complete') return structuredClone(profile.control)
+      if (job.completedParts !== job.totalParts) throw error('job-incomplete')
+      if (job.kind === 'unit') profile.control = { ...profile.control, unitVersion: job.options.targetVersion, activeUnitJob: null, dataRevision: profile.control.dataRevision + 1 }
+      job.status = 'complete'; notify(); return structuredClone(profile.control)
+    },
+    async deleteOldGeneration(owner) { check(owner) },
     failNext(error) { failure = error }, repeatTransaction(times = 2) { repetitions = times }, delayCallbacks(value = true) { delayed = value },
     deliverCallbacks() { for (const fn of callbacks.splice(0)) fn() },
     replaceProfile(value) { profile = structuredClone(value); notify() },

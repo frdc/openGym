@@ -42,15 +42,55 @@ service cloud.firestore {
         && r.stamps.edited is map && r.stamps.undone is map && r.stamps.deleted is map
         && (r.deletedAt == null || counter(r.deletedAt)) && nullableId(r.appliedOpId) && payloadShape(family, id, r);
     }
-    function coherentWrite(uid, r) {
+    function jobPath(uid, id) { return /databases/$(database)/documents/users/$(uid)/apps/opengym/jobs/$(id); }
+    function controlPath(uid) { return /databases/$(database)/documents/users/$(uid)/apps/opengym; }
+    function validJob(id, j) {
+      return j.keys().hasOnly(['jobId','ownerKey','generation','kind','options','totalParts','completedParts','preparedParts','lastPartId','status'])
+        && j.jobId == id && id.matches('^[A-Za-z0-9_-]+$') && id.size() <= 1500
+        && j.ownerKey is string && positive(j.generation) && j.kind in ['unit','import']
+        && counter(j.totalParts) && counter(j.completedParts) && counter(j.preparedParts)
+        && j.completedParts <= j.totalParts && j.preparedParts <= j.totalParts
+        && (j.lastPartId == null || (j.lastPartId is string && j.lastPartId.matches('^[0-9]{6}$')))
+        && j.status in ['pending','running','complete'] && j.options is map
+        && positive(j.options.sourceVersion) && positive(j.options.targetVersion)
+        && ((j.kind == 'import' && j.options.keys().hasOnly(['sourceVersion','targetVersion']) && j.options.targetVersion == j.options.sourceVersion)
+          || (j.kind == 'unit' && j.options.keys().hasOnly(['from','to','convert','sourceVersion','targetVersion','baseRevision','stamp'])
+            && j.options.from in ['kg','lb'] && j.options.to in ['kg','lb'] && j.options.convert is bool
+            && counter(j.options.baseRevision) && counter(j.options.stamp) && j.options.targetVersion == j.options.sourceVersion + 1));
+    }
+    function unitStart(uid, before, after) {
+      let j = getAfter(jobPath(uid, after.activeUnitJob)).data;
+      return before.activeUnitJob == null && after.activeUnitJob is string && after.unitVersion == before.unitVersion
+        && j.kind == 'unit' && j.status == 'pending' && j.generation == before.generation
+        && j.options.sourceVersion == before.unitVersion && j.options.baseRevision == before.dataRevision;
+    }
+    function unitFinish(uid, before, after) {
+      let j = getAfter(jobPath(uid, before.activeUnitJob)).data;
+      return before.activeUnitJob is string && after.activeUnitJob == null && after.unitVersion == before.unitVersion + 1
+        && j.kind == 'unit' && j.status == 'complete' && j.completedParts == j.totalParts
+        && j.options.targetVersion == after.unitVersion && j.generation == before.generation;
+    }
+    function unitRecord(uid, r, before, after, family, id) {
+      let j = get(jobPath(uid, before.activeUnitJob)).data;
+      let partId = r.appliedOpId.split(':')[1];
+      let pp = /databases/$(database)/documents/users/$(uid)/apps/opengym/jobs/$(before.activeUnitJob)/parts/$(partId);
+      let part = getAfter(pp).data;
+      return j.kind == 'unit' && j.status == 'running' && after.activeUnitJob == before.activeUnitJob
+        && r.appliedOpId.split(':')[0] == before.activeUnitJob
+        && j.options.sourceVersion == before.unitVersion && r.unitVersion == j.options.targetVersion
+        && part.status == 'complete' && get(pp).data.status == 'pending'
+        && (family + '/' + id) in part.paths;
+    }
+    function coherentWrite(uid, r, family, id) {
       let path = /databases/$(database)/documents/users/$(uid)/apps/opengym;
       let before = get(path).data;
       let after = getAfter(path).data;
       return validControl(before) && validControl(after)
         && after.generation == before.generation && r.generation == after.generation
         && after.dataRevision == before.dataRevision + 1
-        && after.unitVersion == before.unitVersion && r.unitVersion == after.unitVersion
-        && (r.dataUnit == null || after.activeUnitJob == null);
+        && after.unitVersion == before.unitVersion
+        && ((r.unitVersion == after.unitVersion && (after.activeUnitJob == null || (r.dataUnit == null && !(family in ['routines','workouts','bodyweight','exerciseState']) && !(family == 'settings' && id in ['unit','targetW']))))
+          || (before.activeUnitJob is string && unitRecord(uid,r,before,after,family,id)));
     }
     match /users/{uid}/apps/opengym {
       allow read: if owner(uid);
@@ -59,15 +99,66 @@ service cloud.firestore {
         && request.resource.data.activeUnitJob == null && request.resource.data.lastResetOpId == null;
       allow update: if owner(uid) && validControl(request.resource.data) && validControl(resource.data)
         && request.resource.data.dataRevision == resource.data.dataRevision + 1
-        && request.resource.data.unitVersion == resource.data.unitVersion
-        && request.resource.data.activeUnitJob == resource.data.activeUnitJob
+        && ((request.resource.data.unitVersion == resource.data.unitVersion && request.resource.data.activeUnitJob == resource.data.activeUnitJob)
+          || unitStart(uid,resource.data,request.resource.data) || unitFinish(uid,resource.data,request.resource.data))
         && ((request.resource.data.generation == resource.data.generation && request.resource.data.lastResetOpId == resource.data.lastResetOpId)
           || (resource.data.activeUnitJob == null && request.resource.data.generation == resource.data.generation + 1
             && request.resource.data.lastResetOpId is string && request.resource.data.lastResetOpId != resource.data.lastResetOpId));
+      match /jobs/{jobId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid) && validJob(jobId,request.resource.data)
+          && request.resource.data.status == 'pending' && request.resource.data.completedParts == 0
+          && request.resource.data.preparedParts == 0 && request.resource.data.lastPartId == null
+          && request.resource.data.generation == get(controlPath(uid)).data.generation
+          && request.resource.data.options.sourceVersion == get(controlPath(uid)).data.unitVersion
+          && get(controlPath(uid)).data.activeUnitJob == null
+          && (request.resource.data.kind == 'import' || (getAfter(controlPath(uid)).data.activeUnitJob == jobId
+            && request.resource.data.options.baseRevision == get(controlPath(uid)).data.dataRevision));
+        function progress(before, after) {
+          let pp = /databases/$(database)/documents/users/$(uid)/apps/opengym/jobs/$(jobId)/parts/$(after.lastPartId);
+          return before.status == 'running' && after.status == 'running' && after.preparedParts == before.preparedParts
+            && after.completedParts == before.completedParts + 1 && get(pp).data.status == 'pending' && getAfter(pp).data.status == 'complete';
+        }
+        allow update: if owner(uid) && validJob(jobId,request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preparedParts','completedParts','lastPartId','status'])
+          && request.resource.data.generation == get(controlPath(uid)).data.generation
+          && ((resource.data.status == 'pending' && request.resource.data.completedParts == 0 && request.resource.data.lastPartId == null
+            && ((request.resource.data.status == 'pending' && request.resource.data.preparedParts == resource.data.preparedParts + 1)
+              || (request.resource.data.status == 'running' && request.resource.data.preparedParts == resource.data.totalParts && resource.data.preparedParts == resource.data.totalParts)))
+            || progress(resource.data,request.resource.data)
+            || (resource.data.status == 'running' && request.resource.data.status == 'complete'
+              && resource.data.completedParts == resource.data.totalParts && request.resource.data.completedParts == resource.data.completedParts
+              && request.resource.data.preparedParts == resource.data.preparedParts && request.resource.data.lastPartId == resource.data.lastPartId
+              && (resource.data.kind == 'import' || (getAfter(controlPath(uid)).data.activeUnitJob == null
+                && getAfter(controlPath(uid)).data.unitVersion == resource.data.options.targetVersion))));
+        match /parts/{partId} {
+          allow read: if owner(uid);
+          function validPart(p) {
+            let j = get(jobPath(uid,jobId)).data;
+            return p.keys().hasOnly(['partId','paths','status','sourceVersion','targetVersion']) && p.partId == partId
+              && partId.matches('^[0-9]{6}$') && int(partId) < j.totalParts && p.paths is list && p.paths.size() > 0
+              && p.paths.size() <= 20 && p.paths.toSet().size() == p.paths.size()
+              && p.sourceVersion == j.options.sourceVersion && p.targetVersion == j.options.targetVersion;
+          }
+          allow create: if owner(uid) && validPart(request.resource.data) && request.resource.data.status == 'pending'
+            && get(jobPath(uid,jobId)).data.status == 'pending'
+            && int(partId) == get(jobPath(uid,jobId)).data.preparedParts
+            && getAfter(jobPath(uid,jobId)).data.preparedParts == get(jobPath(uid,jobId)).data.preparedParts + 1;
+          allow update: if owner(uid) && validPart(request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && resource.data.status == 'pending' && request.resource.data.status == 'complete'
+            && get(jobPath(uid,jobId)).data.status == 'running'
+            && getAfter(jobPath(uid,jobId)).data.completedParts == get(jobPath(uid,jobId)).data.completedParts + 1
+            && getAfter(jobPath(uid,jobId)).data.lastPartId == partId
+            && getAfter(controlPath(uid)).data.dataRevision == get(controlPath(uid)).data.dataRevision + 1;
+        }
+      }
       match /{family}/{id} {
         // Collection queries need only the allowlisted family; writes also validate ID.
         allow read: if owner(uid) && family in ['settings','plans','planDays','routines','workouts','bodyweight','customExercises','exerciseState','equipmentProfiles','gymCards','balanceOverrides','plates'];
-        allow create, update: if owner(uid) && pathAllowed(family,id) && validRecord(family,id,request.resource.data) && coherentWrite(uid,request.resource.data);
+        allow create, update: if owner(uid) && pathAllowed(family,id) && validRecord(family,id,request.resource.data) && coherentWrite(uid,request.resource.data,family,id);
+        allow delete: if owner(uid) && pathAllowed(family,id) && validRecord(family,id,resource.data)
+          && resource.data.generation < get(controlPath(uid)).data.generation;
       }
     }
   }

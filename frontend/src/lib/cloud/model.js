@@ -2,12 +2,13 @@
  * @typedef {{projectId:string, uid:string|null, ownerKey:string}} Owner
  * @typedef {{schemaVersion:1, generation:number, dataRevision:number, unitVersion:number, activeUnitJob:null|string, lastResetOpId:null|string}} Control
  * @typedef {{schemaVersion:1, generation:number, unitVersion:number, dataUnit:null|'kg'|'lb', payload:*, stamps:Object, deletedAt:null|number, appliedOpId:null|string}} Record
- * @typedef {{opId:string, ownerKey:string, generation:number, unitVersion:number, kind:string, paths:string[], readPaths:string[], payloads:Object<string,Record>, blockedReason:null|string}} Operation
- * @typedef {{schemaVersion:1, ownerKey:string, localRevision:number, cloudGeneration:number, state:Object, remoteMetadataByPath:Object<string,{record:Record,ackRevision:number}>, pendingOperations:Operation[], pendingJobs:Job[], adoptionDecision:*, recoveryCopies:Object[], lastConfirmedControl:null|Control}} Envelope
+ * @typedef {{opId:string, ownerKey:string, generation:number, unitVersion:number, kind:string, paths:string[], readPaths:string[], payloads:Object<string,Record>, blockedReason:null|string,unitProvenance?:'confirmed'|'unproven'}} Operation
+ * @typedef {{schemaVersion:1, ownerKey:string, localRevision:number, cloudGeneration:number, state:Object, remoteMetadataByPath:Object<string,{record:Record,ackRevision:number}>, pendingOperations:Operation[], pendingJobs:Array<Job|ResetJob>, adoptionDecision:*, recoveryCopies:Object[], lastConfirmedControl:null|Control,unitProjectionVersion?:number}} Envelope
  * @typedef {{ownerKey:string, opId:string, control:Control, documents:Object<string,Record>}} Confirmation
  * @typedef {{control:Control, documents:Object<string,Record>}} Profile
  * @typedef {{remoteProfile:Profile, remoteState:Object}} DomainContext
- * @typedef {{jobId:string,ownerKey:string,generation:number,kind:string,options:Object,totalParts:number,completedParts:number,status:'pending'|'running'|'complete'|'blocked'}} Job
+ * @typedef {{jobId:string,ownerKey:string,generation:number,kind:string,options:Object,totalParts:number,completedParts:number,preparedParts:number,lastPartId:null|string,status:'pending'|'running'|'complete'|'blocked',parts:JobPart[],payloads?:Object,source?:Object}} Job
+ * @typedef {{jobId:string,ownerKey:string,kind:'reset',generation:null|number,status:'pending',reset:{opId:string,baseGeneration:null|number,nextGeneration:null|number},paths:string[]}} ResetJob
  * @typedef {{partId:string,paths:string[],status:string,sourceVersion:number,targetVersion:number}} JobPart
  */
 export const SCHEMA_VERSION = 1

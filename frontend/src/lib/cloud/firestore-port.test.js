@@ -1,3 +1,4 @@
+import * as jobs from './sync-jobs.js'
 import { describe, it, expect } from 'vitest'
 import { createFirestorePort } from './firestore-port.js'
 import * as codec from './codec.js'
@@ -21,14 +22,15 @@ function harness(control = initialControl()) {
       if (failure) throw failure
       queryCount++; onQuery?.(queryCount)
       const generation = constraints.find(c => c.where)?.where[2], after = constraints.find(c => c.after)?.after || '', n = constraints.find(c => c.limit)?.limit || Infinity
-      const docs = [...rows.keys()].filter(p => p.startsWith(path + '/') && p.split('/').length === path.split('/').length + 1 && rows.get(p).generation === generation && p.split('/').at(-1) > after).sort().slice(0, n).map(snap)
+      const docs = [...rows.keys()].filter(p => p.startsWith(path + '/') && p.split('/').length === path.split('/').length + 1 && (generation === undefined || rows.get(p).generation === generation) && p.split('/').at(-1) > after).sort().slice(0, n).map(snap)
       return { docs, size: docs.length, metadata: { fromCache: false, hasPendingWrites: false } }
     },
     async runTransaction(_, callback) {
       const execute = async save => { const writes = []; let writing = false; const result = await callback({
         async get(path) { if (writing) throw new Error('read-after-write'); return snap(path) },
+        delete(path) { writing = true; writes.push([path, undefined]) },
         set(path, data) { writing = true; writes.push([path, structuredClone(data)]) },
-      }); if (save) { for (const [p, d] of writes) rows.set(p, d); commits.push(writes) } return result }
+      }); if (save) { for (const [p, d] of writes) (d === undefined ? rows.delete(p) : rows.set(p, d)); commits.push(writes) } return result }
       for (let n = 0; n < retries; n++) await execute(false)
       return execute(true)
     },
@@ -187,4 +189,64 @@ it('remote double uses transport error codes and full control barriers', async (
   const busy = await remote.readProfileFromServer(owner)
   await expect(remote.commitOperation(owner, op, context(busy))).rejects.toMatchObject({ code: 'unit-job-active' })
   await expect(remote.commitReset(owner, { opId: 'r', baseGeneration: 1, nextGeneration: 2 })).rejects.toMatchObject({ code: 'unit-job-active' })
+})
+
+describe('resumable remote jobs', () => {
+  it('freezes unit changes before staging, reconstructs interrupted staging on another device, and replays each transformation once', async () => {
+    const h = harness(), documents = codec.encodeState(fixtureState({ exWeights: Object.fromEntries(Array.from({ length: 42 }, (_, i) => [`e${i}`, 20.1])) }), initialControl()).documents
+    for (const [path, record] of Object.entries(documents)) h.rows.set(`${root}/${path}`, record)
+    const profile = await h.remote.readProfileFromServer(owner)
+    const job = jobs.planUnitJob({ profile, ownerKey: owner.ownerKey, to: 'lb', opId: 'u1' })
+    const transaction = h.sdk.runTransaction; let calls = 0
+    h.sdk.runTransaction = (...args) => { if (++calls === 3) throw Object.assign(new Error('offline'), { code: 'unavailable' }); return transaction(...args) }
+    await expect(h.remote.beginJob(owner, job)).rejects.toMatchObject({ code: 'unavailable' })
+    expect(h.rows.get(root).activeUnitJob).toBe(job.jobId)
+    const other = createFirestorePort({ client: h.client, sdk: h.sdk })
+    const found = (await other.readJobs(owner)).find(j => j.jobId === job.jobId)
+    expect(found.preparedParts).toBeLessThan(found.totalParts)
+    const frozen = await other.readProfileFromServer(owner)
+    const resumed = jobs.resumeUnitPlan(found, frozen)
+    await other.beginJob(owner, resumed)
+    const first = await other.commitJobPart(owner, resumed, resumed.parts[0])
+    expect(first.transformedEntities.length).toBeGreaterThan(0)
+    expect((await other.commitJobPart(owner, resumed, resumed.parts[0])).transformedEntities).toEqual([])
+    for (const part of resumed.parts.slice(1)) await other.commitJobPart(owner, resumed, part)
+    expect(await other.finishJob(owner, resumed)).toMatchObject({ unitVersion: 2, activeUnitJob: null })
+    const state = codec.decodeState((await other.readProfileFromServer(owner)).documents)
+    expect(state.exWeights.e0).toBe(44.5)
+    expect(state.unit).toBe('lb')
+  })
+  it('uses a complete current history barrier for import parts and retains completed markers for replay', async () => {
+    const h = harness(), op = operation()
+    const job = jobs.createJob({ ownerKey: owner.ownerKey, generation: 1, kind: 'import', opId: 'i1', paths: op.paths,
+      options: { sourceVersion: 1, targetVersion: 1 }, payloads: op.payloads })
+    await h.remote.beginJob(owner, job)
+    for (const part of job.parts) await h.remote.commitJobPart(owner, job, part)
+    await h.remote.finishJob(owner, job)
+    expect((await h.remote.commitJobPart(owner, job, job.parts[0])).transformedEntities).toEqual([])
+    expect(codec.decodeState((await h.remote.readProfileFromServer(owner)).documents).workouts).toHaveLength(1)
+    expect(h.rows.get(`${root}/jobs/${job.jobId}`)).not.toHaveProperty('payloads')
+  })
+  it('deletes only retired generation records and preserves an ID recreated after reset', async () => {
+    const h = harness(), record = operation().payloads['workouts/dzE']
+    h.rows.set(`${root}/workouts/dzE`, record)
+    await h.remote.commitReset(owner, { opId: 'reset', baseGeneration: 1, nextGeneration: 2 })
+    h.rows.set(`${root}/workouts/recreated`, { ...record, generation: 2 })
+    await h.remote.deleteOldGeneration(owner, { generation: 1, paths: ['workouts/dzE', 'workouts/recreated'] })
+    expect(h.rows.has(`${root}/workouts/dzE`)).toBe(false)
+    expect(h.rows.get(`${root}/workouts/recreated`).generation).toBe(2)
+  })
+})
+
+it('blocks a now-oversized import part after remote growth without discarding its local source', async () => {
+  const h = harness(), source = codec.encodeState(fixtureState({ routines: Array.from({ length: 20 }, (_, i) => ({ id: `grown${i}`, ex: [] })) }), initialControl()).documents
+  const paths = Object.keys(source).filter(path => path.startsWith('routines/'))
+  const job = jobs.createJob({ ownerKey: owner.ownerKey, generation: 1, kind: 'import', opId: 'growth', paths, payloads: source, options: { sourceVersion: 1, targetVersion: 1 } })
+  await h.remote.beginJob(owner, job)
+  for (const path of paths) h.rows.set(`${root}/${path}`, { ...source[path], payload: { ...source[path].payload, note: 'x'.repeat(500000) } })
+  h.rows.get(root).dataRevision++
+  const before = h.commits.length
+  await expect(h.remote.commitJobPart(owner, job, job.parts[0])).rejects.toMatchObject({ code: 'job-part-too-large', path: expect.stringMatching(/^routines\//) })
+  expect(h.commits).toHaveLength(before)
+  expect(job.payloads[paths[0]]).toEqual(source[paths[0]])
 })

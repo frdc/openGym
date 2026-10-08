@@ -515,7 +515,7 @@ const capStamps = m => {
  * as added back (`-now`) any entry `next` brought in again whose removal was on record (and any
  * favourite starred). Mutates and returns `next`; adds no `deleted` when there is nothing to record.
  */
-export function stampDeletions(prev, next, now = Date.now()) {
+export function stampDeletions(prev, next, now = Date.now(), { retainAllDeletions = false } = {}) {
   if (!next || typeof next !== 'object') return next
   const del = isMap(next.deleted) ? next.deleted : {}
   let touched = false
@@ -544,7 +544,7 @@ export function stampDeletions(prev, next, now = Date.now()) {
       if (had.has(k)) continue
       if (k in m ? m[k] > 0 : f === 'favEx') { m[k] = -now; changed = true }
     }
-    if (changed) { del[f] = capStamps(m); touched = true }
+    if (changed) { del[f] = retainAllDeletions ? m : capStamps(m); touched = true }
   }
   if (touched) next.deleted = del
   return next
@@ -907,10 +907,10 @@ export function keepReset(cur, next) {
 // stamps its settings, plan days and plans as changed at `now`, and keeps the record of removals.
 
 /** Stamps `next`, a restored backup, as described above. Mutates and returns `next`. */
-export function stampRestore(next, others = [], now = Date.now()) {
+export function stampRestore(next, others = [], now = Date.now(), options = {}) {
   if (!next || typeof next !== 'object') return next
-  let del = mergeDeletions(next.deleted, null)
-  for (const o of others) del = mergeDeletions(del, o?.deleted)
+  let del = mergeDeletions(next.deleted, null, options)
+  for (const o of others) del = mergeDeletions(del, o?.deleted, options)
   del = del || {}
   for (const [f, key] of Object.entries(DEL_LISTS)) {
     const m = del[f]
@@ -944,11 +944,11 @@ export function stampRestore(next, others = [], now = Date.now()) {
  * wins, and an entry only that device knew of is not named, so it stays. `others` are the copies
  * the replace knew: this device's and the server's. Mutates and returns `next`.
  */
-export function stampReplace(next, others = [], now = Date.now()) {
+export function stampReplace(next, others = [], now = Date.now(), options = {}) {
   if (!next || typeof next !== 'object') return next
   const known = {}
   for (const f of Object.keys(DEL_LISTS)) known[f] = others.flatMap(o => list(o?.[f])).filter(x => x != null)
-  stampDeletions(known, next, now)
+  stampDeletions(known, next, now, options)
   for (const f of ['workouts', 'routines', 'customEx', 'equipProfiles', 'gymCards']) {
     const versions = new Map()
     for (const o of others) for (const x of list(o?.[f])) if (x && typeof x === 'object' && x.id != null) versions.set(x.id, [...(versions.get(x.id) || []), x])

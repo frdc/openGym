@@ -1,3 +1,4 @@
+import { createJobCoordinator, reconcileJobUnits } from './sync-jobs.js'
 import * as defaultCodec from './codec.js'
 import { makeEnvelope, makeOwner } from './model.js'
 import { DEF } from '../../store/state-defaults.js'
@@ -40,7 +41,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (!valid(ctx) || !ctx.envelope) return
     const envelope = memory(ctx)
     emit(ctx, { ownerKey: ctx.owner.ownerKey, localReady: true, localRevision: ctx.envelope.localRevision,
-      pendingCount: envelope.pendingOperations.length, blockedCount: envelope.pendingOperations.filter(x => x.blockedReason).length })
+      pendingCount: envelope.pendingOperations.length + envelope.pendingJobs.length, blockedCount: envelope.pendingOperations.filter(x => x.blockedReason).length + envelope.pendingJobs.filter(x => x.blockedReason).length })
     try { onState?.(clone(envelope.state), clone(envelope)) } catch { /* UI cannot reject persistence */ }
   }
   function accept(ctx, envelope) {
@@ -207,11 +208,13 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     status.update({ ownerKey: null, localReady: false, local: 'loading', cloud: 'auth-required', localError: null, cloudError: null, retryAt: null, pendingCount: 0, blockedCount: 0 })
     await flush(old)
   }
-  function integrate(current, profile, initialControl) {
+  function integrate(current, profile, initialControl, history) {
     const { control, documents } = profile
     let next = clone(current)
+    if (next.pendingJobs.some(j => j.kind === 'reset') || control.activeUnitJob || next.pendingJobs.some(j => j.kind === 'unit')) return next
     const previousControl = next.lastConfirmedControl
     if (previousControl && (control.generation < previousControl.generation || (control.generation === previousControl.generation && control.dataRevision < previousControl.dataRevision))) return next
+    next = reconcileJobUnits(next, profile, history)
     // Unknown generations are assigned only after this server-confirmed Profile.
     next.pendingOperations = next.pendingOperations.map(op => initializeOperation(op, initialControl))
     const retired = next.pendingOperations.filter(op => op.generation !== control.generation)
@@ -231,16 +234,20 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (!profile?.control || profile.fromCache || profile.hasPendingWrites) throw failure('server-required')
     initializeIntents(ctx, profile.control)
     const initialControl = clone(ctx.initialControl)
-    await durable(ctx, current => integrate(current, profile, initialControl)); assertCurrent(ctx)
+    const history = remote.readJobs ? await remote.readJobs(ctx.owner) : []; assertCurrent(ctx)
+    await durable(ctx, current => integrate(current, profile, initialControl, history)); assertCurrent(ctx)
     return clone(profile)
   }
   async function runSync(ctx) {
     let operation
     try {
       await flush(ctx); assertCurrent(ctx)
+      await jobs.runReset(ctx); assertCurrent(ctx)
       let profile = await refresh(ctx); assertCurrent(ctx)
       if (ctx.envelope.adoptionDecision?.status === 'pending') { emit(ctx, { cloud: 'adoption-required', cloudError: null }); return }
       emit(ctx, { cloud: 'syncing', cloudError: null, retryAt: null })
+      profile = await jobs.run(ctx, profile); assertCurrent(ctx)
+      profile = await refresh(ctx); assertCurrent(ctx)
       while (authenticated(ctx)) {
         let latest
         try { latest = await storage.read(ctx.owner.ownerKey) }
@@ -265,7 +272,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
         }
         assertCurrent(ctx)
         if (confirmation.ownerKey !== ctx.owner.ownerKey || confirmation.opId !== operation.opId) throw failure('invalid-confirmation')
-        await durable(ctx, current => codec.applyConfirmation(current, confirmation)); assertCurrent(ctx)
+        await durable(ctx, current => current.cloudGeneration !== confirmation.control.generation ? current : current.pendingJobs.some(j => j.kind === 'unit') ? { ...current, pendingOperations: current.pendingOperations.filter(op => op.opId !== confirmation.opId) } : codec.applyConfirmation(current, confirmation)); assertCurrent(ctx)
         profile = await refresh(ctx); assertCurrent(ctx)
       }
       ctx.attempt = 0; cancelTimer(ctx)
@@ -285,13 +292,15 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (!ctx) return
     ctx.attempt = 0; cancelTimer(ctx); emit(ctx, { retryAt: null })
     await flush(ctx); assertCurrent(ctx)
+    if (ctx.running) { await ctx.running; assertCurrent(ctx) }
     await startSync(ctx)
   }
   async function recordChange({ previous, next, kind = 'edit', scheduleRemote = true }) {
     const ctx = active
     if (!ctx?.envelope || !status.get().localReady) throw failure('local-not-ready')
     const operation = codec.prepareOperation(previous, next, { ownerKey: ctx.owner.ownerKey, opId: newId(), kind,
-      generation: ctx.envelope.lastConfirmedControl ? ctx.envelope.cloudGeneration : ctx.initialControl?.generation ?? null, unitVersion: ctx.envelope.lastConfirmedControl?.unitVersion || 1 })
+      generation: ctx.envelope.lastConfirmedControl ? ctx.envelope.cloudGeneration : ctx.initialControl?.generation ?? null, unitVersion: ctx.envelope.unitProjectionVersion ?? ctx.envelope.lastConfirmedControl?.unitVersion ?? 1 })
+    if (operation) operation.unitProvenance = ctx.envelope.lastConfirmedControl ? 'confirmed' : 'unproven'
     ctx.intents.push({ previous: clone(previous), next: clone(next), operation })
     emit(ctx, { local: 'saving', cloud: authenticated(ctx) ? 'pending' : 'auth-required' }); publish(ctx)
     const saved = await persistIntents(ctx)
@@ -318,9 +327,10 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     })
     if (valid(ctx)) await syncNow()
   }
-  return { hydrate, bindAuth, unbindAuth, recordChange, flushLocal: () => flush(active), syncNow, resolveAdoption,
+  const jobs = createJobCoordinator({ context: () => active, durable, flush, current: assertCurrent, remote, newId, now, syncNow })
+  return { reset: jobs.reset, importBackup: jobs.importBackup, changeUnit: jobs.changeUnit, hydrate, bindAuth, unbindAuth, recordChange, flushLocal: () => flush(active), syncNow, resolveAdoption,
     readRemote: async () => { const ctx = active; if (!authenticated(ctx)) throw failure('auth-required'); return refresh(ctx) },
-    getUnsynced: () => { const envelope = active?.envelope && memory(active), count = envelope?.pendingOperations.length || 0;
+    getUnsynced: () => { const envelope = active?.envelope && memory(active), count = (envelope?.pendingOperations.length || 0) + (envelope?.pendingJobs.length || 0);
       return { count, blocked: status.get().cloud === 'blocked' || envelope?.adoptionDecision?.status === 'pending' ? count : envelope?.pendingOperations.filter(x => x.blockedReason).length || 0 } },
     subscribeStatus: status.subscribe,
     // Runtime lifecycle adapters call these on foreground / online hints.
