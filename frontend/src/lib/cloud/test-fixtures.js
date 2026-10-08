@@ -1,3 +1,4 @@
+import * as defaultCodec from './codec.js'
 import { reduceEnvelope, validateEnvelope, validateOwnerKey } from './offline-store.js'
 import { DEF } from '../../store/state-defaults.js'
 import { makeEnvelope, makeOwner } from './model.js'
@@ -83,5 +84,45 @@ export function fakeStorage(initial = {}) {
     subscribe(ownerKey, fn) { validateOwnerKey(ownerKey); if (!listeners.has(ownerKey)) listeners.set(ownerKey, new Set()); listeners.get(ownerKey).add(fn); return () => listeners.get(ownerKey).delete(fn) },
     failNextCommit(error) { failure = error },
     confirmedRevisions,
+  }
+}
+
+// Coordinator double only; permission/rules proofs live in check-firestore-rules.mjs.
+export function fakeRemote(initialProfile, { codec = defaultCodec, ownerKey = null } = {}) {
+  let profile = structuredClone(initialProfile), failure = null, repetitions = 1, delayed = false
+  const transactions = [], listeners = new Set(), callbacks = []
+  const error = code => Object.assign(new Error(code), { code })
+  const check = owner => { if (ownerKey === null) ownerKey = owner.ownerKey; if (owner.ownerKey !== ownerKey) throw error('owner-mismatch'); if (failure) { const e = failure; failure = null; throw e } }
+  const notify = () => { for (const listener of listeners) { const value = structuredClone(profile.control), fn = () => listener.onControl(value); if (delayed) callbacks.push(fn); else fn() } }
+  return {
+    transactions,
+    async readProfileFromServer(owner) { check(owner); return structuredClone(profile) },
+    watchControl(owner, onControl, onError) { check(owner); const listener = { onControl, onError }; listeners.add(listener); return () => listeners.delete(listener) },
+    async commitOperation(owner, operation, { expectedControl, domainContext } = {}) {
+      check(owner)
+      if (operation.ownerKey !== owner.ownerKey) throw error('owner-mismatch')
+      if (['generation', 'dataRevision', 'unitVersion', 'activeUnitJob', 'lastResetOpId'].some(key => expectedControl?.[key] !== profile.control[key] || domainContext?.remoteProfile?.control[key] !== profile.control[key])) throw error('refresh-required')
+      if (operation.generation !== profile.control.generation) throw error('generation-mismatch')
+      let merged
+      try {
+        for (let i = 0; i < repetitions; i++) merged = codec.mergeOperation(structuredClone(profile.documents), operation, { control: structuredClone(profile.control), domainContext: structuredClone(domainContext) })
+      } catch (e) { if (!e.code) e.code = e.message.split(':')[0]; throw e }
+      if (Object.keys(merged.documentsToWrite).length) profile = { control: { ...profile.control, dataRevision: profile.control.dataRevision + 1 }, documents: { ...profile.documents, ...structuredClone(merged.documentsToWrite) } }
+      transactions.push({ kind: 'operation', opId: operation.opId, paths: Object.keys(merged.documentsToWrite), control: structuredClone(profile.control) }); notify()
+      return structuredClone({ ownerKey: owner.ownerKey, opId: operation.opId, control: profile.control, documents: merged.confirmedDocuments })
+    },
+    async commitReset(owner, reset) {
+      check(owner)
+      if (profile.control.generation === reset.nextGeneration && profile.control.lastResetOpId === reset.opId) return structuredClone(profile.control)
+      if (profile.control.generation !== reset.baseGeneration) throw error('generation-mismatch')
+      if (reset.nextGeneration !== reset.baseGeneration + 1) throw error('invalid-reset')
+      if (profile.control.activeUnitJob) throw error('unit-job-active')
+      profile = { control: { ...profile.control, generation: reset.nextGeneration, dataRevision: profile.control.dataRevision + 1, lastResetOpId: reset.opId }, documents: {} }
+      transactions.push({ kind: 'reset', ...reset }); notify(); return structuredClone(profile.control)
+    },
+    failNext(error) { failure = error }, repeatTransaction(times = 2) { repetitions = times }, delayCallbacks(value = true) { delayed = value },
+    deliverCallbacks() { for (const fn of callbacks.splice(0)) fn() },
+    replaceProfile(value) { profile = structuredClone(value); notify() },
+    emitError(error) { for (const listener of listeners) listener.onError(error) },
   }
 }

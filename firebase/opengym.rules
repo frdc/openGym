@@ -1,0 +1,74 @@
+rules_version = '2';
+// ISOLATED EMULATOR FRAGMENT. Reconcile with actual production rules before activation.
+// This file is not evidence that any legacy production namespace is protected.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function positive(v) { return v is int && v > 0 && v <= 9007199254740991; }
+    function counter(v) { return v is int && v >= 0 && v <= 9007199254740991; }
+    function nullableId(v) { return v == null || (v is string && v.size() > 0 && v.size() <= 1500); }
+    function validControl(c) {
+      return c.keys().hasAll(['schemaVersion','generation','dataRevision','unitVersion','activeUnitJob','lastResetOpId'])
+        && c.keys().hasOnly(['schemaVersion','generation','dataRevision','unitVersion','activeUnitJob','lastResetOpId'])
+        && c.schemaVersion == 1 && positive(c.generation) && counter(c.dataRevision) && positive(c.unitVersion)
+        && nullableId(c.activeUnitJob) && nullableId(c.lastResetOpId);
+    }
+    function setting(id) {
+      return id in ['unit','restSec','restPauseSec','sound','soundOnSilent','vibrateOnSilent','timerFlash','timedSetOvertime','keepAwake','lang','theme','accent','accentCustom','body','targetW','gifSize','heatmapMetric','workoutView','wc','hints','reminder','effort','activeEquipId','equipFilterOn','weekStart','wdec','speedUnit','lastGymCardId','checkIn','showWeightCard','weighIn','connStatus','startFrom','enParens','enOnly','logRef','balanceTemplate','vibrate','classicChime','showRir'];
+    }
+    function pathAllowed(family, id) {
+      return id.size() <= 1500 && id.matches('^[A-Za-z0-9_-]+$') && (
+        (family == 'settings' && setting(id)) || (family == 'plans' && id == 'main')
+        || (family == 'bodyweight' && id.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        || (family == 'plates' && id in ['kg','lb'])
+        || family in ['planDays','routines','workouts','customExercises','exerciseState','equipmentProfiles','gymCards','balanceOverrides']);
+    }
+    function payloadShape(family, id, r) {
+      let p = r.payload;
+      return p is map && (r.deletedAt != null || (
+        (family == 'settings' && p.keys().hasOnly(['value']) && (id != 'unit' || !('value' in p) || p.value in ['kg','lb']))
+        || (family == 'plans' && p.keys().hasOnly(['queue','rotation','scheduleMode','routineOrder']))
+        || (family == 'planDays' && p.keys().hasAll(['field','key']) && p.field in ['week','dayPlan'] && p.key is string && p.keys().hasOnly(['field','key','value']))
+        || (family == 'bodyweight' && p.d == id)
+        || (family in ['plates','balanceOverrides'] && p.key is string)
+        || (family in ['routines','workouts','customExercises','exerciseState','equipmentProfiles','gymCards'] && p.id is string)
+      ));
+    }
+    function validRecord(family, id, r) {
+      return r.keys().hasAll(['schemaVersion','generation','unitVersion','dataUnit','payload','stamps','deletedAt','appliedOpId'])
+        && r.keys().hasOnly(['schemaVersion','generation','unitVersion','dataUnit','payload','stamps','deletedAt','appliedOpId'])
+        && r.schemaVersion == 1 && positive(r.generation) && positive(r.unitVersion) && r.dataUnit in [null,'kg','lb']
+        && r.stamps is map && r.stamps.keys().hasAll(['edited','undone','deleted']) && r.stamps.keys().hasOnly(['edited','undone','deleted'])
+        && r.stamps.edited is map && r.stamps.undone is map && r.stamps.deleted is map
+        && (r.deletedAt == null || counter(r.deletedAt)) && nullableId(r.appliedOpId) && payloadShape(family, id, r);
+    }
+    function coherentWrite(uid, r) {
+      let path = /databases/$(database)/documents/users/$(uid)/apps/opengym;
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      return validControl(before) && validControl(after)
+        && after.generation == before.generation && r.generation == after.generation
+        && after.dataRevision == before.dataRevision + 1
+        && after.unitVersion == before.unitVersion && r.unitVersion == after.unitVersion
+        && (r.dataUnit == null || after.activeUnitJob == null);
+    }
+    match /users/{uid}/apps/opengym {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && validControl(request.resource.data)
+        && request.resource.data.generation == 1 && request.resource.data.dataRevision == 0 && request.resource.data.unitVersion == 1
+        && request.resource.data.activeUnitJob == null && request.resource.data.lastResetOpId == null;
+      allow update: if owner(uid) && validControl(request.resource.data) && validControl(resource.data)
+        && request.resource.data.dataRevision == resource.data.dataRevision + 1
+        && request.resource.data.unitVersion == resource.data.unitVersion
+        && request.resource.data.activeUnitJob == resource.data.activeUnitJob
+        && ((request.resource.data.generation == resource.data.generation && request.resource.data.lastResetOpId == resource.data.lastResetOpId)
+          || (resource.data.activeUnitJob == null && request.resource.data.generation == resource.data.generation + 1
+            && request.resource.data.lastResetOpId is string && request.resource.data.lastResetOpId != resource.data.lastResetOpId));
+      match /{family}/{id} {
+        // Collection queries need only the allowlisted family; writes also validate ID.
+        allow read: if owner(uid) && family in ['settings','plans','planDays','routines','workouts','bodyweight','customExercises','exerciseState','equipmentProfiles','gymCards','balanceOverrides','plates'];
+        allow create, update: if owner(uid) && pathAllowed(family,id) && validRecord(family,id,request.resource.data) && coherentWrite(uid,request.resource.data);
+      }
+    }
+  }
+}
