@@ -14,9 +14,9 @@
  *
  * Crash safety: a file is written to <name>.part and renamed once complete, and the index is
  * written after the files it lists (1 s debounce, flushed when the app goes to the background).
- * At start the two are reconciled: an index entry without its file is dropped, and a file
- * without an entry is checked against its name's sha256 and kept as pending — the upload is
- * idempotent, and the server's /missing answer decides whether it is needed at all.
+ * At start the two are inspected: an index entry without its file is dropped, and a file
+ * without an entry is checked against its name's sha256 and retained locally. Unreadable or
+ * mismatching originals are never deleted by startup. Owners use opengym-media/owners/<digest>.
  *
  * Big files cross the native bridge as base64 in 3 MB pieces (writeFile, then appendFile), never
  * as one 50 MB string.
@@ -25,8 +25,6 @@ import { MEDIA_MIMES } from './media-refs.js'
 import { sniffKind } from './media-sniff.js'
 import { sha256Hex } from './sha256.js'
 
-const DIR = 'opengym-media'
-const INDEX = DIR + '/index.json'
 const CHUNK = 3 * 1024 * 1024   // a multiple of 3, so no piece but the last has base64 padding
 const FILE_RE = /^([0-9a-f]{64})\.(jpg|png|webp|gif|mp4|webm)$/
 
@@ -39,7 +37,8 @@ export function toBase64(u8) {
 
 const fileName = (hash, mime) => hash + '.' + (MEDIA_MIMES[mime]?.playExt || 'bin')
 
-export function fsBackend({
+function createFSBackend({
+  directory = 'opengym-media',
   load = () => import('@capacitor/filesystem'),
   core = () => import('@capacitor/core'),
   app = () => import('@capacitor/app'),
@@ -47,6 +46,7 @@ export function fsBackend({
   hash = sha256Hex,
   debounceMs = 1000
 } = {}) {
+  const DIR = directory, INDEX = DIR + '/index.json'
   let FS = null, Directory = null, Encoding = null, convert = s => s
   let recs = {}
   let writeTm = null
@@ -63,16 +63,16 @@ export function fsBackend({
   }
   const readFileBlob = async name => {
     const r = await fetchImpl(await uriOf(name))
-    if (!r.ok) throw new Error('read ' + r.status)
+    if (!r.ok) throw Object.assign(new Error('read ' + r.status), { code: r.status === 404 ? 'media-missing' : 'media-read-failed' })
     return r.blob()
   }
   const saveIndex = () => {
-    writing = writing.then(() => FS.writeFile({ ...opts(INDEX), data: JSON.stringify(recs), encoding: Encoding.UTF8, recursive: true })).catch(() => {})
+    writing = writing.catch(() => {}).then(() => FS.writeFile({ ...opts(INDEX), data: JSON.stringify(recs), encoding: Encoding.UTF8, recursive: true }))
     return writing
   }
   const scheduleIndex = () => {
     clearTimeout(writeTm)
-    writeTm = setTimeout(() => { writeTm = null; saveIndex() }, debounceMs)
+    writeTm = setTimeout(() => { writeTm = null; saveIndex().catch(() => {}) }, debounceMs)
   }
   const flush = () => { if (writeTm) { clearTimeout(writeTm); writeTm = null; return saveIndex() } return writing }
 
@@ -87,48 +87,71 @@ export function fsBackend({
         try { const c = await core(); if (c?.Capacitor?.convertFileSrc) convert = u => c.Capacitor.convertFileSrc(u) } catch { /* the raw URI then */ }
       } catch { return false }
       try { await FS.mkdir({ ...opts(DIR), recursive: true }) } catch { /* already there */ }
-      try {
-        const r = await FS.readFile({ ...opts(INDEX), encoding: Encoding.UTF8 })
-        const parsed = JSON.parse(r.data)
-        recs = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-      } catch { recs = {} }
+      let damaged = false
+      let indexText
+      try { indexText = (await FS.readFile({ ...opts(INDEX), encoding: Encoding.UTF8 })).data }
+      catch (error) {
+        if (!/does not exist|not found|ENOENT/i.test(String(error?.message || error?.code))) throw error
+      }
+      recs = {}
+      if (indexText !== undefined) {
+        try {
+          const parsed = JSON.parse(indexText)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.entries(parsed).some(([h, r]) =>
+            !/^[a-f0-9]{64}$/.test(h) || !r || typeof r !== 'object' || !MEDIA_MIMES[r.mime]
+            || (r.hash !== undefined && r.hash !== h) || !Number.isFinite(r.size) || r.size < 0)) throw new Error('invalid-media-index')
+          recs = parsed
+        } catch { damaged = true }
+      }
       let names = []
       try {
         const r = await FS.readdir(opts(DIR))
-        names = (r.files || []).map(f => (typeof f === 'string' ? f : f?.name)).filter(Boolean)
-      } catch { names = [] }
+        if (!Array.isArray(r.files)) throw new Error('invalid-media-listing')
+        names = r.files.map(f => (typeof f === 'string' ? f : f?.name)).filter(Boolean)
+      } catch (error) { throw error }
       const present = new Set(names)
-      let changed = false
+      // Preserve exact native bytes before reconstruction can rewrite the only index.
+      // A content-addressed copy makes repeated interrupted recoveries idempotent.
+      if (damaged) {
+        const raw = (await FS.readFile(opts(INDEX))).data
+        if (typeof raw !== 'string') throw new Error('invalid-media-index-evidence')
+        const evidence = DIR + '/index.corrupt-' + await sha256Hex(new TextEncoder().encode(raw)) + '.json'
+        let prior
+        try { prior = (await FS.readFile(opts(evidence))).data }
+        catch (error) { if (!/does not exist|not found|ENOENT/i.test(String(error?.message || error?.code))) throw error }
+        if (prior === undefined) await FS.writeFile({ ...opts(evidence), data: raw, recursive: true })
+        if ((await FS.readFile(opts(evidence))).data !== raw) throw new Error('media-index-evidence-mismatch')
+      }
+      let changed = damaged
       // Entries whose file is gone: the file was never renamed into place, or was deleted.
       for (const [h, r] of Object.entries(recs)) {
-        if (!r || !MEDIA_MIMES[r.mime] || !present.has(fileName(h, r.mime))) { delete recs[h]; changed = true }
+        if (!/^[a-f0-9]{64}$/.test(h) || !r || !MEDIA_MIMES[r.mime]) throw new Error('invalid-media-index')
+        if (!present.has(fileName(h, r.mime))) { delete recs[h]; changed = true }
       }
       for (const name of names) {
-        if (name.endsWith('.part')) { FS.deleteFile(opts(DIR + '/' + name)).catch(() => {}); continue }
+        if (name.endsWith('.part')) continue // another factory may still be writing it
         const m = FILE_RE.exec(name)
         if (!m || recs[m[1]]) continue
         // A file the index never got to list (the app died within the debounce). Its name is
-        // its hash; one whose bytes do not match is half a write and goes.
+        // its hash; mismatching bytes remain quarantined, without a readable association.
         try {
           const blob = await readFileBlob(name)
           const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer())
           const sniffed = sniffKind(head)
-          if ((await hash(blob)) !== m[1] || !sniffed || !MEDIA_MIMES[sniffed.mime]) throw new Error('mismatch')
-          recs[m[1]] = { hash: m[1], mime: sniffed.mime, size: blob.size, putAt: Date.now(), shownAt: 0, pending: true, rejected: false }
+          if ((await hash(blob)) !== m[1] || !sniffed || !MEDIA_MIMES[sniffed.mime] || fileName(m[1], sniffed.mime) !== name) continue // quarantine uncertain originals
+          recs[m[1]] = { hash: m[1], mime: sniffed.mime, size: blob.size, putAt: Date.now(), shownAt: 0, pending: false, rejected: false }
           changed = true
-        } catch {
-          FS.deleteFile(opts(DIR + '/' + name)).catch(() => {})
-        }
+        } catch (error) { throw error } // IO is not evidence that an original can be deleted
       }
       if (changed) await saveIndex()
-      app().then(({ App }) => App.addListener('appStateChange', ({ isActive }) => { if (!isActive) flush() })).catch(() => {})
+      app().then(({ App }) => App.addListener('appStateChange', ({ isActive }) => { if (!isActive) void flush().catch(() => {}) })).catch(() => {})
       return true
     },
     async all() { return Object.entries(recs).map(([h, r]) => ({ ...r, hash: h })) },
     async getBlob(h) {
       const r = recs[h]
       if (!r) return null
-      try { return await readFileBlob(fileName(h, r.mime)) } catch { return null }
+      try { return await readFileBlob(fileName(h, r.mime)) } catch (error) { if (error.code === 'media-missing') return null; throw error }
     },
     async put(rec, blob) {
       const name = fileName(rec.hash, rec.mime)
@@ -139,7 +162,8 @@ export function fsBackend({
         else await FS.appendFile({ ...opts(part), data })
         if (!blob.size) break
       }
-      try { await FS.deleteFile(opts(DIR + '/' + name)) } catch { /* not there, as expected */ }
+      // Never unlink the prior original before replacement. If the platform refuses rename,
+      // keep both the original and the recoverable .part and report the local IO failure.
       await FS.rename({ from: part, to: DIR + '/' + name, directory: Directory.Library, toDirectory: Directory.Library })
       uris.delete(name)
       recs[rec.hash] = { ...rec }
@@ -176,4 +200,41 @@ export function fsBackend({
       return r ? uriOf(fileName(h, r.mime)) : null
     }
   }
+}
+
+// Capacitor can have several consumers/factories for one owner. Share its live index and
+// serialize native mutations so no cached factory overwrites a peer's newly written entry.
+const pools = new WeakMap()
+export function fsBackend(options = {}) {
+  let selected, opening
+  const open = () => opening ||= (async () => {
+    const load = options.load || (() => import('@capacitor/filesystem'))
+    let mod
+    try { mod = await load() } catch { return false }
+    const key = options.ownerKey ?? null
+    let owners = pools.get(mod.Filesystem)
+    if (!owners) pools.set(mod.Filesystem, owners = new Map())
+    if (!owners.has(key)) {
+      const directory = key === null ? 'opengym-media' : 'opengym-media/owners/' + await sha256Hex(new TextEncoder().encode(key))
+      // Recheck after hashing: another factory can have installed this owner meanwhile.
+      if (!owners.has(key)) {
+        const backend = createFSBackend({ ...options, directory, load: async () => mod })
+        const entry = { backend, ready: null, tail: Promise.resolve() }
+        owners.set(key, entry)
+        entry.ready = backend.open().catch(error => { if (owners.get(key) === entry) owners.delete(key); throw error })
+      }
+    }
+    selected = owners.get(key)
+    return selected.ready
+  })().catch(error => { opening = null; throw error })
+  const result = { name: 'fs', persistent: true, open }
+  for (const method of ['all', 'getBlob', 'fileUrl', 'flush', 'put', 'patch', 'remove', 'clear']) {
+    result[method] = async (...args) => {
+      if (!await open()) throw new Error('media-storage-unavailable')
+      const job = selected.tail.then(() => selected.backend[method](...args))
+      selected.tail = job.catch(() => {})
+      return job
+    }
+  }
+  return result
 }

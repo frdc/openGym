@@ -8,13 +8,12 @@ import { useUI } from '../store/useUI.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
-import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
+import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, insertWarmupRow, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
 import { fmtNum, fmtPlate, exerciseNameText, fmtDate, fmtDaysAgo, todayISO, exCount, DAYN } from '../lib/format.js'
 import { speedUnitOf, toSpeed, fromSpeed } from '../lib/speed.js'
 import { beep, vibrate, unlock } from '../lib/sound.js'
 import { pinState } from '../lib/queue.js'
 import { t, tn, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
-import { api, beacon } from '../lib/api.js'
 import { pyramidRestFor, maxRecordAt, isPyramid, pyramidLabel } from '../lib/pyramid.js'
 import { insertionIndexAfterCurrentUnit, nextUnfinishedUnit, setProgressHighWater, supersetFlowStep, restAfterSet, restOnRecheck, restSecFor, warmupRestSecFor } from '../lib/supersetFlow.js'
 import Media from '../components/Media.jsx'
@@ -26,6 +25,7 @@ import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWo
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
+import { SetHeartRateSummaries } from '../components/HeartRateSummary.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
 import { defaultIncrement, weightIncrement, stepWeight } from '../lib/progression.js'
@@ -36,9 +36,13 @@ import { sessionNoProg, setSessionNoProg, setEntryNoProg, joinSessionNoProg } fr
 import { glyphOf } from '../lib/glyphs.js'
 import { markAllSetsDone, sessionHistory } from '../lib/backfill.js'
 import { bestSetFor } from '../lib/exercise-history.js'
-import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, setSideField, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt, WEIGHT_ORIGIN_MANUAL } from '../lib/workout-model.js'
+import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt } from '../lib/workout-model.js'
 import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit } from '../lib/active-workout-order.js'
 import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
+import { registerWearCompletion, registerWearEditing, openWearApp } from '../lib/wear-bridge.js'
+import { projectWearState, validateWearCommand } from '../lib/wear-protocol.js'
+import { setWorkoutField } from '../lib/workout-set-field.js'
+import { isAndroid } from '../lib/mobile.js'
 import { MUSCLE_NAME } from '../lib/muscles.js'
 
 // How long after a key starts a hold the same key is not yet its "Done" (#133). A USB button
@@ -143,13 +147,9 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // stays right. The done tick goes through onToggleSide → toggle() instead, so ticking a side
   // still fires the rest timer / auto-advance / workout-complete flow.
   const setSide = (i, side, field, v) => {
-    if (field !== 'w') return mutSet(i, row => setSideField(row, side, field, v))
     update(s => {
       const e = s.active.entries[entryIdx]
-      const row = setSideField(e.sets[i], side, field, v)
-      row.sides[side].weightOrigin = WEIGHT_ORIGIN_MANUAL
-      e.sets[i] = row
-      e.sets = cascadeWeight(e.sets, i, v, side)
+      setWorkoutField(e, i, field, v, side)
     }, true)
   }
   // Drop/burst edits accept an optional `side` ('L'|'R'): present for a per-side row (edits that
@@ -696,6 +696,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
               <Icon name="swap" /><span>{t('Psst: swipe a set. Left deletes, right copies.')}</span><Icon name="xmark" />
             </button>
           </div>}
+          <SetHeartRateSummaries set={s} label={t('Set {0}', phaseNum)} />
           {loadLine(String(i))}
           {/* Drop-sets and rest-pause bursts extend this same row — no long rest, no new set.
               A planned exercise arrives with these already filled in (applyIntensifierPlan);
@@ -889,6 +890,15 @@ function ActiveWorkout() {
   const { startRest: liveRest, stopRest, stopWork, work, timer } = useUI()
   const A = S.active
   const editing = !!A.editingWorkoutId
+  const [watchButton, setWatchButton] = useState(false)
+  const [openingWatch, setOpeningWatch] = useState(false)
+  useEffect(() => { let live = true; void isAndroid().then(android => { if (live) setWatchButton(android) }); return () => { live = false } }, [])
+  const openWatch = async () => {
+    setOpeningWatch(true)
+    try { await openWearApp(); useUI.getState().toast(t('Request sent to watch')) }
+    catch { useUI.getState().toast(t('Watch unavailable')) }
+    finally { setOpeningWatch(false) }
+  }
   // A past workout has no rest to time — the sets were done days ago. The work timer for
   // timed sets stays, since counting a hold is how its duration gets entered.
   const startRest = (A.backfill || editing) ? () => {} : liveRest
@@ -1075,17 +1085,12 @@ function ActiveWorkout() {
   // Clearing an optional field drops the key rather than storing null, so a set only carries
   // what was actually logged — in the session, in history and in a backup.
   const setField = (idx, i, field, v) => mutEntry(idx, e => {
-    if (v == null) delete e.sets[i][field]; else e.sets[i][field] = v
     // Typing a duration IS the new plan, the same way ticking the row ends it: a plan a displaced
     // hold put aside must not outrank what you just typed, or the field would read 45 and the ▶
     // would still hold the 30 the row was asking for before.
-    if (field === 'sec') delete e.sets[i].planSec
     // Changing a weight cascades to following inherited sets of the same phase, so a correction
     // carries through without retyping every row while explicit manual exceptions stay put.
-    if (field === 'w') {
-      e.sets[i].weightOrigin = WEIGHT_ORIGIN_MANUAL
-      e.sets = cascadeWeight(e.sets, i, v)
-    }
+    setWorkoutField(e, i, field, v)
   })
   const modeAt = idx => modeOf({ ...(A.entries[idx].target || {}), id: A.entries[idx].id })
   const addSet = idx => mutEntry(idx, e => {
@@ -1486,7 +1491,8 @@ function ActiveWorkout() {
     // the row is held to the end, ticked, or given a duration you typed yourself, and it never
     // reaches S.workouts (lib/finish-workout.js).
     const plan = (!e.sets[i].done && e.sets[i].planSec) || e.sets[i].sec || 45
-    const owner = { idx, i }
+    const { ownerKey, localReady, activeSessionToken } = useStore.getState()
+    const owner = { idx, i, context: { ownerKey, localReady, activeSessionToken } }
     useUI.getState().startWork(plan, exerciseNameText(exOr(e.id)), holdDone(owner, plan), { idx, i, id: e.id })
     // After startWork: a hold it displaced has already written its seconds to its own row.
     holdAt = { owner, idx, i }
@@ -1494,6 +1500,11 @@ function ActiveWorkout() {
   // What a hold hands back to its row: on its end, its Done, or a rest displacing it. Also bound
   // again to a hold restored after a reload (useUI.bindWork, below).
   const holdDone = (owner, plan) => (elapsed, { abandoned = false, chimed = false } = {}) => {
+    const matches = () => {
+      const current = useStore.getState(), context = owner.context
+      return context?.localReady && current.localReady && context.ownerKey === current.ownerKey && context.activeSessionToken === current.activeSessionToken
+    }
+    if (!matches()) return
     const { idx } = owner
     // The row may have moved while the hold ran (a set copied or removed above it): write to
     // where it is now. holdAt is that place (deleteActiveSet, copyActiveSet).
@@ -1509,11 +1520,11 @@ function ActiveWorkout() {
       // that displaces the hold, so the hand-back lands on a row that is already ticked. It
       // still wants the seconds (that is what was held, not the target), but a finished row has
       // no use for a plan set aside.
-      mutEntry(idx, en => { if (en.sets[i].planSec == null && !en.sets[i].done) en.sets[i].planSec = plan; en.sets[i].sec = elapsed })
+      mutEntry(idx, en => { if (!matches()) return; if (en.sets[i].planSec == null && !en.sets[i].done) en.sets[i].planSec = plan; en.sets[i].sec = elapsed })
       return
     }
-    mutEntry(idx, en => { en.sets[i].sec = elapsed; delete en.sets[i].planSec })
-      if (!useStore.getState().S.active.entries[idx].sets[i].done) toggle(idx, i, undefined, { quiet: chimed })
+    mutEntry(idx, en => { if (!matches()) return; en.sets[i].sec = elapsed; delete en.sets[i].planSec })
+      if (matches() && !useStore.getState().S.active.entries[idx].sets[i].done) toggle(idx, i, undefined, { quiet: chimed })
   }
   // A hold that came back from a reload has no handler yet: this screen gives it its own.
   const holdDoneRef = useRef(holdDone)
@@ -1522,7 +1533,7 @@ function ActiveWorkout() {
     useUI.getState().bindWork?.(wk => {
       // From here on it is tracked like a hold started on this screen (holdAt), so a set copied or
       // removed above it moves it along.
-      const owner = { idx: wk.owner.idx, i: wk.owner.i }
+      const owner = { idx: wk.owner.idx, i: wk.owner.i, context: wk.context }
       holdAt = { owner, idx: owner.idx, i: owner.i }
       return (...a) => holdDoneRef.current(owner, wk.total)(...a)
     })
@@ -1639,6 +1650,26 @@ function ActiveWorkout() {
     }
   }
 
+  const wearCompletion = useRef(null)
+  wearCompletion.current = target => {
+    if (editing || useUI.getState().sheets.length || useUI.getState().work) throw new Error('unavailable')
+    const fresh = useStore.getState().S.active
+    const next = nextOpenSet(fresh?.entries, fresh?.cur)
+    if (!next || next.idx !== target.entryIdx || next.i !== target.setIdx || (next.side || null) !== (target.side || null)) throw new Error('stale-target')
+    if (!next.current) focusUnit(next.idx)
+    toggle(next.idx, next.i, next.side)
+  }
+  useEffect(() => registerWearCompletion(target => wearCompletion.current(target)), [])
+  const wearEditing = useRef(null)
+  wearEditing.current = (target, command) => {
+    const store = useStore.getState(), ui = useUI.getState()
+    const state = projectWearState({ S: store.S, contextToken: command.contextToken, revision: command.revision, ready: store.localReady && !!store.activeSessionToken, editingReady: !editing && !ui.sheets.length && !ui.work })
+    const code = validateWearCommand(command, state)
+    if (code) throw Object.assign(new Error(code), { code })
+    store.update(s => setWorkoutField(s.active.entries[target.entryIdx], target.setIdx, command.field, command.value, target.side), true)
+  }
+  useEffect(() => registerWearEditing((target, command) => wearEditing.current(target, command)), [])
+
   // Hardware keys (issue #133, lib/workout-keys.js): Space or Enter ticks the next set, ← and →
   // switch exercise. The listener is added once and calls the handler of the latest render, so
   // toggle() and navigateUnit() always see the session as it is now.
@@ -1702,34 +1733,8 @@ function ActiveWorkout() {
     }
   }, [])
 
-  // Live-presence heartbeat so the admin dashboard can show who's training now. Signed-in only —
-  // guests have no server session. Reads fresh state each tick so progress stays current.
-  useEffect(() => {
-    if (!useStore.getState().user || editing) return
-    let stopped = false
-    const ping = active => {
-      const A2 = useStore.getState().S.active
-      if (!A2) return
-      const u = supersetUnits(A2.entries)
-      const c = Math.min(A2.cur, Math.max(0, A2.entries.length - 1))
-      const ui = u.findIndex(x => x.includes(c))
-      const tot = setUnitsTotal(A2.entries)
-      api('/api/activity', { method: 'POST', body: JSON.stringify({
-        active, name: A2.name, exIdx: ui + 1, exTotal: u.length,
-        setsDone: setsDoneActive(A2), setsTotal: tot, startedAt: A2.start
-      }) }).catch(() => {})
-    }
-    ping(true)
-    const iv = setInterval(() => { if (!stopped) ping(true) }, 20000)
-    return () => {
-      stopped = true; clearInterval(iv)
-      // best-effort "left" signal: the beacon survives a tab close, fetch covers in-app nav
-      beacon('/api/activity', { active: false })
-      api('/api/activity', { method: 'POST', body: JSON.stringify({ active: false }) }).catch(() => {})
-    }
-  }, [])
-
   return <div className="narrow">
+    {watchButton && !editing && <Button size="sm" variant="ghost" disabled={openingWatch} onClick={openWatch}>{t('Open on watch')}</Button>}
     {/* In list mode the whole session scrolls under the header, so the header (name, clock,
         set counter, discard/finish, progress) stays pinned — the one thing you want in view
         while you are somewhere in the middle of a long stack. Cards mode never scrolls far. */}

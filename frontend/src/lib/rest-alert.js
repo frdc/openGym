@@ -63,6 +63,7 @@ export function buildRestAlert({ at, title, countdownTitle, totalSec, accent, so
 // new alarm. `token` stops a slow schedule from adopting the beep after a later disarm.
 let chain = Promise.resolve()
 let token = 0
+let activeTimerToken = null
 
 const enqueue = fn => {
   const run = chain.then(fn, fn)
@@ -87,13 +88,17 @@ const restPlugin = () => pluginP || (pluginP = (async () => {
 export function armRestAlert(at, opts = {}) {
   if (!MOBILE) return Promise.resolve(false)
   const mine = ++token
+  const timerToken = opts.timerToken || crypto.randomUUID()
+  activeTimerToken = timerToken
   const alert = buildRestAlert({ at, title: opts.title, countdownTitle: opts.countdownTitle, totalSec: opts.totalSec, accent: opts.accent, sound: opts.sound, vibrate: opts.vibrate !== false, alarmBuzz: !!opts.alarmBuzz })
   if (!alert) return Promise.resolve(false)
+  alert.timerToken = timerToken
   // Outside the chain and never awaited: the alarm, its tone and the alarm buzz do not need the
   // notification permission, and a dialog left open while the phone is put away must not hold
   // the alarm back until the rest is long over.
   askNotifPermissionOnce()
   return enqueue(async () => {
+    if (activeTimerToken !== timerToken) return false
     let kind = 'failed'
     try { kind = await deliver(alert) } catch { kind = 'failed' }
     if (mine !== token) return false
@@ -101,23 +106,27 @@ export function armRestAlert(at, opts = {}) {
   })
 }
 
-export function disarmRestAlert() {
+export function disarmRestAlert(timerToken = activeTimerToken) {
+  if (!timerToken || (activeTimerToken && timerToken !== activeTimerToken)) return
+  activeTimerToken = null
   token++
   if (!MOBILE) return
   enqueue(async () => {
-    try { await cancelDelivered() } catch { /* the next arm replaces this alarm */ }
+    try { await cancelDelivered(timerToken) } catch { /* the next arm replaces this alarm */ }
   })
 }
 
 // The rest was paused in the app (#193): the notification stops its clock at the time held and
 // offers Resume, and the alarm for the old end is called off. Resuming arms it again for the new
 // end like any other rest; time added or taken while paused holds it again at the new figure.
-export function holdRestAlert(leftSec, totalSec) {
+export function holdRestAlert(leftSec, totalSec, timerToken = activeTimerToken) {
+  if (!timerToken || (activeTimerToken && activeTimerToken !== timerToken)) return
+  activeTimerToken = timerToken
   token++
   if (!MOBILE) return
   enqueue(async () => {
     const p = await restPlugin()
-    if (p) await p.RestAlert.hold({ id: REST_ALERT_ID, leftMs: Math.max(1, leftSec) * 1000, totalMs: Math.max(1, totalSec) * 1000 })
+    if (p && activeTimerToken === timerToken) await p.RestAlert.hold({ id: REST_ALERT_ID, timerToken, leftMs: Math.max(1, leftSec) * 1000, totalMs: Math.max(1, totalSec) * 1000 })
   })
 }
 
@@ -197,10 +206,12 @@ async function deliver(alert) {
   if (!p) return 'skipped'
   const { RestAlert } = p
   if (!(alert.at > Date.now())) return 'expired'
+  if (activeTimerToken !== alert.timerToken) return 'skipped'
   // Sound, the alarm buzz and the alarm itself need no notification permission; only the
   // countdown card does, and askNotifPermissionOnce() asks for it on the side.
   await RestAlert.schedule({
     id: alert.id,
+    timerToken: alert.timerToken,
     at: alert.at,
     title: alert.title,
     sound: alert.sound,
@@ -225,7 +236,7 @@ async function deliver(alert) {
   return 'android'
 }
 
-async function cancelDelivered() {
+async function cancelDelivered(timerToken) {
   const p = await restPlugin()
-  if (p) await p.RestAlert.cancel({ id: REST_ALERT_ID })
+  if (p) await p.RestAlert.cancel({ id: REST_ALERT_ID, timerToken })
 }

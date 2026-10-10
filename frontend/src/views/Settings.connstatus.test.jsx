@@ -12,7 +12,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const mocks = vi.hoisted(() => {
   const state = { S: null, MOBILE: false, user: null }
   state.snapshot = () => ({
-    S: state.S,
+    S: state.S, sync: { local: 'saved', cloud: 'unconfigured' },
     user: state.user,
     update: mut => {
       const next = structuredClone(state.S)
@@ -36,10 +36,6 @@ vi.mock('../store/useUI.js', () => {
   return { useUI }
 })
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
-vi.mock('../lib/api.js', () => ({
-  api: vi.fn(), webauthnOK: () => false, passkeyLogin: vi.fn(), passkeyRegister: vi.fn(), IS_ANDROID: false,
-}))
-vi.mock('../lib/push.js', () => ({ pushSupported: () => false, enablePush: vi.fn(), disablePush: vi.fn(), sendTestPush: vi.fn() }))
 vi.mock('../lib/wakelock.js', () => ({ wakeLockSupported: () => false }))
 vi.mock('../lib/mobile.js', () => ({ get MOBILE() { return mocks.MOBILE }, isAndroid: () => Promise.resolve(false), shareExport: vi.fn(), syncReminder: vi.fn() }))
 vi.mock('./MobileOnboarding.jsx', () => ({ ConnectSheet: () => null }))
@@ -97,7 +93,7 @@ describe('Show connection status', () => {
 })
 
 describe('guest footers', () => {
-  const footers = () => [...host.querySelectorAll('.sect-f')].map(f => f.textContent)
+  const footers = () => [host.textContent]
 
   it('Look & Home does not promise a guest that anything syncs with a profile', () => {
     mount()
@@ -107,11 +103,11 @@ describe('guest footers', () => {
     expect(host.textContent).toContain('synced with your profile')
   })
 
-  it('Account says guest mode once: the banner says it, the footer only when the banner is off', () => {
+  it('Account explains local storage with the banner either on or off', () => {
     act(() => root.render(<Settings page="account" />))
-    expect(footers().filter(f => f.includes('Guest mode'))).toEqual([])
+    expect(footers().filter(f => f.includes('Your data lives on this device.'))).toHaveLength(1)
     mocks.S = { ...mocks.S, connStatus: false }
     act(() => root.render(<Settings key="off" page="account" />))
-    expect(footers().filter(f => f.includes('Guest mode'))).toHaveLength(1)
+    expect(footers().filter(f => f.includes('Your data lives on this device.'))).toHaveLength(1)
   })
 })

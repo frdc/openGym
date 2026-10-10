@@ -9,8 +9,8 @@ describe('guestAllowed', () => {
     expect(guestAllowed({ allow_guest: true })).toBe(true)
   })
 
-  it('refuses guests only on an explicit false', () => {
-    expect(guestAllowed({ allow_guest: false })).toBe(false)
+  it('keeps local training available despite legacy allow_guest false', () => {
+    expect(guestAllowed({ allow_guest: false })).toBe(true)
   })
 
   it('allows guests when the config could not be fetched', () => {

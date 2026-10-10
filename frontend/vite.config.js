@@ -3,16 +3,11 @@ import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
+import { availableParallelism } from 'node:os'
+import { configDefaults } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { lazyAssets, stampSw } from './scripts/sw-stamp.mjs'
 
-const backend = process.env.API_TARGET || 'http://127.0.0.1:3000'
-// The API refuses a state-changing request that a browser sent from anywhere other than its own
-// ORIGIN (the CSRF guard in api/server.js). The dev server is on a different port, so the page's
-// real Origin is not ORIGIN — modern browsers get through on Sec-Fetch-Site: same-origin, and
-// presenting the expected Origin here covers the ones that don't send it. Match your .env if you
-// changed ORIGIN: API_ORIGIN=https://gym.example.com npm run dev
-const apiOrigin = process.env.API_ORIGIN || 'http://localhost:8080'
 const media = process.env.MEDIA_TARGET || 'http://127.0.0.1:8888'
 
 // Optional web analytics (Umami). Injected only when BOTH vars are set at build time,
@@ -80,17 +75,27 @@ const flavor = {
 const pkgVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 const appVersion = process.env.APP_BUILD ? `${pkgVersion}+${process.env.APP_BUILD}` : pkgVersion
 
+let buildEnv = {}
+const cloudBuild = {
+  name: 'opengym-cloud-build',
+  configResolved(config) { buildEnv = config.env },
+  generateBundle() {
+    const env = buildEnv, firebase = {}
+    for (const [key, suffix] of Object.entries({ apiKey: 'API_KEY', authDomain: 'AUTH_DOMAIN', projectId: 'PROJECT_ID', appId: 'APP_ID' })) {
+      const value = env['VITE_FIREBASE_' + suffix]?.trim()
+      if (value) firebase[key] = value
+    }
+    const metadata = { mode: Object.keys(firebase).length === 4 ? 'firebase' : 'local', firebase, mobile: env.VITE_MOBILE === '1', demo: env.VITE_DEMO === '1' }
+    this.emitFile({ type: 'asset', fileName: 'cloud-build.json', source: JSON.stringify(metadata, null, 2) })
+  }
+}
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(appVersion) },
-  plugins: [react(), umami, flavor, swStamp],
+  plugins: [react(), umami, flavor, swStamp, cloudBuild],
   base: './',
+  test: { maxWorkers: Math.min(4, availableParallelism()), exclude: [...configDefaults.exclude, 'scripts/build-mobile.test.mjs', 'scripts/check-cloud-bundle.test.mjs'] },
   server: {
-    // The Coach's core (payload, validator, prompts, HTTP adapters) lives in ../api/coach/core
-    // and is imported by the phone build. vite build and vitest already reach it; the dev
-    // server needs to be told the workspace is wider than frontend/.
-    fs: { allow: ['..'] },
     proxy: {
-      '/api': { target: backend, changeOrigin: true, headers: { Origin: apiOrigin } },
       '/img': { target: media, changeOrigin: true },
       '/gif': { target: media, changeOrigin: true }
     }

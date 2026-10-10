@@ -2,9 +2,19 @@
 // A reload or the app being killed mid-hold (a timed set, a plank) used to drop the bar and the
 // seconds with it. The hold is kept with the set it belongs to, carries on after the reload, and
 // one that ended while the app was away is written to its set as held to the end.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(async () => { uiRuntime.fixture.begin(); await uiRuntime.fixture.prepare({ active: { id: 'timer-fixture', entries: [] } }); })
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({ ok: true })) }))
 vi.mock('../lib/sound.js', () => ({ beep: vi.fn(), chime: vi.fn(), vibrate: vi.fn(), alertBuzz: vi.fn() }))
 
 import { useUI, restoreWork, WORK_KEY } from './useUI.js'
@@ -15,20 +25,20 @@ const plankSet = () => useStore.getState().S.active.entries[1].sets[0]
 const owner = { idx: 1, i: 0, id: 'plank' }
 
 let original
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers()
   original = useStore.getState().S
-  useStore.setState({ S: { ...original, sound: true, active: { id: 'a', entries: [
+  ;await uiRuntime.fixture.applySnapshot({ S: { ...original, sound: true, active: { id: 'a', entries: [
     { id: 'squat', sets: [{ w: 100, r: 5 }] },
     { id: 'plank', sets: [{ sec: 45 }, { sec: 45 }] },
-  ] } } })
+  ] } } });
   useUI.setState({ timer: null, work: null })
   localStorage.clear()
 })
 afterEach(() => {
   useUI.getState().stopWork()
   useUI.getState().stopRest()
-  useStore.setState({ S: original })
+
   vi.useRealTimers()
 })
 
@@ -49,7 +59,7 @@ describe('a hold across a reload', () => {
 
   it('carries on after the reload, and the time lands on its set even before the screen is back', () => {
     const endsAt = Date.now() + 42_000
-    localStorage.setItem(WORK_KEY, JSON.stringify({ endsAt, total: 45, label: 'Plank', overtime: false, owner }))
+    localStorage.setItem(WORK_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt, total: 45, label: 'Plank', overtime: false, owner }))
     expect(restoreWork()).toBe(true)
     expect(useUI.getState().work).toMatchObject({ left: 42, total: 45, label: 'Plank', owner })
     vi.advanceTimersByTime(43_000)
@@ -59,7 +69,7 @@ describe('a hold across a reload', () => {
   })
 
   it('the workout screen binds its own handler again, and Done goes to it', () => {
-    localStorage.setItem(WORK_KEY, JSON.stringify({ endsAt: Date.now() + 40_000, total: 45, label: 'Plank', overtime: false, owner }))
+    localStorage.setItem(WORK_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt: Date.now() + 40_000, total: 45, label: 'Plank', overtime: false, owner }))
     restoreWork()
     const handler = vi.fn()
     useUI.getState().bindWork(wk => { expect(wk.owner).toEqual(owner); return handler })
@@ -70,7 +80,7 @@ describe('a hold across a reload', () => {
   })
 
   it('one that ended while the app was away is written as held to the end', () => {
-    localStorage.setItem(WORK_KEY, JSON.stringify({ endsAt: Date.now() - 5_000, total: 45, label: 'Plank', overtime: false, owner }))
+    localStorage.setItem(WORK_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt: Date.now() - 5_000, total: 45, label: 'Plank', overtime: false, owner }))
     expect(restoreWork()).toBe(true)
     expect(useUI.getState().work).toBeNull()
     expect(plankSet()).toMatchObject({ sec: 45, done: true })
@@ -78,12 +88,12 @@ describe('a hold across a reload', () => {
   })
 
   it('is dropped when its set is gone or already ticked', () => {
-    localStorage.setItem(WORK_KEY, JSON.stringify({ endsAt: Date.now() + 30_000, total: 45, label: 'Plank', overtime: false, owner: { idx: 0, i: 0, id: 'plank' } }))
+    localStorage.setItem(WORK_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt: Date.now() + 30_000, total: 45, label: 'Plank', overtime: false, owner: { idx: 0, i: 0, id: 'plank' } }))
     expect(restoreWork()).toBe(false)
     expect(useUI.getState().work).toBeNull()
     expect(saved()).toBeNull()
     useStore.getState().update(s => { s.active.entries[1].sets[0].done = true }, false)
-    localStorage.setItem(WORK_KEY, JSON.stringify({ endsAt: Date.now() + 30_000, total: 45, label: 'Plank', overtime: false, owner }))
+    localStorage.setItem(WORK_KEY, JSON.stringify({ context: (() => { const { ownerKey, localReady, activeSessionToken } = useStore.getState(); return { ownerKey, localReady, activeSessionToken } })(), timerToken: 'rest-fixture', endsAt: Date.now() + 30_000, total: 45, label: 'Plank', overtime: false, owner }))
     expect(restoreWork()).toBe(false)
   })
 })

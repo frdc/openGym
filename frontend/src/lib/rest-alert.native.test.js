@@ -3,7 +3,7 @@
 // the plugin is a Capacitor proxy that answers `then` with a native call that never settles, so
 // it must never become the value of a promise (the Coach hang, #42): here that would hang every
 // rest alert call.
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 
 const h = vi.hoisted(() => {
@@ -43,7 +43,9 @@ const settle = async () => { for (let i = 0; i < 10; i++) await new Promise(r =>
 const unhandled = []
 const onUnhandled = reason => unhandled.push(reason)
 
+const listenerBaseline = process.listenerCount('unhandledRejection')
 beforeEach(() => {
+  expect(process.listeners('unhandledRejection').filter(fn => fn === onUnhandled)).toHaveLength(0)
   vi.resetModules()
   h.calls = []
   h.registerPlugin = vi.fn(() => pluginProxy())
@@ -52,6 +54,11 @@ beforeEach(() => {
   localStorage.clear()
   unhandled.length = 0
   process.on('unhandledRejection', onUnhandled)
+})
+afterEach(() => {
+  process.off('unhandledRejection', onUnhandled)
+  expect(process.listeners('unhandledRejection').filter(fn => fn === onUnhandled)).toHaveLength(0)
+  expect(process.listenerCount('unhandledRejection')).toBe(listenerBaseline)
 })
 afterAll(() => {
   process.off('unhandledRejection', onUnhandled)
@@ -64,6 +71,7 @@ describe('the rest alert in the iOS app', () => {
     const alert = await import('./rest-alert.js')
     await expect(alert.armRestAlert(Date.now() + 90_000, { totalSec: 90 })).resolves.toBe(false)
     alert.holdRestAlert(60, 90)
+    await settle()
     alert.setRestAccent('red')
     alert.disarmRestAlert()
     await settle()
@@ -79,6 +87,7 @@ describe('the rest alert in the Android app', () => {
     const alert = await import('./rest-alert.js')
     await expect(alert.armRestAlert(Date.now() + 90_000, { totalSec: 90 })).resolves.toBe(true)
     alert.holdRestAlert(60, 90)
+    await settle()
     alert.setRestAccent('red')
     alert.disarmRestAlert()
     await settle()
@@ -165,7 +174,7 @@ describe('the alarm buzz in the Android app', () => {
 
 // The native half cannot run here; what it must do with the flag is read off its source.
 describe('the Android side of Vibrate off', () => {
-  const src = name => readFileSync(new URL(`../../android/app/src/main/java/ch/duartesantos/opengym/${name}.java`, import.meta.url), 'utf8')
+  const src = name => readFileSync(new URL(`../../android/app/src/main/java/com/fredc/opengym/${name}.java`, import.meta.url), 'utf8')
   const alert = src('RestAlert')
 
   it('reads the flag from the page, defaulting to on for an older page', () => {
@@ -189,7 +198,7 @@ describe('the Android side of Vibrate off', () => {
 })
 
 describe('the Android side of the alarm buzz (#375)', () => {
-  const src = name => readFileSync(new URL(`../../android/app/src/main/java/ch/duartesantos/opengym/${name}.java`, import.meta.url), 'utf8')
+  const src = name => readFileSync(new URL(`../../android/app/src/main/java/com/fredc/opengym/${name}.java`, import.meta.url), 'utf8')
   const alert = src('RestAlert')
   const plugin = src('RestAlertPlugin')
 
@@ -254,7 +263,8 @@ describe('the notification permission never holds the rest alarm back', () => {
         : async () => ({ remove: async () => {} }),
     }))
     const alert = await import('./rest-alert.js')
-    alert.holdRestAlert(30, 60)                       // a slow bridge call ahead in the chain
+    alert.holdRestAlert(30, 60, 'existing-scoped-timer') // a trusted restored timer
+    await settle() // let the native hold enter its deliberately blocked bridge call
     const late = alert.armRestAlert(Date.now() + 30, { totalSec: 1 })
     await new Promise(r => setTimeout(r, 60))
     release()
@@ -313,4 +323,37 @@ describe('the notification permission never holds the rest alarm back', () => {
     }
     expect(h.request).not.toHaveBeenCalled()
   })
+})
+
+it('carries opaque identity and ignores an old timer cancellation after replacement', async () => {
+  h.platform = 'android'
+  const calls = []
+  h.registerPlugin = vi.fn(() => new Proxy({}, { get: (_, name) => name === 'then' ? () => new Promise(() => {}) : async args => { calls.push([name, args]); return name === 'addListener' ? { remove: async () => {} } : undefined } }))
+  const alert = await import('./rest-alert.js')
+  await alert.armRestAlert(Date.now() + 90000, { timerToken: 'timer-a' })
+  await alert.armRestAlert(Date.now() + 90000, { timerToken: 'timer-b' })
+  alert.disarmRestAlert('timer-a')
+  alert.holdRestAlert(30, 90, 'timer-a')
+  await settle()
+  expect(calls.filter(([name]) => name === 'schedule').at(-1)[1].timerToken).toBe('timer-b')
+  expect(calls.filter(([name]) => name === 'cancel' || name === 'hold')).toEqual([])
+  alert.holdRestAlert(30, 90, 'timer-b')
+  await settle()
+  expect(calls.at(-1)).toEqual(['hold', { id: 42, leftMs: 30000, totalMs: 90000, timerToken: 'timer-b' }])
+})
+
+it('a schedule waiting for the native bridge cannot arm after its timer is replaced', async () => {
+  h.platform = 'android'
+  const calls = []; let release
+  const gate = new Promise(resolve => { release = resolve })
+  h.registerPlugin = vi.fn(() => new Proxy({}, { get: (_, name) => name === 'then' ? () => new Promise(() => {}) : async args => {
+    if (name === 'schedule' && args.timerToken === 'old') await gate
+    calls.push([name, args]); return name === 'addListener' ? { remove: async () => {} } : undefined
+  } }))
+  const alert = await import('./rest-alert.js')
+  const old = alert.armRestAlert(Date.now() + 90000, { timerToken: 'old' })
+  await settle(); alert.disarmRestAlert('old')
+  const next = alert.armRestAlert(Date.now() + 60000, { timerToken: 'new' })
+  release(); expect(await old).toBe(false); expect(await next).toBe(true)
+  expect(calls.filter(([name]) => name === 'schedule' || name === 'cancel').map(([name, args]) => [name, args.timerToken])).toEqual([['schedule', 'old'], ['cancel', 'old'], ['schedule', 'new']])
 })

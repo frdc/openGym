@@ -23,7 +23,7 @@ const meta = r => {
   return rest
 }
 
-export function idbBackend({ idb = globalThis.indexedDB } = {}) {
+export function idbBackend({ idb = globalThis.indexedDB, ownerKey = null } = {}) {
   let db = null
   const tx = mode => db.transaction(STORE, mode)
   return {
@@ -33,7 +33,7 @@ export function idbBackend({ idb = globalThis.indexedDB } = {}) {
       if (!idb) return false
       try {
         db = await new Promise((resolve, reject) => {
-          const r = idb.open(DB, 1)
+          const r = idb.open(ownerKey === null ? DB : DB + '-owner-' + encodeURIComponent(ownerKey), 1)
           r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE, { keyPath: 'hash' }) }
           r.onsuccess = () => resolve(r.result)
           r.onerror = () => reject(r.error)
@@ -76,8 +76,8 @@ export function idbBackend({ idb = globalThis.indexedDB } = {}) {
       // readable — then it is missing (the caller fetches it again or shows the fallback tile)
       // rather than a video that never plays. A readable one is rewritten in the new shape.
       let buf
-      try { buf = await r.blob.arrayBuffer() } catch { return null }
-      if (typeof r.size === 'number' && buf.byteLength !== r.size) return null
+      buf = await r.blob.arrayBuffer()
+      if (typeof r.size === 'number' && buf.byteLength !== r.size) throw new Error('media-read-incomplete')
       try {
         const t = tx('readwrite')
         const { blob: _old, ...rest } = r

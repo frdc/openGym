@@ -2,11 +2,9 @@
 // sheets.jsx). The row follows #295's picture field (horusglez) — the thumb of the draft, a
 // tinted Add/Change and a ghost Remove — and the link field is #246's (Vaibhav159).
 //
-// A picked file is turned into what the state keeps right here (lib/media-ingest.js: re-encoded
-// or scrubbed, hashed, with a poster) and put into the local store as pending before the form is
-// saved. That order is safe: an abandoned draft's files are unreferenced and the local clean-up
-// takes them after an hour; the server marks an upload that nothing references yet and keeps it
-// for its grace period, so the state push landing after the upload changes nothing.
+// Picked bytes are ingested and stored locally before an owner-bound draft is attached.
+// Open editors hold their originals and posters; abandoned bytes are retained while safe
+// physical garbage collection is deferred.
 //
 // The file input accepts image/* and video/* and nothing more specific: iOS converts a HEIC
 // photo to JPEG only when the page does not explicitly ask for HEIC, and every format is checked
@@ -16,9 +14,8 @@ import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { mediaOf, fmtClip } from '../lib/media-refs.js'
-import { mediaStore } from '../lib/media-store.js'
-import { MOBILE } from '../lib/mobile.js'
-import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
+import { captureMediaContext } from '../lib/local-media.js'
+import { DEFAULT_LIMITS, fmtMB, MB } from '../lib/media-limits.js'
 import { CustomThumb } from './CustomMedia.jsx'
 import { Row, Button } from './ui.jsx'
 import Icon from './Icon.jsx'
@@ -52,84 +49,73 @@ const loadIngest = () => import('../lib/media-ingest.js').catch(() => {
 
 const KIND_ICON = { image: 'image', gif: 'play', video: 'play' }
 
-/**
- * The picking half of a media field, shared by the custom-exercise editor and a workout's photos
- * and videos (WorkoutMedia.jsx) so both run the very same ingest and store path. pick(file)
- * turns a picked file into what the state keeps (lib/media-ingest.js: re-encoded or scrubbed,
- * hashed, with a poster), puts its files into the local store as pending, and resolves the
- * MediaRef — or null after it toasted why not. `note` is the dim line that says where the files
- * will live; `canAdd` is false where nothing could keep them (a server without media, or a
- * browser that cannot store them), `showAdd` false only where the button should not even show,
- * `storable` false where this browser cannot keep a file at all.
- */
+/** Shared local picker. Capture owner+epoch before decoder/storage awaits and reject stale
+ * results. Persistent storage and actual local hydration are required for new originals. */
 export function useMediaPicker() {
-  const user = useStore(s => s.user)
-  const config = useStore(s => s.config)
+  const ownerKey = useStore(s => s.ownerKey)
+  const localReady = useStore(s => s.localReady)
+  const epoch = useStore(s => s.getContext().epoch)
   const [busy, setBusy] = useState(false)
   const [warning, setWarning] = useState(null)
-  // Whether files picked here outlive the tab: false when IndexedDB is blocked and the store runs
-  // in memory — then nothing is offered, since a saved exercise would point at nothing tomorrow.
-  const [storable, setStorable] = useState(true)
+  const [storable, setStorable] = useState(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => {
     let alive = true
-    mediaStore.ready().then(() => { if (alive) setStorable(mediaStore.persistent) }).catch(() => { if (alive) setStorable(false) })
+    const captured = captureMediaContext(useStore)
+    setStorable(false); setBusy(false); setWarning(null)
+    if (captured) captured.media.ready().then(() => {
+      if (alive && captured.current()) setStorable(captured.media.persistent)
+    }).catch(() => { if (alive && captured.current()) setStorable(false) })
     return () => { alive = false }
-  }, [])
-  // Signed in to a server that answered without a `media` block: it predates the feature or has
-  // MEDIA_UPLOADS=0. Nothing would ever reach it. A config not known yet (an offline start) is
-  // not that answer — a file picked then waits here and goes up once the server is reached. A
-  // guest in the browser is on that same server, and what it picks would be owed and never sent
-  // once it signs up; a phone in local mode has no server (a config left from an earlier pairing
-  // says nothing about it).
-  const serverLacks = (!!user || !MOBILE) && !!config && !config.media
-
+  }, [ownerKey, epoch, localReady])
   const pick = async file => {
-    if (!file) return null
-    setBusy(true)
-    setWarning(null)
+    const captured = captureMediaContext(useStore)
+    if (!file || !captured) return null
+    const current = () => mounted.current && captured.current()
+    setBusy(true); setWarning(null)
     try {
-      // The ingest (decoders, canvas, the MP4 walk) only loads when someone picks a file.
-      // Offline before that code was ever cached, the load fails: that is no fault of the file.
+      await captured.media.ready()
+      if (!current() || !captured.media.persistent) return null
       const { ingestMediaFile } = await loadIngest()
-      const out = await ingestMediaFile(file, limitsFrom(config))
-      for (const b of out.blobs) await mediaStore.put(b.hash, b.blob, { mime: b.mime, pending: true })
-      // A guest's or a local phone's copy is the only one: ask the browser not to evict it under
-      // storage pressure. Best effort, and absent on plain http.
-      if (!user) { try { globalThis.navigator?.storage?.persist?.()?.catch?.(() => {}) } catch { /* not offered */ } }
+      if (!current()) return null
+      const out = await ingestMediaFile(file, DEFAULT_LIMITS)
+      if (!current()) return null
+      for (const b of out.blobs) {
+        await captured.media.put(b.hash, b.blob, { mime: b.mime, pending: false })
+        if (!current()) return null
+      }
+      try { globalThis.navigator?.storage?.persist?.()?.catch?.(() => {}) } catch { /* optional */ }
       if (out.warnings.includes('codec')) setWarning(t('This video may not play on every device. MP4 (H.264) plays everywhere.'))
       return out.media
-    } catch (e) {
-      toast(mediaErrorText(e))
-      return null
-    } finally {
-      setBusy(false)
-    }
+    } catch (e) { if (current()) toast(mediaErrorText(e)); return null }
+    finally { if (current()) setBusy(false) }
   }
   const note = !storable ? t('This browser cannot store photos or videos here.')
-    : serverLacks ? t('Your server does not store photos and videos yet.')
-      : !user ? t('Kept on this device only. Export with photos & videos keeps a copy.')
-        : null
-  return { pick, busy, warning, setWarning, note, storable, showAdd: !serverLacks, canAdd: !busy && storable && !serverLacks }
+    : t('Kept on this device only. Export with photos & videos keeps a copy.')
+  return { pick, busy, warning, setWarning, note, storable, showAdd: true, canAdd: localReady && !busy && storable }
 }
 
 export default function CustomMediaField({ media, url, onChange }) {
   const { pick, busy, warning, setWarning, note, showAdd, canAdd } = useMediaPicker()
+  const origin = useRef(captureMediaContext(useStore))
   const fileRef = useRef(null)
   const m = mediaOf({ media })
   // The draft's files stay out of the local clean-up for as long as this form is open: its
-  // one-hour grace would otherwise take a file picked in a form left open longer, and the saved
-  // exercise would point at nothing.
+  // refs are retained even for forms left open beyond the recent-file grace period.
   const mainHash = m?.hash, posterHash = m?.poster?.hash
   useEffect(() => {
     if (!mainHash) return undefined
-    return mediaStore.hold([mainHash, posterHash])
+    if (!origin.current?.current()) return
+    return origin.current.media.hold([mainHash, posterHash])
   }, [mainHash, posterHash])
 
   const onFile = async ev => {
     const file = ev.target.files && ev.target.files[0]
     ev.target.value = ''   // picking the same file again still fires onChange
+    if (!origin.current?.current()) return
     const got = await pick(file)
-    if (got) onChange({ media: got })
+    if (got && origin.current.current()) onChange({ media: got })
   }
 
   // "0:07 · 2.4 MB": the length of a clip or an animation, and the size of the file itself (the
@@ -144,8 +130,7 @@ export default function CustomMediaField({ media, url, onChange }) {
     <Row icon="image" iconTint="var(--blue)" title={t('Photo, GIF or video')} subtitle={subtitle}>
       <div className="cmf-act">
         {m && <span className="cmf-thumb"><CustomThumb ex={{ custom: true, media: m }} /></span>}
-        {/* Hidden on a server that will never take a file; shown but off where this browser
-            cannot keep one, with the note below saying why. */}
+        {/* The storage note explains why Add is disabled on a nonpersistent backend. */}
         {showAdd && <Button variant="tinted" size="sm" icon={busy ? undefined : 'image'} disabled={!canAdd} onClick={() => fileRef.current?.click()}>
           {busy ? t('Loading…') : m ? t('Change') : t('Add')}
         </Button>}

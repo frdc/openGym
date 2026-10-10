@@ -1,4 +1,15 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -14,65 +25,65 @@ function type(el, value) {
   Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value').set.call(el, value)
   el.dispatchEvent(new Event('input', { bubbles: true }))
 }
-function mountTopSheet() {
+async function mountTopSheet() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const button = (host, text) => [...host.querySelectorAll('button')].find(b => b.textContent.trim() === text)
 const cssSource = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
 describe('log a past workout', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     // Late in the evening, so the default 18:00 start on today's date is already over: a past
     // session has to have ended before now.
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 7, 26, 21, 0))
     useUI.setState({ sheets: [], toasts: [] })
-    useStore.setState(s => ({ S: { ...s.S, active: null, routines: [], workouts: [{ id: 'old', d: todayISO(), start: 1, end: 2, name: 'Old', entries: [], prs: [] }] } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, active: null, routines: [], workouts: [{ id: 'old', d: todayISO(), start: 1, end: 2, name: 'Old', entries: [], prs: [] }] } }))
     document.body.innerHTML = ''
   })
   afterEach(() => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }); vi.useRealTimers() })
 
-  it('refuses while a workout is running', () => {
+  it('refuses while a workout is running', async () => {
     const toast = vi.fn()
     useUI.setState({ toast })
-    useStore.setState(s => ({ S: { ...s.S, active: { id: 'a', entries: [] } } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, active: { id: 'a', entries: [] } } }))
     logPastWorkoutSheet()
     expect(useUI.getState().sheets).toHaveLength(0)
     expect(toast).toHaveBeenCalledWith('Finish the current workout first.')
   })
 
-  it('asks what to do when the day already has a workout', () => {
+  it('asks what to do when the day already has a workout', async () => {
     logPastWorkoutSheet()
-    const host = mountTopSheet()
+    const host = (await mountTopSheet())
     expect(host.querySelector('h3').textContent).toBe('Log a past workout')
-    act(() => { type(host.querySelector('input[type=date]'), todayISO()) })
-    act(() => { button(host, 'Continue').click() })
-    const prompt = mountTopSheet()
+    await act(async () => { type(host.querySelector('input[type=date]'), todayISO()); await uiRuntime.fixture.flush(); })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
+    const prompt = (await mountTopSheet())
     expect(prompt.textContent).toContain('There is already a workout on that day.')
     expect(['Replace', 'Add as second workout', 'Cancel'].map(t => !!button(prompt, t))).toEqual([true, true, true])
     expect(useStore.getState().S.active).toBeNull()
   })
 
-  it('a workout with photos or videos says Replace moves them to the new one', () => {
+  it('a workout with photos or videos says Replace moves them to the new one', async () => {
     const ref = n => ({ kind: 'image', hash: String(n).repeat(64), mime: 'image/webp', size: 10, width: 8, height: 6, at: 1 })
     logPastWorkoutSheet()
-    let host = mountTopSheet()
-    act(() => { type(host.querySelector('input[type=date]'), todayISO()) })
-    act(() => { button(host, 'Continue').click() })
-    expect(mountTopSheet().textContent).not.toContain('new workout.')
-    useStore.setState(s => ({ S: { ...s.S, workouts: [{ ...s.S.workouts[0], media: [ref(1), ref(2)] }] } }))
+    let host = (await mountTopSheet())
+    await act(async () => { type(host.querySelector('input[type=date]'), todayISO()); await uiRuntime.fixture.flush(); })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
+    expect((await mountTopSheet()).textContent).not.toContain('new workout.')
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [{ ...s.S.workouts[0], media: [ref(1), ref(2)] }] } }))
     logPastWorkoutSheet()
-    host = mountTopSheet()
-    act(() => { type(host.querySelector('input[type=date]'), todayISO()) })
-    act(() => { button(host, 'Continue').click() })
-    expect(mountTopSheet().textContent).toContain('Its 2 photos or videos move to the new workout.')
+    host = (await mountTopSheet())
+    await act(async () => { type(host.querySelector('input[type=date]'), todayISO()); await uiRuntime.fixture.flush(); })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
+    expect((await mountTopSheet()).textContent).toContain('Its 2 photos or videos move to the new workout.')
   })
 
   // The Date and Start-time rows are the only .lrow rows in the app that pair a title with a
@@ -80,9 +91,9 @@ describe('log a past workout', () => {
   // comes straight out of the field: 104px pushed the date input 23px off a 320px screen, calendar
   // picker and all, so there was no way to open the picker on a small phone. The floor has to be the
   // row's own longest word (min-width:auto), which these short titles barely ask for.
-  it('gives the date and time fields a title column that can shrink', () => {
+  it('gives the date and time fields a title column that can shrink', async () => {
     logPastWorkoutSheet()
-    const host = mountTopSheet()
+    const host = (await mountTopSheet())
     const fields = [...host.querySelectorAll('.lrow input.timef')]
     expect(fields.map(i => i.type)).toEqual(['date', 'time'])
     for (const field of fields) expect(field.closest('.lrow').querySelectorAll('.lrow-v')).toHaveLength(0)
@@ -95,11 +106,11 @@ describe('log a past workout', () => {
     expect(cssSource).toContain('.lrow>.timef{margin-inline-start:auto}')
   })
 
-  it('starts a backfilled session straight away on a free day', () => {
+  it('starts a backfilled session straight away on a free day', async () => {
     logPastWorkoutSheet()
-    const host = mountTopSheet()
-    act(() => { type(host.querySelector('input[type=date]'), '2020-01-02') })
-    act(() => { button(host, 'Continue').click() })
+    const host = (await mountTopSheet())
+    await act(async () => { type(host.querySelector('input[type=date]'), '2020-01-02'); await uiRuntime.fixture.flush(); })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
     const A = useStore.getState().S.active
     expect(A.d).toBe('2020-01-02')
     expect(new Date(A.start).getHours()).toBe(18)
@@ -107,51 +118,51 @@ describe('log a past workout', () => {
   })
 
   // The same keystroke clamp as the saved workout's duration: a 60 emptied to type 45 read 145.
-  it('lets the duration be emptied and retyped, and never starts a session of no length', () => {
+  it('lets the duration be emptied and retyped, and never starts a session of no length', async () => {
     logPastWorkoutSheet()
-    const host = mountTopSheet()
-    act(() => { type(host.querySelector('input[type=date]'), '2020-01-02') })
+    const host = (await mountTopSheet())
+    await act(async () => { type(host.querySelector('input[type=date]'), '2020-01-02'); await uiRuntime.fixture.flush(); })
     const field = host.querySelector('input.num')
-    act(() => { type(field, '') })
+    await act(async () => { type(field, ''); await uiRuntime.fixture.flush(); })
     expect(field.value).toBe('')
-    act(() => { type(field, '45') })
-    act(() => { button(host, 'Continue').click() })
+    await act(async () => { type(field, '45'); await uiRuntime.fixture.flush(); })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active.backfill.durationMin).toBe(45)
   })
 
   // An emptied duration is neither the default hour nor a silent minute (QA 1.3.9): nothing
   // starts until a length is typed, and the sheet says so.
-  it('an emptied duration starts nothing and asks for a length', () => {
+  it('an emptied duration starts nothing and asks for a length', async () => {
     logPastWorkoutSheet()
-    const host = mountTopSheet()
-    act(() => { type(host.querySelector('input[type=date]'), '2020-01-02') })
-    act(() => { type(host.querySelector('input.num'), '') })
+    const host = (await mountTopSheet())
+    await act(async () => { type(host.querySelector('input[type=date]'), '2020-01-02'); await uiRuntime.fixture.flush(); })
+    await act(async () => { type(host.querySelector('input.num'), ''); await uiRuntime.fixture.flush(); })
     expect(host.textContent).toContain('Enter how long it took (at least 1 minute).')
-    act(() => { button(host, 'Continue').click() })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active).toBeFalsy()
-    act(() => { type(host.querySelector('input.num'), '1') })
-    act(() => { button(host, 'Continue').click() })
+    await act(async () => { type(host.querySelector('input.num'), '1'); await uiRuntime.fixture.flush(); })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active.backfill.durationMin).toBe(1)
   })
 
-  it('refuses a session that would still be running now, and one longer than a day', () => {
+  it('refuses a session that would still be running now, and one longer than a day', async () => {
     useUI.setState({ toast: vi.fn() })
     vi.setSystemTime(new Date(2026, 7, 26, 1, 42))
     {
       logPastWorkoutSheet()
-      const host = mountTopSheet()
-      act(() => { type(host.querySelector('input[type=date]'), '2026-08-26') })
-      act(() => { type(host.querySelector('input[type=time]'), '23:30') })
-      act(() => { button(host, 'Continue').click() })
+      const host = (await mountTopSheet())
+      await act(async () => { type(host.querySelector('input[type=date]'), '2026-08-26'); await uiRuntime.fixture.flush(); })
+      await act(async () => { type(host.querySelector('input[type=time]'), '23:30'); await uiRuntime.fixture.flush(); })
+      await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
       expect(useStore.getState().S.active).toBeFalsy()
       expect(useUI.getState().toast).toHaveBeenLastCalledWith('That’s still in the future. Try an earlier start.')
-      act(() => { type(host.querySelector('input[type=date]'), '2026-08-20') })
-      act(() => { type(host.querySelector('input.num'), '99999') })
+      await act(async () => { type(host.querySelector('input[type=date]'), '2026-08-20'); await uiRuntime.fixture.flush(); })
+      await act(async () => { type(host.querySelector('input.num'), '99999'); await uiRuntime.fixture.flush(); })
       expect(host.textContent).toContain('That’s more than a day. Keep it to 24 hours or less.')
-      act(() => { button(host, 'Continue').click() })
+      await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
       expect(useStore.getState().S.active).toBeFalsy()
-      act(() => { type(host.querySelector('input.num'), '90') })
-      act(() => { button(host, 'Continue').click() })
+      await act(async () => { type(host.querySelector('input.num'), '90'); await uiRuntime.fixture.flush(); })
+      await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
       expect(useStore.getState().S.active.d).toBe('2026-08-20')
     }
   })

@@ -3,7 +3,7 @@
 // already relative; the API call was not, so it went to the proxy's own root where nothing
 // answers it. The base is read from where the app is being served.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { appBase, beacon } from './api.js'
+import { appBase } from './app-base.js'
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
@@ -35,29 +35,16 @@ describe('the app knows where it is served from', () => {
   })
 })
 
-describe('the "left" beacon of the web app', () => {
-  afterEach(() => { vi.unstubAllGlobals(); history.replaceState(null, '', '/') })
-
-  it('goes to the API of the copy it was served from, as JSON', async () => {
-    history.replaceState(null, '', '/myGym/')
-    const sendBeacon = vi.fn(() => true)
-    vi.stubGlobal('navigator', { ...navigator, sendBeacon })
-    expect(beacon('/api/activity', { active: false })).toBe(true)
-    const [url, blob] = sendBeacon.mock.calls[0]
-    expect(url).toBe('/myGym/api/activity')
-    expect(blob.type).toBe('application/json')
-    expect(JSON.parse(await blob.text())).toEqual({ active: false })
-  })
-
-  it('a browser without sendBeacon just skips it', () => {
-    vi.stubGlobal('navigator', { ...navigator, sendBeacon: undefined })
-    expect(beacon('/api/activity', { active: false })).toBe(false)
-  })
-})
-
 // What the web container does with a request, read off web/nginx.conf.template itself.
 // A path, not a URL: under happy-dom `URL` is the DOM's, which node:fs will not take.
 const NGINX = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../web/nginx.conf.template'), 'utf8')
+
+it('serves static frontend without an API proxy or backend build dependency', () => {
+  expect(NGINX.replace(/#.*$/gm, '')).not.toMatch(/proxy_pass|api_upstream/)
+  const docker = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../web/Dockerfile'), 'utf8')
+  expect(docker).not.toMatch(/COPY api\//)
+  for (const key of ['API_KEY', 'AUTH_DOMAIN', 'PROJECT_ID', 'APP_ID']) expect(docker.split('FROM nginx:')[0]).toContain('ARG VITE_FIREBASE_' + key)
+})
 
 // Each { } block's own directives, its nested blocks left out. Comments go first, and so do
 // ${VAR} placeholders, whose braces are envsubst's, not nginx's.
@@ -87,63 +74,6 @@ describe('the cache lifetime nginx gives an image', () => {
 // into the same text escaped. Otherwise they run here the way nginx runs them.
 const render = base => NGINX.replace(/#.*$/gm, '').replace(/\$\{BASE_PATH\}/g, base).replace(/\$\{\w+\}/g, 'X')
 const quoted = pattern => pattern.replace(/\\Q([\s\S]*?)(?:\\E|$)/g, (_, text) => text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'))
-
-// A proxy that passes its prefix through (BASE_PATH=/gym) has both /api blocks matching
-// /gym/api/..., but the API's routes are /api/... . The prefix used to be forwarded as-is, and
-// every call under the prefix was answered 404. A map takes it off.
-describe('what nginx forwards to the API', () => {
-  const MAP = /\bmap\s+\$request_uri\s+\$(\w+)\s*\{\s*"~([^"]*)"\s+\$(\w+)\s*;\s*\}/
-  // The target the API receives. No match: the map is empty and nginx sends the request's own.
-  function forwarded(base, target) {
-    const [, , pattern, group] = render(base).match(MAP)
-    const m = new RegExp(quoted(pattern)).exec(target)
-    return m ? m.groups[group] : target
-  }
-
-  it('both /api blocks send the mapped target, photo and video uploads included', () => {
-    for (const base of ['', '/gym']) {
-      const conf = render(base)
-      for (const prefix of ['/api/', '/api/media/']) {
-        const block = conf.match(new RegExp('location \\^~ ' + base + prefix + ' \\{([^}]*)\\}'))
-        expect(block).toBeTruthy()
-        expect(block[1]).toMatch(new RegExp('\\bproxy_pass\\s+\\$api_upstream\\$' + conf.match(MAP)[1] + ';'))
-      }
-    }
-  })
-
-  it('no block hands the API the target as it came in', () => {
-    const passes = [...render('/gym').matchAll(/\bproxy_pass\s+([^;]+);/g)].map(m => m[1])
-      .filter(to => to.startsWith('$api_upstream'))
-    expect(passes.length).toBe(2)
-    for (const to of passes) expect(to).toBe('$api_upstream$api_request_uri')
-  })
-
-  it('takes a passed-through prefix off, query and all', () => {
-    expect(forwarded('/gym', '/gym/api/health')).toBe('/api/health')
-    expect(forwarded('/gym', '/gym/api/login/options?x=1')).toBe('/api/login/options?x=1')
-    expect(forwarded('/gym', '/gym//api/health')).toBe('//api/health')
-    expect(forwarded('/gym', '/gym/api/media/missing')).toBe('/api/media/missing')
-    expect(forwarded('/gym', '/gym/api/media/' + 'a'.repeat(64))).toBe('/api/media/' + 'a'.repeat(64))
-    // Not the prefix as sent: forwarded untouched, and the API 404s it as before.
-    expect(forwarded('/gym', '/%67ym/api/health')).toBe('/%67ym/api/health')
-  })
-
-  it('changes nothing at the site root', () => {
-    for (const t of ['/api/health', '/api/health?x=1', '//api/health', '/api/%68ealth', '/api/../api/me'])
-      expect(forwarded('', t)).toBe(t)
-  })
-
-  it('reads BASE_PATH as text, not as a pattern', () => {
-    expect(forwarded('/g.ym', '/g.ym/api/health')).toBe('/api/health')
-    // As a pattern, "." matched the X and /gXym was taken off as if it were the prefix.
-    expect(forwarded('/g.ym', '/gXym/../g.ym/api/health')).toBe('/gXym/../g.ym/api/health')
-    // As a pattern, "g+" never matched the "+" itself, and the prefix was left on.
-    expect(forwarded('/g+ym', '/g+ym/api/health')).toBe('/api/health')
-    expect(forwarded('/a/b', '/a/b/api/x?q=1')).toBe('/api/x?q=1')
-    // A longer first segment is not the prefix.
-    expect(forwarded('/gym', '/gymnasium/../gym/api/health')).toBe('/gymnasium/../gym/api/health')
-  })
-})
 
 // Under BASE_PATH every static location takes the prefix off with a rewrite before it looks on
 // disk. Read as a pattern, BASE_PATH=/g+ym never matched /g+ym itself: /g+ym/ was not found, went
@@ -197,10 +127,14 @@ describe('the redirects nginx sends', () => {
 // script nginx's entrypoint runs before it renders the template. Run here with sh, as it is there.
 describe('the web container refuses a BASE_PATH it cannot serve', () => {
   const WEB = join(dirname(fileURLToPath(import.meta.url)), '../../../web')
+  // Windows has no POSIX sh on PATH; Git Bash runs the same container script.
+  const shell = process.platform === 'win32'
+    ? join(process.env.ProgramFiles || 'C:/Program Files', 'Git/bin/bash.exe')
+    : 'sh'
   const check = value => {
     const env = { PATH: process.env.PATH }
     if (value !== undefined) env.BASE_PATH = value
-    return spawnSync('sh', [join(WEB, '05-check-base-path.sh')], { env, encoding: 'utf8' })
+    return spawnSync(shell, [join(WEB, '05-check-base-path.sh')], { env, encoding: 'utf8' })
   }
 
   it.each([[undefined], [''], ['/gym'], ['/a/b'], ['/g+ym']])('starts with BASE_PATH=%s', value => {
@@ -218,6 +152,7 @@ describe('the web container refuses a BASE_PATH it cannot serve', () => {
     })
 
   it('is installed where the entrypoint runs it, and executable', () => {
+    expect(readFileSync(join(WEB, '05-check-base-path.sh'), 'utf8')).not.toContain('\r')
     // Not executable, the entrypoint skips it with a log line and nginx starts anyway. Its 05
     // sorts before 20-envsubst-on-templates.sh, nginx's own step that renders the template.
     const dockerfile = readFileSync(join(WEB, 'Dockerfile'), 'utf8')

@@ -1,4 +1,15 @@
 // @vitest-environment happy-dom
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import React, { act } from 'react'
@@ -15,7 +26,6 @@ import { buildPlanBundle, parsePlan } from '../lib/plan-share.js'
 const cssSource = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
 const mocks = vi.hoisted(() => ({ exConfigSheet: vi.fn() }))
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({})) }))
 vi.mock('../sheets.jsx', () => ({
   glyphPicker: vi.fn(), exercisePicker: vi.fn(), exConfigSheet: mocks.exConfigSheet, confirmSheet: vi.fn()
 }))
@@ -33,22 +43,22 @@ const entry = (id, setup, sg) => ({
 let root
 let container
 
-function setRoutine(ex) {
+async function setRoutine(ex) {
   const S = clone(DEF)
   S.routines = [{ id: 'r1', name: 'Move test', emoji: 'dumbbell', ex }]
   S.customEx = ['c1', 'c2', 'c3', 'c4'].map(custom)
-  useStore.setState({ S, user: null })
+  await uiRuntime.fixture.applySnapshot({ S, user: null })
 }
 
-function renderRoutine() {
+async function renderRoutine() {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  act(() => root.render(
+  await act(async () => { await root.render(
     <MemoryRouter initialEntries={['/routine/r1']}>
       <Routes><Route path="/routine/:id" element={<RoutineEdit />} /></Routes>
     </MemoryRouter>
-  ))
+  ); await uiRuntime.fixture.flush(); })
 }
 
 function itemFor(name) {
@@ -59,20 +69,18 @@ function moveButton(name, direction) {
   return itemFor(name).querySelector(`button[aria-label="${direction}"]`)
 }
 
-function pointerActivateArea(button) {
+async function pointerActivateArea(button) {
   // Model browser hit-testing: pointer-events:none removes the disabled button
   // from the target chain, exposing the clickable routine row underneath.
   const disabledRule = cssSource.match(/\.iconbtn:disabled\s*\{[^}]*\}/)?.[0] || ''
   const target = /pointer-events\s*:\s*none/.test(disabledRule)
     ? button.closest('.item')
     : button
-  act(() => {
-    target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+  await act(async () => { target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     target.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     if (!(target instanceof HTMLButtonElement && target.disabled)) {
       target.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    }
-  })
+    }; await uiRuntime.fixture.flush(); })
 }
 
 beforeEach(() => {
@@ -91,16 +99,16 @@ afterEach(() => {
 
 describe('routine move controls', () => {
   // #377: the arrows on a superset row move that one exercise, not the whole superset.
-  it('moves a superset member inside its superset and persists complete occurrences', () => {
-    setRoutine([
+  it('moves a superset member inside its superset and persists complete occurrences', async () => {
+    ;await setRoutine([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
       entry('c3', 30, 'g'),
       entry('c4', 40)
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
 
-    act(() => moveButton('setup-10', 'Move down').click())
+    await act(async () => { await moveButton('setup-10', 'Move down').click(); await uiRuntime.fixture.flush(); })
 
     const moved = useStore.getState().S.routines[0].ex
     expect(moved).toEqual([
@@ -109,21 +117,22 @@ describe('routine move controls', () => {
       entry('c3', 30, 'g'),
       entry('c4', 40)
     ])
-    expect(JSON.parse(localStorage.getItem('gym_state_v1')).routines[0].ex).toEqual(moved)
+    await uiRuntime.fixture.flush()
+    expect(((await uiRuntime.fixture.saved())).state.routines[0].ex).toEqual(moved)
   })
 
-  it('takes the last member out of its superset, where it stands, and the next press moves it on', () => {
-    setRoutine([
+  it('takes the last member out of its superset, where it stands, and the next press moves it on', async () => {
+    ;await setRoutine([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
       entry('c3', 30, 'g'),
       entry('c4', 40)
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
     expect(moveButton('setup-30', 'Move down').title).toBe('Move out of the superset')
     expect(moveButton('setup-20', 'Move down').title).toBe('Move down')
 
-    act(() => moveButton('setup-30', 'Move down').click())
+    await act(async () => { await moveButton('setup-30', 'Move down').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.routines[0].ex).toEqual([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
@@ -131,7 +140,7 @@ describe('routine move controls', () => {
       entry('c4', 40)
     ])
 
-    act(() => moveButton('setup-30', 'Move down').click())
+    await act(async () => { await moveButton('setup-30', 'Move down').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.routines[0].ex).toEqual([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
@@ -140,18 +149,18 @@ describe('routine move controls', () => {
     ])
   })
 
-  it('a superset member on the first row can still leave upward; a superset of two dissolves', () => {
-    setRoutine([
+  it('a superset member on the first row can still leave upward; a superset of two dissolves', async () => {
+    ;await setRoutine([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
       entry('c3', 30)
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
     const up = moveButton('setup-10', 'Move up')
     expect(up.disabled).toBe(false)
     expect(up.title).toBe('Move out of the superset')
 
-    act(() => up.click())
+    await act(async () => { await up.click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.routines[0].ex).toEqual([
       entry('c1', 10),
       entry('c2', 20),
@@ -160,15 +169,15 @@ describe('routine move controls', () => {
     expect(moveButton('setup-10', 'Move up').disabled).toBe(true)
   })
 
-  it('a single exercise jumps a whole superset and does not join it', () => {
-    setRoutine([
+  it('a single exercise jumps a whole superset and does not join it', async () => {
+    ;await setRoutine([
       entry('c3', 30),
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g')
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
 
-    act(() => moveButton('setup-30', 'Move down').click())
+    await act(async () => { await moveButton('setup-30', 'Move down').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.routines[0].ex).toEqual([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
@@ -176,15 +185,15 @@ describe('routine move controls', () => {
     ])
   })
 
-  it('moves the selected duplicate occurrence without aliasing its configuration', () => {
-    setRoutine([
+  it('moves the selected duplicate occurrence without aliasing its configuration', async () => {
+    ;await setRoutine([
       entry('c1', 10),
       entry('c2', 20),
       entry('c1', 30)
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
 
-    act(() => moveButton('setup-30', 'Move up').click())
+    await act(async () => { await moveButton('setup-30', 'Move up').click(); await uiRuntime.fixture.flush(); })
 
     expect(useStore.getState().S.routines[0].ex).toEqual([
       entry('c1', 10),
@@ -193,54 +202,54 @@ describe('routine move controls', () => {
     ])
   })
 
-  it('moves a standalone occurrence down with every configuration field intact', () => {
+  it('moves a standalone occurrence down with every configuration field intact', async () => {
     const selected = {
       ...entry('c1', 10),
       mode: 'reps', prog: 'double', repsMin: 4, repsMax: 12,
       side: true, warmupSets: 2,
       intensifier: { type: 'restpause', pauseSec: 20 }
     }
-    setRoutine([selected, entry('c2', 20), entry('c3', 30)])
-    renderRoutine()
+    await setRoutine([selected, entry('c2', 20), entry('c3', 30)])
+    await renderRoutine()
 
-    act(() => moveButton('setup-10', 'Move down').click())
+    await act(async () => { await moveButton('setup-10', 'Move down').click(); await uiRuntime.fixture.flush(); })
 
     expect(useStore.getState().S.routines[0].ex).toEqual([
       entry('c2', 20), selected, entry('c3', 30)
     ])
   })
 
-  it('disables unit-boundary directions without cleaning or persisting state', () => {
-    setRoutine([
+  it('disables unit-boundary directions without cleaning or persisting state', async () => {
+    ;await setRoutine([
       entry('c1', 10, 'orphan'),
       entry('c2', 20)
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
     const before = useStore.getState().S
 
     expect(moveButton('c1', 'Move up').disabled).toBe(true)
     expect(moveButton('c2', 'Move down').disabled).toBe(true)
-    act(() => moveButton('c1', 'Move up').click())
+    await act(async () => { await moveButton('c1', 'Move up').click(); await uiRuntime.fixture.flush(); })
 
     expect(useStore.getState().S).toBe(before)
     expect(useStore.getState().S.routines[0].ex[0].sg).toBe('orphan')
     expect(localStorage.getItem('gym_state_v1')).toBeNull()
   })
 
-  it('keeps pointer activation in both disabled boundary areas isolated from the routine row', () => {
-    setRoutine([
+  it('keeps pointer activation in both disabled boundary areas isolated from the routine row', async () => {
+    ;await setRoutine([
       entry('c1', 10, 'orphan'),
       entry('c2', 20)
-    ])
-    renderRoutine()
+    ]);
+    await renderRoutine()
     const before = useStore.getState().S
     const firstUp = moveButton('c1', 'Move up')
     const lastDown = moveButton('c2', 'Move down')
 
     expect(firstUp.disabled).toBe(true)
     expect(lastDown.disabled).toBe(true)
-    pointerActivateArea(firstUp)
-    pointerActivateArea(lastDown)
+    await pointerActivateArea(firstUp)
+    await pointerActivateArea(lastDown)
 
     expect(mocks.exConfigSheet).not.toHaveBeenCalled()
     expect(useStore.getState().S).toBe(before)
@@ -248,28 +257,28 @@ describe('routine move controls', () => {
     expect(localStorage.getItem('gym_state_v1')).toBeNull()
   })
 
-  it('uses localized accessible names and titles, retains button focus, and does not open config', () => {
+  it('uses localized accessible names and titles, retains button focus, and does not open config', async () => {
     _setLangState('de', de, null, null)
-    setRoutine([entry('c1', 10), entry('c2', 20)])
-    renderRoutine()
+    await setRoutine([entry('c1', 10), entry('c2', 20)])
+    await renderRoutine()
     const button = moveButton('c2', 'Nach oben')
 
     expect(button.title).toBe('Nach oben')
     button.focus()
-    act(() => button.click())
+    await act(async () => { await button.click(); await uiRuntime.fixture.flush(); })
 
     expect(document.activeElement?.tagName).toBe('BUTTON')
     expect(mocks.exConfigSheet).not.toHaveBeenCalled()
   })
 
-  it('retains reordered occurrence order and grouping through plan export and import', () => {
-    setRoutine([
+  it('retains reordered occurrence order and grouping through plan export and import', async () => {
+    ;await setRoutine([
       entry('c1', 10, 'g'),
       entry('c2', 20, 'g'),
       entry('c3', 30)
-    ])
-    renderRoutine()
-    act(() => moveButton('setup-10', 'Move down').click())
+    ]);
+    await renderRoutine()
+    await act(async () => { await moveButton('setup-10', 'Move down').click(); await uiRuntime.fixture.flush(); })
 
     const parsed = parsePlan(JSON.stringify(buildPlanBundle(useStore.getState().S, 'Move test')))
     expect(parsed.routines[0].ex).toEqual([

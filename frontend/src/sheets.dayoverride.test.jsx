@@ -1,11 +1,22 @@
 // @vitest-environment happy-dom
-// The day sheet's header names the plan the day would have without its override. In a coach
+// The day sheet's header names the plan the day would have without its override. In a plan
 // week that is the queue's session for the day, in front of the weekday's own routines — the
 // same answer the Home row gives — not the weekday list alone. The list itself puts the
-// week's remaining sessions first under 'Coach week': picking one pins it to the day (the
+// week's remaining sessions first under 'Planned sessions': picking one pins it to the day (the
 // same per-date override), and one already pinned to another day shows that day.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -27,20 +38,20 @@ const logged = id => {
 }
 const mounted = []
 
-function renderTop() {
+async function renderTop() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const header = host => host.querySelector('.muted.small').textContent
 const heading = host => host.querySelector('h4.sec')?.textContent
 const lists = host => [...host.querySelectorAll('.list')].map(l => [...l.querySelectorAll('.item .tt')].map(e => e.textContent))
 const rowOf = (host, name) => [...host.querySelectorAll('.item')].find(el => el.querySelector('.tt')?.textContent === name)
-const setS = (over = {}) => useStore.setState(s => ({ S: { ...s.S, routines, week: {}, dayPlan: {}, workouts: [], active: null, queue, ...over }, user: null }))
+const setS = async (over = {}) => (await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, routines, week: {}, dayPlan: {}, workouts: [], active: null, queue, ...over }, user: null })))
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -49,102 +60,102 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => { mounted.splice(0).forEach(r => r.unmount()) }) })
 
-describe('Day sheet header in a coach week', () => {
-  it('names the queue session for today, with the weekday\'s own routine after it', () => {
-    setS()
+describe('Day sheet header in a plan week', () => {
+  it('names the queue session for today, with the weekday\'s own routine after it', async () => {
+    await setS()
     dayOverrideSheet(todayISO())
-    expect(header(renderTop())).toMatch(/^Weekly plan: US W1 D1/)
-    setS({ week: { [new Date().getDay()]: ['own'] } })
+    expect(header((await renderTop()))).toMatch(/^Weekly plan: US W1 D1/)
+    await setS({ week: { [new Date().getDay()]: ['own'] } })
     dayOverrideSheet(todayISO())
-    expect(header(renderTop())).toMatch(/^Weekly plan: US W1 D1 \+ Core/)
+    expect(header((await renderTop()))).toMatch(/^Weekly plan: US W1 D1 \+ Core/)
   })
 
-  it('a rest override for today still shows the plan it replaced, marked as changed', () => {
-    setS({ dayPlan: { [todayISO()]: 'rest' } })
+  it('a rest override for today still shows the plan it replaced, marked as changed', async () => {
+    await setS({ dayPlan: { [todayISO()]: 'rest' } })
     dayOverrideSheet(todayISO())
-    const h = header(renderTop())
+    const h = header((await renderTop()))
     expect(h).toMatch(/^Weekly plan: US W1 D1/)
     expect(h).toContain('changed for this day')
   })
 
-  it('another day has no queue session: the weekday alone, or Rest', () => {
+  it('another day has no queue session: the weekday alone, or Rest', async () => {
     const tomorrow = daysFromToday(1)
-    setS({ week: { [new Date(tomorrow + 'T12:00:00').getDay()]: ['own'] } })
+    await setS({ week: { [new Date(tomorrow + 'T12:00:00').getDay()]: ['own'] } })
     dayOverrideSheet(tomorrow)
-    expect(header(renderTop())).toMatch(/^Weekly plan: Core/)
-    setS()
+    expect(header((await renderTop()))).toMatch(/^Weekly plan: Core/)
+    await setS()
     dayOverrideSheet(tomorrow)
-    expect(header(renderTop())).toMatch(/^Weekly plan: Rest/)
+    expect(header((await renderTop()))).toMatch(/^Weekly plan: Rest/)
   })
 })
 
-describe('Day sheet list in a coach week', () => {
-  it('a fulfilled pin — the session pinned here already done — reads as no change; the clear row stays', () => {
-    setS({ dayPlan: { [todayISO()]: 'd1' }, workouts: [logged('d1')] })
+describe('Day sheet list in a plan week', () => {
+  it('a fulfilled pin — the session pinned here already done — reads as no change; the clear row stays', async () => {
+    await setS({ dayPlan: { [todayISO()]: 'd1' }, workouts: [logged('d1')] })
     dayOverrideSheet(todayISO())
-    const host = renderTop()
+    const host = (await renderTop())
     expect(header(host)).toMatch(/^Weekly plan: US W1 D2/)
     expect(header(host)).not.toContain('changed for this day')
     expect(rowOf(host, 'Back to weekly plan')).toBeTruthy()
   })
 
-  it("the pinned day's own sheet shows the exercise count, not its own date again", () => {
+  it("the pinned day's own sheet shows the exercise count, not its own date again", async () => {
     const friday = daysFromToday(2)
-    setS({ dayPlan: { [friday]: 'd2' } })
+    await setS({ dayPlan: { [friday]: 'd2' } })
     dayOverrideSheet(friday)
-    const host = renderTop()
+    const host = (await renderTop())
     expect(rowOf(host, 'US W1 D2').querySelector('.ss').textContent).toBe(exCount(1))
     // …while from today's sheet the same session wears Friday.
     dayOverrideSheet(todayISO())
-    expect(rowOf(renderTop(), 'US W1 D2').querySelector('.ss').textContent).toBe(fmtDate(friday, true))
+    expect(rowOf((await renderTop()), 'US W1 D2').querySelector('.ss').textContent).toBe(fmtDate(friday, true))
     // A session pinned to today wears today from another day's sheet, though the row lights it as next.
-    setS({ dayPlan: { [todayISO()]: 'd2' } })
+    await setS({ dayPlan: { [todayISO()]: 'd2' } })
     dayOverrideSheet(friday)
-    expect(rowOf(renderTop(), 'US W1 D2').querySelector('.ss').textContent).toBe(fmtDate(todayISO(), true))
+    expect(rowOf((await renderTop()), 'US W1 D2').querySelector('.ss').textContent).toBe(fmtDate(todayISO(), true))
   })
 
-  it('lists the remaining sessions first under Coach week, a done session down in the plain list', () => {
-    setS({ workouts: [logged('d1')] })
+  it('lists the remaining sessions first under Planned sessions, a done session down in the plain list', async () => {
+    await setS({ workouts: [logged('d1')] })
     dayOverrideSheet(todayISO())
-    const host = renderTop()
-    expect(heading(host)).toBe('Coach week')
-    const [coach, plain] = lists(host)
-    expect(coach).toEqual(['US W1 D2'])
+    const host = (await renderTop())
+    expect(heading(host)).toBe('Planned sessions')
+    const [planned, plain] = lists(host)
+    expect(planned).toEqual(['US W1 D2'])
     expect(plain).toEqual(['US W1 D1', 'Core', 'Rest / skip this day'])
   })
 
-  it('your own loop is headed Your loop, not Coach week', () => {
-    setS({ queue: { ...queue, rotationId: 'r1' }, rotation: { id: 'r1', sequence: ['d1', 'd2'], label: 'Rotation' } })
+  it('your own loop is headed Your loop', async () => {
+    await setS({ queue: { ...queue, rotationId: 'r1' }, rotation: { id: 'r1', sequence: ['d1', 'd2'], label: 'Rotation' } })
     try {
     dayOverrideSheet(todayISO())
-    expect(heading(renderTop())).toBe('Your loop')
-    } finally { useStore.setState(s => ({ S: { ...s.S, rotation: null } })) }
+    expect(heading((await renderTop()))).toBe('Your loop')
+    } finally { await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, rotation: null } })); }
   })
 
-  it('picking a coach row pins that session to the day', () => {
+  it('picking a planned session row pins that session to the day', async () => {
     const friday = daysFromToday(2)
-    setS()
+    await setS()
     dayOverrideSheet(friday)
-    const host = renderTop()
-    act(() => rowOf(host, 'US W1 D2').click())
+    const host = (await renderTop())
+    await act(async () => { await rowOf(host, 'US W1 D2').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.dayPlan[friday]).toBe('d2')
     expect(useUI.getState().sheets).toHaveLength(0)
     expect(useUI.getState().toastMsg).toBe(`US W1 D2 planned for ${fmtDate(friday)}`)
   })
 
-  it('a session pinned to another day shows that day instead of its exercise count', () => {
+  it('a session pinned to another day shows that day instead of its exercise count', async () => {
     const friday = daysFromToday(2)
-    setS({ dayPlan: { [friday]: 'd2' } })
+    await setS({ dayPlan: { [friday]: 'd2' } })
     dayOverrideSheet(todayISO())
-    const host = renderTop()
+    const host = (await renderTop())
     expect(rowOf(host, 'US W1 D2').querySelector('.ss').textContent).toBe(fmtDate(friday, true))
     expect(rowOf(host, 'US W1 D1').querySelector('.ss').textContent).toBe(exCount(1))
   })
 
-  it('without a queue there is no heading and one plain list', () => {
-    setS({ queue: null })
+  it('without a queue there is no heading and one plain list', async () => {
+    await setS({ queue: null })
     dayOverrideSheet(todayISO())
-    const host = renderTop()
+    const host = (await renderTop())
     expect(heading(host)).toBeUndefined()
     expect(lists(host)).toEqual([['US W1 D1', 'US W1 D2', 'Core', 'Rest / skip this day']])
   })

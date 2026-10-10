@@ -1,0 +1,51 @@
+/** Cloud transport contracts. Transport metadata never belongs to shareable state S.
+ * @typedef {{projectId:string, uid:string|null, ownerKey:string}} Owner
+ * @typedef {{schemaVersion:1, generation:number, dataRevision:number, unitVersion:number, activeUnitJob:null|string, lastResetOpId:null|string}} Control
+ * @typedef {{schemaVersion:1, generation:number, unitVersion:number, dataUnit:null|'kg'|'lb', payload:*, stamps:Object, deletedAt:null|number, appliedOpId:null|string}} Record
+ * @typedef {{opId:string, ownerKey:string, generation:number, unitVersion:number, kind:string, paths:string[], readPaths:string[], payloads:Object<string,Record>, blockedReason:null|string,unitProvenance?:'confirmed'|'unproven'}} Operation
+ * @typedef {{schemaVersion:1, ownerKey:string, localRevision:number, cloudGeneration:number, state:Object, remoteMetadataByPath:Object<string,{record:Record,ackRevision:number}>, pendingOperations:Operation[], pendingJobs:Array<Job|ResetJob|CleanupJob>, adoptionDecision:*, recoveryCopies:Object[], lastConfirmedControl:null|Control,unitProjectionVersion?:number,localMetadata?:{activeSessionToken:null|string,seededRecoveryIds?:string[]}}} Envelope
+ * @typedef {{ownerKey:string, opId:string, control:Control, documents:Object<string,Record>}} Confirmation
+ * @typedef {{control:Control, documents:Object<string,Record>}} Profile
+ * @typedef {{remoteProfile:Profile, remoteState:Object}} DomainContext
+ * @typedef {{jobId:string,ownerKey:string,generation:number,kind:string,options:Object,totalParts:number,completedParts:number,preparedParts:number,lastPartId:null|string,status:'pending'|'running'|'complete'|'blocked',parts:JobPart[],payloads?:Object,source?:Object}} Job
+ * @typedef {{jobId:string,ownerKey:string,kind:'reset',generation:null|number,status:'pending',reset:{opId:string,baseGeneration:null|number,nextGeneration:null|number},paths:string[]}} ResetJob
+ * @typedef {{jobId:string,ownerKey:string,kind:'cleanup',generation:number,status:'pending',paths:string[],completedParts:number}} CleanupJob
+ * @typedef {{partId:string,paths:string[],status:string,sourceVersion:number,targetVersion:number}} JobPart
+ */
+export const SCHEMA_VERSION = 1
+export const APP_NAMESPACE = 'apps/opengym'
+export const EMULATOR_PROJECT_ID = 'demo-opengym'
+export const AUTH_EMULATOR_HOST = '127.0.0.1:9099'
+export const FIRESTORE_EMULATOR_HOST = '127.0.0.1:8081'
+export const MAX_JOB_PART_IDS = 20
+export const MAX_DOCUMENT_BYTES = 900 * 1024
+export const MAX_DOCUMENT_DEPTH = 20
+
+// Explicit inventory: adding a persistent setting requires a deliberate transport decision.
+const policies = {
+  sync: `unit restSec restPauseSec sound soundOnSilent vibrateOnSilent timerFlash timedSetOvertime keepAwake lang theme accent accentCustom body targetW bodyweight routines week dayPlan queue rotation scheduleMode exWeights workouts customEx gifSize heatmapMetric workoutView wc hints reminder effort equipProfiles activeEquipId equipFilterOn exNotes favEx weekStart wdec speedUnit barWeights plates loadKind gymCards lastGymCardId checkIn showWeightCard weighIn connStatus startFrom enParens enOnly logRef balanceTemplate balanceOverrides vibrate classicChime showRir edited undone deleted`,
+  local: 'active autoBackup langAuto',
+  derived: '_ts routineOrder',
+  legacy: 'unitSet resetAt resetIds',
+  removed: 'coach _rev _wid _wids _unstamped _prior',
+}
+export const FIELD_POLICY = Object.freeze(Object.fromEntries(Object.entries(policies).flatMap(([policy, fields]) => fields.split(' ').map(field => [field, policy]))))
+
+export function makeOwner(projectId, uid = null) {
+  if (typeof projectId !== 'string' || !projectId || (uid !== null && (typeof uid !== 'string' || !uid || uid.includes('/')))) throw new Error('invalid-owner')
+  return { projectId, uid, ownerKey: JSON.stringify([projectId, APP_NAMESPACE, uid]) }
+}
+export function makeEnvelope(owner, state) {
+  return { schemaVersion: 1, ownerKey: owner.ownerKey, localRevision: 0, cloudGeneration: 1,
+    state: structuredClone(state), remoteMetadataByPath: {}, pendingOperations: [], pendingJobs: [],
+    adoptionDecision: null, recoveryCopies: [], lastConfirmedControl: null, localMetadata: { activeSessionToken: null } }
+}
+
+// Proven Firebase copies belong only to that exact owner. Guest adoption is explicit.
+export function recoverableBy(copy, owner) {
+  if (!copy.ownerKey) return copy.identityProvider !== 'firebase'
+  return copy.ownerKey === owner.ownerKey || (copy.reason === 'guest-adoption' && copy.ownerKey === makeOwner(owner.projectId).ownerKey)
+}
+export function trainingState(state) {
+  return Object.fromEntries(Object.entries(structuredClone(state)).filter(([key]) => Object.hasOwn(FIELD_POLICY, key) && FIELD_POLICY[key] !== 'removed'))
+}

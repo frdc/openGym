@@ -1,13 +1,25 @@
 // @vitest-environment happy-dom
 // Pausing the rest between sets (#193): paused time does not count, nothing announces the end at
 // the old time, and resuming books the push again for the new one. The timed hold is its own timer.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(async () => { uiRuntime.fixture.begin(); await uiRuntime.fixture.prepare({ active: { id: 'timer-fixture', entries: [] } }); })
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({ ok: true })) }))
 const { beep, chime } = vi.hoisted(() => ({ beep: vi.fn(), chime: vi.fn() }))
 vi.mock('../lib/sound.js', () => ({ beep, chime, vibrate: vi.fn(), alertBuzz: vi.fn() }))
 
-import { api } from '../lib/api.js'
+let api
+beforeEach(() => { api = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected timer transport')) })
+afterEach(() => { api.mockRestore() })
 import { useUI } from './useUI.js'
 import { useStore } from './useStore.js'
 
@@ -15,10 +27,10 @@ const posts = path => api.mock.calls.filter(([p]) => p === path).map(([, o]) => 
 
 describe('pausing the rest timer', () => {
   let original
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers()
     original = { S: useStore.getState().S, user: useStore.getState().user }
-    useStore.setState({ S: { ...original.S, sound: true, timerFlash: true }, user: { id: 'u1' } })
+    await uiRuntime.fixture.applySnapshot({ S: { ...original.S, sound: true, timerFlash: true }, user: { id: 'u1' } })
     useUI.setState({ timer: null, work: null, timerFlashId: 0, toastMsg: '' })
     api.mockClear()
     beep.mockClear()
@@ -27,7 +39,7 @@ describe('pausing the rest timer', () => {
   afterEach(() => {
     useUI.getState().stopRest()
     useUI.getState().stopWork()
-    useStore.setState(original)
+
     vi.useRealTimers()
   })
 
@@ -54,15 +66,16 @@ describe('pausing the rest timer', () => {
     expect(chime).toHaveBeenCalledTimes(1)
   })
 
-  it('cancels the push booked for the old end and books it again on resume', () => {
+  it('pauses and resumes locally without any server push request', () => {
     useUI.getState().startRest(90)
-    expect(posts('/api/push/rest-timer').map(b => b.seconds)).toEqual([90])
+    expect(api).not.toHaveBeenCalled()
     vi.advanceTimersByTime(20000)
     useUI.getState().pauseRest()
-    expect(posts('/api/push/rest-timer/cancel')).toHaveLength(1)
+    expect(api).not.toHaveBeenCalled()
     vi.advanceTimersByTime(60000)
     useUI.getState().resumeRest()
-    expect(posts('/api/push/rest-timer').map(b => b.seconds)).toEqual([90, 70])
+    expect(api).not.toHaveBeenCalled()
+    expect(useUI.getState().timer.left).toBe(70)
   })
 
   it('adds and takes off time while paused without booking anything', () => {

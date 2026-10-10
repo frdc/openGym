@@ -26,9 +26,9 @@ describe('media store (memory backend)', () => {
   })
   afterEach(() => vi.useRealTimers())
 
-  it('keeps a file as pending, and a second put of the same hash only updates the record', async () => {
+  it('keeps a file local without cloud debt, and a second put of the same hash only updates the record', async () => {
     await store.put(H1, new Blob(['abc']), { mime: 'image/webp' })
-    expect(await store.list()).toEqual([{ hash: H1, mime: 'image/webp', size: 3, putAt: clock, shownAt: 0, pending: true, rejected: false }])
+    expect(await store.list()).toEqual([{ hash: H1, mime: 'image/webp', size: 3, putAt: clock, shownAt: 0, pending: false, rejected: false }])
     clock += 5
     await store.put(H1, new Blob(['abc']), { mime: 'image/webp', pending: false })
     expect((await store.get(H1)).pending).toBe(false)
@@ -94,20 +94,20 @@ describe('media store (memory backend)', () => {
     expect((await store.list())[0].shownAt).toBe(clock)
   })
 
-  it('retainOnly keeps the set, and whatever was put at or after the given moment', async () => {
+  it('retainOnly defers deletion until state attachment can share a deletion boundary', async () => {
     await store.put(H1, new Blob(['1']), { mime: 'image/webp' })
     await store.put(H2, new Blob(['2']), { mime: 'image/webp' })
     const since = clock
     clock += 1
     await store.put(H3, new Blob(['3']), { mime: 'image/webp' })
     const removed = await store.retainOnly(new Set([H1]), { keepPutAfter: since + 1 })
-    expect(removed).toBe(1)
-    expect((await store.list()).map(r => r.hash).sort()).toEqual([H1, H3])
+    expect(removed).toBe(0)
+    expect((await store.list()).map(r => r.hash).sort()).toEqual([H1, H2, H3])
   })
 
   it('marks synced and rejected, and lists what is pending', async () => {
-    await store.put(H1, new Blob(['1']), { mime: 'image/webp' })
-    await store.put(H2, new Blob(['2']), { mime: 'image/webp' })
+    await store.put(H1, new Blob(['1']), { mime: 'image/webp', pending: true })
+    await store.put(H2, new Blob(['2']), { mime: 'image/webp', pending: true })
     expect([...await store.pendingHashes()].sort()).toEqual([H1, H2])
     await store.markSynced(H1)
     await store.markRejected(H2)

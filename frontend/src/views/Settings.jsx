@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, forwardRef, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation, Navigate } from 'react-router-dom'
 import { useStore, DEF, hasData } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
@@ -11,8 +11,7 @@ import { effortOf } from '../lib/history.js'
 import { unlock, playOnSilentSupported, vibrateSupported, appleTouchDevice } from '../lib/sound.js'
 import { scheduleModeOf, chooseFixedWeek, chooseRotation } from '../lib/rotation.js'
 import { queueOf } from '../lib/queue.js'
-import { api, webauthnOK, passkeyRegister, passkeyError, IS_ANDROID } from '../lib/api.js'
-import { pushSupported, enablePush, disablePush, sendTestPush, syncPushSubscription } from '../lib/push.js'
+const IS_ANDROID = /Android/i.test(globalThis.navigator?.userAgent || '')
 import { wakeLockSupported } from '../lib/wakelock.js'
 import { t, tn, LANGS, INSTR_LANGS, EXERCISE_NAME_LANGS, baseLang, dateLocale } from '../lib/i18n.js'
 import { effectiveLang } from '../lib/default-lang.js'
@@ -20,23 +19,18 @@ import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, isAndroid, shareExport, shareExportBlob, syncReminder } from '../lib/mobile.js'
 import { NUDGE_COPY, NUDGE_TONES, toneOf } from '../lib/nudge.js'
 import { referencedFiles } from '../lib/media-refs.js'
-import { mediaStore } from '../lib/media-store.js'
-import { syncMedia, fetchToStore } from '../lib/media-sync.js'
-import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
-import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
+import { mediaErrorText } from '../components/CustomMediaField.jsx'
+import { captureMediaContext, localMediaGc } from '../lib/local-media.js'
 import { setRestAccent } from '../lib/rest-alert.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
-import { checkForUpdate, downloadAndInstall } from '../lib/update.js'
-import { forgetCoach } from '../lib/coach-api.js'
 import { REST_MAX, REST_PAUSE_MIN, REST_PAUSE_MAX, fmtRest, fmtDuration } from '../lib/duration.js'
 import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, plateInventorySheet, menuSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { durationSheet } from '../components/DurationWheel.jsx'
 import { showsConnection } from '../components/SyncBanner.jsx'
 import BackupFolderRow, { useBackupFolder, autoBackupSubtitle } from '../components/BackupFolderRow.jsx'
-import { ServerSyncSection, KeptChangesRows, leaveServer, connectServer, passkeySignIn } from '../components/ServerSync.jsx'
-import { passwordOn, PasswordRow, openPasswordSignIn, openPasswordRegister } from '../components/PasswordAuth.jsx'
-import { usePasskeys, PasskeysRow, DeviceLinkRow, openDeviceLinkRedeem } from '../components/Passkeys.jsx'
+import { ServerSyncSection, KeptChangesRows, leaveServer } from '../components/ServerSync.jsx'
+import { openPasswordSignIn, openPasswordRegister, openPasswordReset } from '../components/PasswordAuth.jsx'
 import { Section, Row, SelectRow, Switch, Segmented, Button, TextField, SearchField } from '../components/ui.jsx'
 import { PAGES, ROOT_GROUPS, pageVisible, searchSettings, pageTrail } from './settings-pages.js'
 
@@ -53,13 +47,12 @@ import { PAGES, ROOT_GROUPS, pageVisible, searchSettings, pageTrail } from './se
 let lastQuery = { q: '', key: null }
 
 // The route: /settings and /settings/<page>. An unknown page, or one this device does not have
-// (the Coach page off the phone app), goes back to the root.
+// on this device, goes back to the root.
 export function SettingsRoute() {
   const { page } = useParams()
   const loc = useLocation()
   const ctx = { user: useStore(s => s.user), mobile: MOBILE }
   if (page && (!PAGES[page] || !pageVisible(PAGES[page].parent || page, ctx))) return <Navigate to="/settings" replace />
-  if (page === 'coach') return <Navigate to="/coach/setup" replace />
   return <Settings key={page || 'root'} page={page || null} find={loc.state?.find || null} via={loc.state?.via || null} />
 }
 
@@ -78,23 +71,20 @@ export default function Settings({ page = null, find = null, via = null }) {
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const sync = useStore(s => s.sync)
-  const coachLocal = useStore(s => s.coachLocal)
-  // Name-and-password sign-in, where the instance offers it (#118).
   const config = useStore(s => s.config)
-  const pwOn = passwordOn(config)
-  // What the app is showing, which for a profile that never picked a language is worked out on
-  // this device rather than stored (#303).
-  const lang = effectiveLang(S, config)
-  // This profile's passkeys and the code for another device (#95). A change to them is read back
-  // here and by the password row, whose "Remove" depends on there being a passkey.
-  const passkeys = usePasskeys(!!user && !MOBILE && !DEMO && (page === 'account'))
-  const [credsV, setCredsV] = useState(0)
-  const credsChanged = () => { passkeys.load(); setCredsV(v => v + 1) }
-  const { update, importConflict, importBackup, setUnit, resetEverything: resetAll, setUser, pullState, pushState, resetDemo } = useStore()
+  const lang = effectiveLang(S)
+  const { update, importConflict, importBackup, setUnit, resetEverything: resetAll } = useStore()
   const toast = useUI(s => s.toast)
   const fileRef = useRef(null)
   const importRef = useRef(null)
   const body = useRef(null)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const accountGuard = () => {
+    const read = () => { const st = useStore.getState(); return st.getContext?.() || { ownerKey: st.ownerKey } }
+    const captured = read()
+    return () => { const now = read(); return mounted.current && now.ownerKey === captured.ownerKey && now.epoch === captured.epoch }
+  }
   const wakeOK = wakeLockSupported()
 
   // A planner's own queue (no rotationId, or one that doesn't match the saved rotation here) is
@@ -143,25 +133,12 @@ export default function Settings({ page = null, find = null, via = null }) {
     update(s => { chooseRotation(s) })
   }
 
-  // --- update check state ---
-  const [updateInfo, setUpdateInfo] = useState(null) // { hasUpdate, latestVersion, apkUrl, hashUrl } | null
   const [android, setAndroid] = useState(false)
-  const [checking, setChecking] = useState(false)
-  // Where auto-backup writes on this Android phone, for the Auto-backup row's own subtitle.
   const [backupDir] = useBackupFolder(MOBILE && android && !!S.autoBackup)
-
-  useEffect(() => {
-    // The in-app updater installs an .apk, so it only applies to the native Android build.
-    // On iOS and the web this check is skipped and the update row never appears. isAndroid()
-    // already answers false off the mobile build; the MOBILE check on top keeps the web bundle
-    // from even asking (and from calling gitlab.com on every Settings visit). Only the pages
-    // that show it ask: the root (for nothing but `android`) skips the release check.
-    if (!MOBILE) return
-    isAndroid().then(ok => { setAndroid(ok); if (ok && page === 'about') checkForUpdate().then(setUpdateInfo).catch(() => {}) })
-  }, [page])
+  useEffect(() => { let gone = false; if (MOBILE) isAndroid().then(ok => { if (!gone) setAndroid(ok) }); return () => { gone = true } }, [])
 
   // A search hit: scroll its row (or button) into view and flash it once. A row that shows only
-  // once the page has heard back from the server (web push, the passkey list) is waited for a
+  // once the page has finished loading is waited for a
   // moment; still missing, the hit's `via` row, if it names one, is flashed instead, with a word
   // on why.
   useEffect(() => {
@@ -187,72 +164,11 @@ export default function Settings({ page = null, find = null, via = null }) {
       if (done) return
       done = true; mo?.disconnect()
       const r = via && named(t(via))
-      if (r) { flash(r); toast(t('Turn on push notifications first.')) }
+      if (r) flash(r)
     }, 1500)
     return () => { done = true; mo?.disconnect(); clearTimeout(wait); clearTimeout(tm) }
   }, [find])
 
-  // The same check, on demand: the automatic one is silent when it finds nothing or cannot
-  // reach gitlab.com, and a person who taps "Check for updates" deserves an answer either way.
-  const checkNow = async () => {
-    if (checking) return
-    setChecking(true)
-    try {
-      const info = await checkForUpdate()
-      setUpdateInfo(info)
-      if (!info.hasUpdate) toast(t('You have the latest version.'))
-    } catch {
-      toast(t('Couldn’t check for updates. Are you online?'))
-    }
-    setChecking(false)
-  }
-
-  const onUpdateRowClick = () => {
-    if (!updateInfo?.hasUpdate) return
-    if (updateInfo.apkUrl) {
-      // Start download & install
-      const version = updateInfo.latestVersion
-      confirmSheet({
-        title: t('Update to {0}?', version),
-        message: t('The latest version will be downloaded and the installer will open.'),
-        confirmText: t('Download & Install'),
-        onConfirm: async () => {
-          // Open a progress sheet
-          let closeProgress = null
-          let setProgress = null
-          useUI.getState().openSheet(close => {
-            closeProgress = close
-            return <DownloadProgress ref={fn => { setProgress = fn }} />
-          }, { locked: true })
-          try {
-            // The release always publishes the checksum next to the APK. Without it the file is
-            // not installed — a sideloaded binary is exactly the thing that should be verified.
-            let expectedHash = null
-            if (updateInfo.hashUrl) {
-              try {
-                const hashRes = await fetch(updateInfo.hashUrl)
-                if (hashRes.ok) expectedHash = (await hashRes.text()).split(/\s/)[0]
-              } catch (e) { /* reported below */ }
-            }
-            if (!/^[0-9a-f]{64}$/i.test(expectedHash || '')) throw new Error(t('Checksum not available, so not installing'))
-            await downloadAndInstall(updateInfo.apkUrl, expectedHash, (received, total) => {
-              if (setProgress) setProgress(received, total)
-            })
-            if (closeProgress) closeProgress()
-          } catch (e) {
-            if (closeProgress) closeProgress()
-            toast(t('Update failed: {0}', e.message))
-          }
-        },
-      })
-    } else {
-      // Update available but no APK asset — open the releases page
-      window.open('https://gitlab.com/DuarteSantos8/opengym/-/releases', '_blank', 'noopener')
-    }
-  }
-
-  // Reads the store at the moment of the tap: the sheet that asks before a sign-out offers it too,
-  // and the copy it exports is the one that has not reached the server.
   const doExport = async () => {
     const json = JSON.stringify(useStore.getState().S, null, 2)
     const name = 'opengym-backup-' + todayISO() + '.json'
@@ -266,19 +182,21 @@ export default function Settings({ page = null, find = null, via = null }) {
     toast(t('Backup exported'))
   }
   // "Export with photos & videos": the same JSON plus every file the state refers to, in a zip
-  // (lib/backup-media.js). Signed in, a file this device never downloaded is fetched for it; one
-  // nobody has is left out and counted. The sign-out sheet offers it while media are waiting.
+  // (lib/backup-media.js). Only local files are included; absent originals are counted.
   const doExportZip = async () => {
+    const captured = captureMediaContext(useStore)
+    if (!captured) return
+    const state = useStore.getState().S
     const { exportBackupZip } = await import('../lib/backup-media.js')
-    const st = useStore.getState()
-    const signedIn = !!(st.user && st.config?.media)
+    if (!captured.current()) return
     let out
-    try { out = await exportBackupZip(st.S, { fetchOne: signedIn ? fetchToStore : null }) }
-    catch { toast(t('Something went wrong')); return }
+    try { out = await exportBackupZip(state, { media: captured.media }) }
+    catch { if (captured.current()) toast(t('Something went wrong')); return }
     const name = 'opengym-backup-' + todayISO() + '.zip'
+    if (!captured.current()) return
     if (out.missing) toast(tn('{0} file could not be included', '{0} files could not be included', out.missing))
     if (MOBILE) {
-      try { await shareExportBlob(out.blob, name); if (!out.missing) toast(t('Backup exported')) } catch (e) { /* share sheet dismissed */ }
+      try { await shareExportBlob(out.blob, name); if (captured.current() && !out.missing) toast(t('Backup exported')) } catch (e) { /* share sheet dismissed */ }
       return
     }
     const a = document.createElement('a'); a.href = URL.createObjectURL(out.blob); a.download = name; a.click()
@@ -289,6 +207,8 @@ export default function Settings({ page = null, find = null, via = null }) {
   // files go into the local store only once the import is confirmed, each checked against its
   // name first; the state's media refs and links pass the usual gates (lib/backup-media.js).
   const doImport = async ev => {
+    const captured = captureMediaContext(useStore)
+    if (!captured) return
     const f = ev.target.files[0]; if (!f) return
     ev.target.value = ''
     let read
@@ -297,23 +217,38 @@ export default function Settings({ page = null, find = null, via = null }) {
       read = await readBackupFile(f)
     } catch (e) {
       const { backupImportError } = await import('../lib/backup-media.js')
-      toast(backupImportError(e)); return
+      if (captured.current()) toast(backupImportError(e)); return
     }
+    if (!captured.current()) return
     const apply = async mergeWith => {
-      if (read.files.length) {
-        const { storeBackupMedia } = await import('../lib/backup-media.js')
-        await storeBackupMedia(read.files, { limits: limitsFrom(useStore.getState().config) })
-      }
-      importBackup(read.state, { mergeWith })
-      // The photos it brought are pending here and maybe gone from the server (a reset): sent now,
-      // not after the ten-minute dedupe of the run before the reset.
-      if (read.files.length) syncMedia({ force: true })
-      toast(t('Backup imported'))
+      if (!captured.current()) return
+      try {
+        if (read.files.length) {
+          await captured.media.ready()
+          if (!captured.current()) return
+          if (!captured.media.persistent) { toast(t('This browser cannot store photos or videos here.')); return }
+          const { storeBackupMedia } = await import('../lib/backup-media.js')
+          if (!captured.current()) return
+          await storeBackupMedia(read.files, { media: captured.media, current: captured.current })
+        }
+        if (!captured.current()) return
+        await importBackup(read.state, { mergeWith })
+        if (!captured.current()) return
+        toast(t('Backup imported'))
+      } catch (error) { if (captured.current()) toast(mediaErrorText(error)) }
     }
     // Signed in, the server is asked first: a workout logged since the backup was made, or on
     // another device meanwhile, would be deleted from the profile by the replace — said, with the
     // choice to merge those in instead (useStore importConflict / importBackup).
-    const conflict = await importConflict(read.state)
+    let conflict
+    try { conflict = await importConflict(read.state) }
+    catch (error) {
+      const code = String(error?.code || '').replace(/^firestore\//, '')
+      const offline = ['unavailable', 'deadline-exceeded', 'network-request-failed', 'auth/network-request-failed'].includes(code)
+      if (captured.current()) toast(t(offline ? 'Could not connect' : 'Something went wrong'))
+      return
+    }
+    if (!captured.current()) return
     if (conflict) {
       const n = conflict.workouts
       menuSheet({
@@ -336,64 +271,38 @@ export default function Settings({ page = null, find = null, via = null }) {
   }
   // Whether any custom exercise has a photo or video: the rows about them only show then.
   const hasMedia = referencedFiles(S).length > 0
-  const registerHere = () => useUI.getState().openSheet(close => <RegisterInline close={close} setUser={setUser} pushState={pushState} pullState={pullState} toast={toast} />)
-  /* Disconnect (phone), Sign out, Sign out everywhere. None of them wipes this device while the
-     server is missing a change: the confirm no longer promises a sync it never checked, and when
-     something is owed, a second sheet says how much and offers to try again, to export a backup,
-     or to go ahead anyway with the changes kept on this device (components/ServerSync.jsx).
-     "Sign out everywhere" also ends every paired phone's token — the phones have no passkey to
-     sign in with, so they have to be paired again, and the confirm says so. Failing, it touches
-     nothing local: still signed in here, and the toast says so. */
-  const kept = t('The changes your server has not seen are kept on this device, and added back when it connects as this account again.')
-  // A workout running here is kept aside by the sign-out (useStore stashActive): the confirm says so.
-  const running = () => S.active ? ' ' + t('You have a workout running. It waits on this device until you’re back on this account.') : ''
-  const leave = (kind, after) => leaveServer(kind, { exportBackup: doExport, exportBackupZip: doExportZip, done: r => { nav('/home'); if (r.stashed) toast(kept); else if (after) toast(after) } })
-  const disconnect = () => confirmSheet({
-    title: t('Disconnect from your server?'),
-    message: t('This phone switches back to local-only and its copy of your account is removed. First it checks that your server has every change. If not, you choose what happens to them.') + running(),
-    confirmText: t('Disconnect'), danger: true,
-    onConfirm: () => leave('disconnect', t('Disconnected. Back to local-only')),
-  })
-  const signOutHere = () => confirmSheet({
-    title: t('Sign out?'),
-    message: t('Your data is removed from this browser; your profile on the server keeps it. First it checks that the server has every change. If not, you choose what happens to them.') + running(),
-    confirmText: t('Sign out'), danger: true,
-    onConfirm: () => leave('signout'),
-  })
-  const signOutEverywhere = () => confirmSheet({
-    title: t('Sign out everywhere?'),
-    message: t('Signs this profile out on every device, including this one. Phones paired with it are disconnected and have to be paired again. Your passkeys keep working, so you can sign in with them again anytime.') + running(),
-    confirmText: t('Sign out everywhere'), danger: true,
-    onConfirm: () => leave('everywhere', t('Signed out on all devices')),
-  })
-  // Signed in, the empty state is pushed to the profile like any other change, so the wipe
-  // reaches the server and every device that syncs with it — the dialog has to say so. The Coach
-  // keeps its data outside S in two homes that can both be in use on one phone: a file per
-  // profile on the server, and — when it runs with the phone's own key — a file on the device.
-  // Each is cleared on its own; forgetCoach() alone would pick one by mode. A failed call must
-  // not stop the reset.
-  const resetEverything = () => confirmSheet({
+  const signOutHere = () => {
+    const current = accountGuard()
+    return confirmSheet({
+    title: t('Sign out?'), message: t('Signing out keeps a local copy for this account. You can export a backup first.'), confirmText: t('Sign out'),
+    onConfirm: () => current() && leaveServer('signout', { exportBackup: doExport, exportBackupZip: doExportZip, done: () => nav('/home') }),
+    })
+  }
+  const resetEverything = () => {
+    const current = accountGuard()
+    return confirmSheet({
     title: t('Reset everything?'),
     message: user
-      ? t('Deletes your plan, workouts, body weight, photos and videos from your profile on this server and on every signed-in device. This cannot be undone.')
-      : t('Deletes your plan, workouts, body weight, photos and videos on this device. This cannot be undone.'),
-    confirmText: t('Delete everything'), danger: true,
-    onConfirm: () => {
-      if (user) api('/api/coach/forget', { method: 'POST', body: '{}' }).catch(() => {})
-      if (coachLocal?.mode === 'byok') forgetCoach().catch(() => {})
-      resetAll()
-      nav('/home'); toast(t('All data reset'))
-      clearMediaAfterReset(!!user).catch(() => {})
+      ? t('Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.')
+      : t('Resets the active profile on this device. Local recovery copies and original photos and videos are retained.'),
+    confirmText: t('Reset'), danger: true,
+    onConfirm: async () => {
+      if (!current()) return
+      await resetAll()
+      if (!current()) return
+      nav('/home'); toast(t(user ? 'Active profile reset on this device. Check cloud status for account confirmation.' : 'Active profile reset on this device. Local recovery copies and original media are retained.'))
+      clearMediaAfterReset(current).catch(() => {})
     },
-  })
+    })
+  }
 
   /* ---------------- what the pages and the search need to know about this device ---------------- */
   const canVibrate = vibrateSupported()
   const ctx = {
-    user, mobile: MOBILE, android, demo: DEMO, wakeOK, hasMedia, pwOn, webauthn: webauthnOK(),
+    user, mobile: MOBILE, android, demo: DEMO, wakeOK, hasMedia,
     sound: !!S.sound, playOnSilent: playOnSilentSupported(), canVibrate, vibrate: S.vibrate !== false,
     profiles: (S.equipProfiles || []).length > 0, nameLang: EXERCISE_NAME_LANGS.includes(baseLang(lang)),
-    pushOK: !MOBILE && pushSupported(), reminderOn: !!S.reminder?.on, nudge: !!S.reminder?.nudge,
+    reminderOn: !!S.reminder?.on, nudge: !!S.reminder?.nudge,
     autoBackup: !!S.autoBackup, synced: !!sync, installTip: !MOBILE && !standalone(), androidWeb: IS_ANDROID,
   }
   const mode = scheduleModeOf(S)
@@ -410,13 +319,11 @@ export default function Settings({ page = null, find = null, via = null }) {
     units: () => (S.unit || 'kg') + ' · ' + (LANGS[lang] || lang),
     equipment: () => (S.equipFilterOn && activeProfile ? activeProfile.name : t('Everything')),
     look: () => themeLabel + ' · ' + accentLabel(S),
-    coach: () => (coachLocal?.mode === 'server' ? t('Your server') : coachLocal?.mode === 'byok' ? t('Your API key') : t('Off')),
     data: () => '',
     about: () => 'v' + __APP_VERSION__,
   }
 
   const open = id => {
-    if (id === 'coach') { nav('/coach/setup'); return }
     nav('/settings/' + id)
   }
   // Back the way you came when there is a way (the browser's back, Android's back, this button
@@ -768,21 +675,7 @@ export default function Settings({ page = null, find = null, via = null }) {
     </>,
 
     about: () => <>
-      {/* Updates. On Android the row is always there: it checks on demand and installs when a
-          release is newer (checksum verified, see onUpdateRowClick). On the web the app updates
-          with its server, so the row points at the APK for the phone instead. iOS has no APK. */}
-      <Section footer={MOBILE ? (android ? t('Releases are checked on gitlab.com. The download is verified against its checksum before the installer opens.') : null) : t('The web app updates together with your server. The Android app installs its own updates from here.')}>
-        <Row icon="info" iconTint="var(--grey)" title={t('Version')} value={'v' + __APP_VERSION__} />
-        {MOBILE
-          ? android && <Row icon="download" iconTint="var(--green)"
-              title={updateInfo?.hasUpdate ? t('Update to openGym v{0}', updateInfo.latestVersion) : t('Check for updates')}
-              subtitle={checking ? t('Checking…') : t('You have v{0}', __APP_VERSION__)}
-              accessory="chevron"
-              onClick={() => (updateInfo?.hasUpdate ? onUpdateRowClick() : checkNow())} />
-          : <Row icon="download" iconTint="var(--green)" title={t('Get the Android app')}
-              subtitle={t('Download the APK from opengym.duarte-santos.ch')} accessory="chevron"
-              onClick={() => window.open('https://opengym.duarte-santos.ch/#download', '_blank', 'noopener')} />}
-      </Section>
+      <Section><Row icon="info" title={t('Version')} value={'v' + __APP_VERSION__} /></Section>
       {/* "Add to Home screen": not inside the phone app, and not once it is installed. */}
       {!MOBILE && !standalone() && <Section title={t('Tip')}>
         <Row icon="share" iconTint="var(--blue)"
@@ -800,59 +693,18 @@ export default function Settings({ page = null, find = null, via = null }) {
     </>,
 
     account: () => <>
-      {/* The server: which one, which account, how that stands, "Sync now". A paired phone's
-          Admin and Disconnect sit in the same block; a browser's account rows follow in their own. */}
-      {user && !DEMO && <ServerSyncSection>
-        {MOBILE && <>
-          {user.admin && <Row icon="crown" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
-          <AccountIdRow id={user.id} />
-          <Row icon="signOut" iconTint="var(--red)" title={t('Disconnect')} danger onClick={disconnect} />
-        </>}
-      </ServerSyncSection>}
-
-      {/* account (demo and mobile builds have nothing to sign in to) */}
-      {!(MOBILE && user) && <Section title={MOBILE ? t('Your data') : DEMO ? t('Demo') : t('Account')}>
-        {MOBILE ? <>
-          <Row icon="lock" iconTint="var(--acc)" title={t('All data stays on this phone')} subtitle={t('No account, no cloud. Back it up anytime in Data & backup.')} />
-          <Row icon="cloud" iconTint="var(--indigo)" title={t('Connect to my server')} subtitle={t('Sync this device to your own self-hosted openGym instead.')} accessory="chevron"
-            onClick={connectServer} />
-          <KeptChangesRows />
-        </> : DEMO ? <>
-          <Row icon="info" iconTint="var(--acc)" title={t('You’re in the demo')} subtitle={t('Example data, stored only in this browser. Go wild and change anything you like.')} />
-          <Row icon="reset" iconTint="var(--blue)" title={t('Reset demo data')} accessory="chevron"
-            onClick={() => confirmSheet({ title: t('Reset demo data?'), message: t('Puts the example plan, workouts and weigh-ins back the way they started.'), confirmText: t('Reset'), onConfirm: () => { resetDemo(); nav('/home'); toast(t('Demo data reset')) } })} />
-          <Row icon="rocket" iconTint="var(--indigo)" title={t('Self-host openGym')} subtitle={t('Passkey sign-in, sync across your devices, your own data.')} accessory="chevron"
-            onClick={() => window.open(REPO, '_blank', 'noopener')} />
-        </> : user ? <>
-          {user.admin && <Row icon="crown" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
-          <PasskeysRow state={passkeys.st} changed={credsChanged} />
-          <DeviceLinkRow state={passkeys.st} />
-          <Row icon="qr" iconTint="var(--blue)" title={t('Pair the mobile app')} subtitle={t('Connect the openGym app on your phone to this account.')} accessory="chevron"
-            onClick={() => useUI.getState().openSheet(close => <PairSheet close={close} />)} />
-          {pwOn && <PasswordRow version={credsV} />}
-          <Row icon="signOut" iconTint="var(--red)" title={t('Sign out')} danger onClick={signOutHere} />
-          <Row icon="shield" iconTint="var(--red)" title={t('Sign out everywhere')} subtitle={t('Ends this profile’s sessions on all your devices.')} danger onClick={signOutEverywhere} />
-          <AccountIdRow id={user.id} />
-        </> : webauthnOK() ? <>
-          <Row icon="plusCircle" iconTint="var(--acc)" title={t('Create passkey profile')} subtitle={t('Keeps your data safe and separate per person.')} accessory="chevron" onClick={registerHere} />
-          <Row icon="fingerprint" iconTint="var(--blue)" title={t('Sign in with passkey')} accessory="chevron" onClick={passkeySignIn} />
-          {/* The Login screen offers both of these; a guest who skipped it had no way to either from here. */}
-          {pwOn && <Row icon="plusCircle" iconTint="var(--orange)" title={t('Create profile with a password')} accessory="chevron" onClick={openPasswordRegister} />}
-          {pwOn && <Row icon="key" iconTint="var(--orange)" title={t('Sign in with password')} accessory="chevron" onClick={() => openPasswordSignIn()} />}
-          <Row icon="qr" iconTint="var(--blue)" title={t('Use a code from your other device')} accessory="chevron" onClick={openDeviceLinkRedeem} />
-          <KeptChangesRows />
-        </> : pwOn ? <>
-          {/* No passkeys in this browser (plain http on a LAN address, say): a password is the way in. */}
-          <Row icon="plusCircle" iconTint="var(--acc)" title={t('Create new profile')} subtitle={t('Keeps your data safe and separate per person.')} accessory="chevron" onClick={openPasswordRegister} />
-          <Row icon="key" iconTint="var(--orange)" title={t('Sign in with password')} accessory="chevron" onClick={() => openPasswordSignIn()} />
-          <KeptChangesRows />
+      <ServerSyncSection />
+      <Section title={t('Account')}>
+        {user ? <>
+          <AccountIdRow id={user.uid} />
+          <Row icon="key" title={t('Reset your password')} onClick={openPasswordReset} />
+          <Row icon="signOut" title={t('Sign out')} danger onClick={signOutHere} />
         </> : <>
-          <Row icon="lock" iconTint="var(--grey)" title={t('Passkeys not supported in this browser.')} />
-          <KeptChangesRows />
+          <Row icon="key" title={t('Sign in')} onClick={openPasswordSignIn} />
+          <Row icon="plusCircle" title={t('Create account')} onClick={openPasswordRegister} />
+          <Row icon="lock" title={t('Use on this device')} />
         </>}
-      </Section>}
-      {/* The connection banner already says this to a guest; the line is for when it is switched off. */}
-      {!user && !DEMO && !MOBILE && !showsConnection(S) && <p className="sect-f" style={{ marginTop: -18, marginBottom: 22 }}>{t('Guest mode: your data lives only in this browser.')}</p>}
+      </Section>
     </>,
   }
 
@@ -875,7 +727,6 @@ export default function Settings({ page = null, find = null, via = null }) {
   /* ---------------- the root ---------------- */
   return <SettingsRoot ctx={ctx} preview={preview} open={open} user={user} sync={sync}
     home={() => nav('/home')} go={(hit) => {
-      if (hit.page === 'coach') { nav('/coach/setup'); return }
       nav('/settings/' + hit.page, hit.isPage ? undefined : { state: hit.via ? { find: hit.title, via: hit.via } : { find: hit.title } })
     }} />
 }
@@ -889,12 +740,12 @@ function SettingsRoot({ ctx, preview, open, user, sync, home, go }) {
   // The account card: who this is, and the one line that matters about it.
   const acct = DEMO ? { title: t('Demo'), sub: t('Example data, only in this browser.') }
     : user ? {
-      title: user.name || t('Account'),
+      title: (user.displayName || user.email) || t('Account'),
       sub: sync && sync.status && sync.status !== 'ok' ? t('Sync needs a look') : MOBILE ? t('Synced with your server') : t('Account, devices and sync'),
     }
     : MOBILE ? { title: t('This phone'), sub: t('All data stays on this phone') }
     : { title: t('Guest'), sub: t('Your data lives on this device. Sign in to sync.') }
-  const initial = user && !DEMO ? String(user.name || '?').trim().charAt(0).toUpperCase() : null
+  const initial = user && !DEMO ? String((user.displayName || user.email) || '?').trim().charAt(0).toUpperCase() : null
   return <div className="narrow">
     <div className="sp-nav">
       <button className="sp-back" onClick={home} aria-label={t('Home')}><Icon name="chevronLeft" /><span>{t('Home')}</span></button>
@@ -942,32 +793,6 @@ const EFFORT_ROWS = [
 const EFFORT_TYPICAL = 2
 
 
-// Download progress sheet — receives a ref callback that exposes a (received, total) setter.
-// Uses forwardRef so the caller can push byte counts in without re-rendering the whole Settings tree.
-const DownloadProgress = forwardRef(function DownloadProgress(_, ref) {
-  const [pct, setPct] = useState(0)
-  const [text, setText] = useState(t('Starting download…'))
-  // Expose a setter the caller can invoke directly
-  if (ref) ref(function update(received, total) {
-    if (total > 0) {
-      const p = Math.min(100, Math.round((received / total) * 100))
-      setPct(p)
-      setText(t('{0} %', p))
-    } else {
-      setText(t('{0} MB', (received / 1_000_000).toFixed(1)))
-    }
-  })
-  return (
-    <div style={{ textAlign: 'center', padding: '8px 0' }}>
-      <h3>{t('Downloading update…')}</h3>
-      <div style={{ margin: '16px 0', height: 6, borderRadius: 3, background: 'var(--fill-3)', overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: pct + '%', background: 'var(--acc)', borderRadius: 3, transition: 'width .2s' }} />
-      </div>
-      <div className="muted small">{text}</div>
-    </div>
-  )
-})
-
 function effortHelpSheet() {
   useUI.getState().openSheet(close => <>
     <h3>{t('Effort per set')}</h3>
@@ -992,7 +817,7 @@ function effortHelpSheet() {
 
 function NotificationsCard({ S, update, toast }) {
   if (MOBILE) return <MobileReminderCard S={S} update={update} toast={toast} />
-  return <PushCard S={S} update={update} toast={toast} />
+  return null
 }
 
 // Mobile build: the reminder is a native local notification scheduled on planned weekdays —
@@ -1045,78 +870,7 @@ const nudgeNote = S => S.reminder?.nudge
   ? ' ' + t('One nudge in the evening of a planned day with nothing logged, between 20:00 and 21:30. After 3 missed days in a row it goes quiet until your next workout.')
   : ''
 
-function PushCard({ S, update, toast }) {
-  const [on, setOn] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const supported = pushSupported()
 
-  // "On" means the server holds this browser's subscription, not merely that the browser has
-  // one: a row the instance dropped (dead send, rebuilt db.json) left the switch on with nothing
-  // ever arriving. syncPushSubscription re-registers on the way; if the server cannot be asked
-  // (offline), the browser's side is the best answer available.
-  useEffect(() => {
-    if (!supported) return
-    let gone = false
-    syncPushSubscription()
-      .then(ok => { if (!gone) setOn(ok) })
-      .catch(() => navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(sub => { if (!gone) setOn(!!sub) }).catch(() => {}))
-    return () => { gone = true }
-  }, [supported])
-
-  const toggle = async v => {
-    setBusy(true)
-    try {
-      if (!v) { await disablePush(); setOn(false); toast(t('Notifications off')) }
-      else { await enablePush(); setOn(true); toast(t('Notifications on')) }
-    } catch (e) { toast(e.message || t('Could not change notification settings')) }
-    setBusy(false)
-  }
-  const test = async () => {
-    try { await sendTestPush(); toast(t('Test sent! Should pop up any second')) }
-    catch (e) { toast(e.message || t('Test failed')) }
-  }
-
-  if (!supported) return (
-    <Section title={t('Notifications')}>
-      <Row icon="bellSlash" iconTint="var(--grey)" title={t('Not supported in this browser.')} />
-    </Section>
-  )
-
-  return <>
-    <Section
-      title={t('Notifications')}
-      footer={on && S.reminder?.on
-        ? t("Only sent on days you have a routine planned and haven't logged a workout yet.") +
-          (S.reminder?.tz ? ' ' + t('Timezone: {0} (auto-detected, updates if you travel).', S.reminder.tz) : '') +
-          nudgeNote(S)
-        : null}
-    >
-      <Row icon="bell" iconTint="var(--red)" title={t('Push notifications')} subtitle={t('Rest-timer alerts, even if openGym is closed.')}>
-        <Switch checked={on} disabled={busy} onChange={toggle} />
-      </Row>
-      {on && (
-        <Row icon="calendar" iconTint="var(--orange)" title={t('Workout day reminder')}>
-          <Switch checked={!!S.reminder?.on} onChange={() => update(s => { s.reminder = { ...(s.reminder || DEF.reminder), on: !s.reminder?.on, tz: localTZ() } })} />
-        </Row>
-      )}
-      {on && S.reminder?.on && (
-        <Row icon="clock" iconTint="var(--purple)" title={t('Reminder time')}>
-          <input type="time" className="timef" value={S.reminder?.time || DEF.reminder.time}
-            onChange={e => update(s => { s.reminder = { ...(s.reminder || DEF.reminder), time: e.target.value, tz: localTZ() } })} />
-        </Row>
-      )}
-      {on && S.reminder?.on && (
-        <NudgeRows S={S} setReminder={patch => update(s => { s.reminder = { ...(s.reminder || DEF.reminder), ...patch, tz: localTZ() } })} />
-      )}
-    </Section>
-    {on && <div style={{ marginTop: -12, marginBottom: 22 }}><Button size="sm" icon="bell" onClick={test}>{t('Send test notification')}</Button></div>}
-  </>
-}
-
-// Equipment profiles ("Home", "Gym", ...) — each an id/name/eq-list; the active one filters
-// the Library, exercise picker, and flags routine entries that need something outside it
-// (see lib/equipment.js). Purely local/synced state — no server changes needed.
-// What the chosen accent is called: a preset's colour name, or the user's own.
 function accentLabel(S) {
   const k = accentKey(S)
   return k === CUSTOM ? t('Your own color') : t(ACCENT_NAMES[k] || 'Green')
@@ -1245,47 +999,16 @@ function EquipmentCard({ S, update }) {
 // display names are free text and need not be unique. copyText also reaches the clipboard on a
 // plain-http LAN address, where the Clipboard API is missing and password sign-in (#118) is the
 // usual way in; where no copy works at all the id is still on screen to read out.
-/* After "Reset everything": the photos and videos go too. Signed in, the empty state is pushed
-   first and, once the server holds it, the server is asked to drop every file that state no
-   longer refers to (POST /api/media/sweep) — asked before the push landed, it would still see the
-   old state and keep everything, which is the safe side. Then this device keeps only the files a
-   stash refers to: another account's changes kept here are not this reset's to delete. */
-async function clearMediaAfterReset(signedIn) {
-  const st = useStore.getState()
-  if (signedIn && typeof st.pushState === 'function') {
-    await st.pushState()
-    const now = useStore.getState()
-    if (now.sync?.status === 'ok' && now.config?.media) await api('/api/media/sweep', { method: 'POST', body: '{}' }).catch(() => {})
-  }
-  const keep = typeof st.stashedMediaHashes === 'function' ? await st.stashedMediaHashes() : new Set()
-  await mediaStore.retainOnly(keep)
+// Reset shares the fail-closed local retention collector; physical removal remains deferred.
+async function clearMediaAfterReset(current) {
+  if (!current()) return
+  const captured = captureMediaContext(useStore)
+  if (captured) await localMediaGc(captured.ownerKey, { appStore: useStore })
 }
 
-/* Settings → Data → "Photos & videos": how much of the server's space they take and what is still
-   waiting to go up; a tap sends what is waiting now, offers again what the server refused, and
-   lets a device that showed a file as missing ask for it again. On a device without a server that
-   stores media, it says they are kept here only. */
 function MediaRow() {
-  const S = useStore(s => s.S)
-  const user = useStore(s => s.user)
-  const config = useStore(s => s.config)
-  const status = useSyncExternalStore(subscribeMediaStatus, getMediaStatus)
-  // Signed in, the files go to the server unless it has said it stores none. A config not known
-  // yet — a phone started without a network; it is not kept between starts — is not that answer:
-  // what is waiting is counted as waiting (and goes up once the server answers), not called
-  // local-only as a guest's files are.
-  const remote = !!user && (config == null || !!config.media)
-  useEffect(() => { if (remote) syncMedia() }, [remote])
-  const pending = remote ? pendingRefCount(S) : 0
-  const u = status.usage
-  const usage = remote && u && u.quotaBytes > 0
-    ? t('{0} of {1} MB used on your server', fmtMB((u.bytes || 0) / MB), fmtMB(Math.round(u.quotaBytes / MB)))
-    : null
-  const sub = remote
-    ? [usage, pending ? t('{0} waiting to upload', pending) : null].filter(Boolean).join(' · ') || undefined
-    : t('Kept on this device only. Export with photos & videos keeps a copy.')
-  return <Row icon="image" iconTint="var(--teal)" title={t('Photos & videos')} subtitle={sub}
-    onClick={remote ? () => syncMedia({ force: true, retryRejected: true }) : undefined} />
+  return <Row icon="image" iconTint="var(--teal)" title={t('Photos & videos')}
+    subtitle={t('Kept on this device only. Export with photos & videos keeps a copy.')} />
 }
 
 function AccountIdRow({ id }) {
@@ -1293,58 +1016,4 @@ function AccountIdRow({ id }) {
   if (!id) return null
   const copy = async () => { if (await copyText(id)) toast(t('Account ID copied')) }
   return <Row icon="personCircle" iconTint="var(--grey)" title={t('Account ID')} subtitle={<span className="acct-id">{id}</span>} onClick={copy} />
-}
-
-// Lets the mobile app's "connect to my server" mode (lib/remote.js) authenticate without a
-// WebAuthn ceremony of its own — the code is minted here, from an already signed-in session,
-// and redeemed by the app for a bearer token. See /api/pair/create in api/server.js.
-function PairSheet({ close }) {
-  const [code, setCode] = useState(null)
-  const [err, setErr] = useState(null)
-  useEffect(() => { api('/api/pair/create', { method: 'POST', body: '{}' }).then(r => setCode(r.code)).catch(e => setErr(e.message || t('Could not generate a code'))) }, [])
-  return <>
-    <h3>{t('Pair the mobile app')}</h3>
-    <div className="muted small" style={{ marginBottom: 14 }}>
-      {t('On the openGym app, choose “Connect to my server”, then enter this address and the code below. It expires in 5 minutes.')}
-    </div>
-    {err ? <div className="dim small">{err}</div> : (
-      <div className="card" style={{ textAlign: 'center', fontSize: 30, fontWeight: 700, letterSpacing: '.16em', padding: '18px 0' }}>
-        {code || '········'}
-      </div>
-    )}
-    <div style={{ height: 12 }} />
-    <Button onClick={close}>{t('Done')}</Button>
-  </>
-}
-
-// The same registration as the sign-in screen's, reached from Settings instead. It asks for
-// the invite code on the same terms: an invite-only instance rejects a registration without
-// one, so a form that cannot collect it is a form that cannot succeed.
-function RegisterInline({ close, setUser, pushState, pullState, toast }) {
-  const nameRef = useRef(null)
-  const [code, setCode] = useState('')
-  const [inviteOnly, setInviteOnly] = useState(false)
-  useEffect(() => { api('/api/config').then(c => setInviteOnly(!!c.invite_only)).catch(() => {}) }, [])
-  const go = async () => {
-    const n = (nameRef.current.value || '').trim()
-    if (!n) { toast(t('Enter a name')); return }
-    if (inviteOnly && !code.trim()) { toast(t('An invite code is required')); return }
-    try {
-      const u = await passkeyRegister(n, code.trim()); setUser(u); close()
-      if (hasData(useStore.getState().S)) { await pushState(); toast(t('Profile created, and your data moved into it')) }
-      else { await pullState(); toast(t('Welcome, {0}', u.name)) }
-    } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(passkeyError(e, t('Registration failed'))) }
-  }
-  return <>
-    <h3>{t('Create your profile')}</h3>
-    <div className="muted small" style={{ marginBottom: 14 }}>{t('Pick a name, then confirm with your device.')}</div>
-    <TextField ref={nameRef} placeholder={t('Your name')} maxLength={40} />
-    {inviteOnly && <>
-      <div style={{ height: 10 }} />
-      <input className="input" placeholder={t('Invite code')} maxLength={40} value={code}
-        onChange={e => setCode(e.target.value.toUpperCase())} style={{ letterSpacing: '.14em', fontWeight: 600, textAlign: 'center' }} />
-      <div className="dim small" style={{ marginTop: 6 }}>{t('This app is invite-only. Enter the code you were given.')}</div>
-    </>}
-    <div style={{ height: 12 }} /><Button variant="primary" onClick={go}>{t('Create passkey')}</Button>
-  </>
 }

@@ -1,3 +1,5 @@
+import { useDurableSave } from './lib/use-durable-save.js'
+import { SetHeartRateSummaries } from './components/HeartRateSummary.jsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -16,7 +18,7 @@ import Media, { Thumb } from './components/Media.jsx'
 import CustomMediaField from './components/CustomMediaField.jsx'
 import WorkoutMediaSection, { workoutMediaCount } from './components/WorkoutMedia.jsx'
 import { mediaOf, normalizeMediaRef, cleanUrl, workoutMediaOf } from './lib/media-refs.js'
-import { syncMedia } from './lib/media-sync.js'
+import { captureMediaContext } from './lib/local-media.js'
 import LineChart from './components/LineChart.jsx'
 import Stepper from './components/Stepper.jsx'
 import { durationSheet } from './components/DurationWheel.jsx'
@@ -50,6 +52,7 @@ import { joinSessionNoProg } from './lib/session-noprog.js'
 import { buildCombinedEntries, deriveSessionName } from './lib/session-merge.js'
 import { workoutsOn, backfillStart, backfillEnd, completeBackfill, historyAsOf, sessionHistory } from './lib/backfill.js'
 import { moveWorkout, sameWorkout, startTimeOf, durationMinOf, setWorkoutDuration, rebuildPrHistory, MAX_DURATION_MIN, endsInFuture } from './lib/workout-date.js'
+import { requestWearWorkoutOpen } from './lib/wear-bridge.js'
 import { editCompletedSession, editLeftEmpty, editedRecord, editChangesNothing } from './lib/session-edit.js'
 import { stampWorkout } from './lib/sync-merge.js'
 import { weeklyWeights } from './lib/bodyweight.js'
@@ -273,18 +276,33 @@ function BwSheet({ required, onDone, close }) {
   const unit = st.unit
   const bw = lastBW(st)
   const [v, setV] = useState(bw ? bw.w : 70)
-  const save = () => {
+  const [saving, setSaving] = useState(false)
+  const mounted = useRef(false), pending = useRef(false)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const save = async () => {
+    if (pending.current) return
     const n = Math.round((v || 0) * 10) / 10
     if (!n || n <= 0) { toast(t('Enter a valid weight')); return }
     if (bwTooHeavy(n, unit)) return
-    update(s => {
-      const iso = todayISO()
-      const ex = s.bodyweight.find(b => b.d === iso)
-      if (ex) { ex.w = n; ex.t = Date.now() } else s.bodyweight.push({ d: iso, w: n, t: Date.now() })
-      s.bodyweight.sort((a, b) => (a.d < b.d ? -1 : 1))
-    })
-    close()
-    if (onDone) onDone(n); else toast(t('Weight saved'))
+    pending.current = true; setSaving(true)
+    let guard
+    try {
+      update(s => {
+        const iso = todayISO()
+        const ex = s.bodyweight.find(b => b.d === iso)
+        if (ex) { ex.w = n; ex.t = Date.now() } else s.bodyweight.push({ d: iso, w: n, t: Date.now() })
+        s.bodyweight.sort((a, b) => (a.d < b.d ? -1 : 1))
+      })
+      guard = workoutSaveGuard()
+      if (!await guard.flush() || !mounted.current) return
+      close()
+      if (onDone) onDone(n); else toast(t('Weight saved'))
+    } catch {
+      if (mounted.current && (!guard || guard.current())) toast(t('Changes could not be saved on this device. Keep the app open and try again.'))
+    } finally {
+      pending.current = false
+      if (mounted.current) setSaving(false)
+    }
   }
   const recent = [...st.bodyweight].reverse().slice(0, 3)
   return <>
@@ -303,9 +321,9 @@ function BwSheet({ required, onDone, close }) {
     <div className="muted small">{required ? t('Slide or tap to set your weight. We ask before every workout so your curve stays honest.') : t('Today') + ', ' + fmtDate(todayISO(), true)}</div>
     <WeightInput value={v} setValue={setV} unit={unit} />
     <div style={{ height: 14 }} />
-    <Button variant="primary" onClick={save}>{required ? t('Save & start workout') : t('Save')}</Button>
+    <Button variant="primary" disabled={saving} onClick={save}>{required ? t('Save & start workout') : t('Save')}</Button>
     {required && <>
-      <div style={{ height: 8 }} /><Button variant="ghost" className="dim" onClick={() => { close(); onDone && onDone(null) }}>{t('Start without weighing in')}</Button>
+      <div style={{ height: 8 }} /><Button variant="ghost" className="dim" disabled={saving} onClick={() => { close(); onDone && onDone(null) }}>{t('Start without weighing in')}</Button>
       <div style={{ height: 2 }} /><Button variant="ghost" className="dim" icon="swap" onClick={() => closeThenNav(close, '/workout')}>{t('Choose a different workout')}</Button>
     </>}
     {!required && recent.length > 0 && <>
@@ -687,6 +705,7 @@ export function bwDeltaColor(delta, currentW) {
   return (delta > 0) === up ? 'var(--acc)' : 'var(--red)'
 }
 function GoalSheet({ close }) {
+  const completion = useDurableSave()
   const st = S()
   const bw = lastBW(st)
   const [v, setV] = useState(st.targetW || (bw ? bw.w : 70))
@@ -695,14 +714,16 @@ function GoalSheet({ close }) {
     <div className="muted small">{t('Your goal is drawn as a line through the weight charts, and gains/losses are colored by whether they move toward it.')}</div>
     <WeightInput value={v} setValue={setV} unit={st.unit} />
     <div style={{ height: 14 }} />
-    <Button variant="primary" onClick={() => {
+    <Button variant="primary" disabled={completion.saving} onClick={() => {
       const n = Math.round((v || 0) * 10) / 10
       if (!n || n <= 0) { toast(t('Enter a valid weight')); return }
       if (bwTooHeavy(n, st.unit)) return
-      update(s => { s.targetW = n }); close()
-      const b = lastBW(S()); toast(t('Goal set: {0}', fmtNum(n) + ' ' + st.unit) + (b ? ' (' + t('{0} to go', fmtNum(Math.abs(n - b.w))) + ')' : ''))
+      void completion.run(() => update(s => { s.targetW = n }), () => {
+        close()
+        const b = lastBW(S()); toast(t('Goal set: {0}', fmtNum(n) + ' ' + st.unit) + (b ? ' (' + t('{0} to go', fmtNum(Math.abs(n - b.w))) + ')' : ''))
+      })
     }}>{t('Save goal')}</Button>
-    {st.targetW && <><div style={{ height: 8 }} /><Button variant="danger" onClick={() => { update(s => { s.targetW = null }); close(); toast(t('Goal removed')) }}>{t('Remove goal')}</Button></>}
+    {st.targetW && <><div style={{ height: 8 }} /><Button variant="danger" disabled={completion.saving} onClick={() => completion.run(() => update(s => { s.targetW = null }), () => { close(); toast(t('Goal removed')) })}>{t('Remove goal')}</Button></>}
   </>
 }
 export const goalSheet = () => ui().openSheet(close => <GoalSheet close={close} />)
@@ -1016,6 +1037,9 @@ export const addToRoutineSheet = ex => ui().openSheet(close => <AddToRoutine ex=
 // guide, are optional (components/CustomMediaField.jsx): the state keeps a small reference to the
 // file, never the file itself, and the link is cleaned on save and again whenever it is opened.
 function CustomExForm({ existing, prefill, onDone, close }) {
+  const completion = useDurableSave()
+  const draftId = useRef(existing?.id || null)
+  const origin = useRef(captureMediaContext(useStore))
   const nameRef = useRef(null)
   const onNameFocus = useSheetKeyboard(nameRef)
   const [n, setN] = useState(existing ? existing.n : (prefill || ''))
@@ -1031,6 +1055,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
   const [mediaTouched, setMediaTouched] = useState(false)
   const [url, setUrl] = useState(existing && typeof existing.url === 'string' ? existing.url : '')
   const onMedia = patch => {
+    if (!origin.current?.current()) return
     if ('media' in patch) { setMedia(patch.media); setMediaTouched(true) }
     if ('url' in patch) setUrl(patch.url)
   }
@@ -1056,6 +1081,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
   }
   const toggleSecondary = value => setSecondaries(current => current.includes(value) ? current.filter(m => m !== value) : [...current, value])
   const save = () => {
+    if (!origin.current?.current()) return
     const name = n.trim()
     if (!name) { toast(t('Give it a name')); return }
     if (!bp) { toast(t('Pick a body part')); return }
@@ -1063,7 +1089,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
     // An exercise kept under its own name is not a duplicate, even when the catalogue has one
     // spelled the same (an imported "trap bar deadlift"): only a new or changed name is checked.
     const renamed = !existing || name.toLowerCase() !== String(existing.n || '').trim().toLowerCase()
-    const dup = renamed && allExercises(S()).find(e => e.n.toLowerCase() === name.toLowerCase() && e.id !== (existing || {}).id)
+    const dup = renamed && allExercises(S()).find(e => e.n.toLowerCase() === name.toLowerCase() && e.id !== draftId.current)
     if (dup) { toast(t('“{0}” already exists', dup.n)); return }
     const d = desc.trim().slice(0, 1000)
     // An empty field removes the link; anything else has to be a web address.
@@ -1083,25 +1109,23 @@ function CustomExForm({ existing, prefill, onDone, close }) {
     // only turned a chip off says nothing and is skipped with it. The sorted list is the last resort,
     // for the user who drops the target and adds nothing in its place.
     const tg = (existing && prim.includes(existing.tg)) ? existing.tg : (primaryTaps.find(m => prim.includes(m)) || prim[0] || '')
-    let id = existing && existing.id
+    const id = draftId.current ||= 'c' + uid()
     const extra = c => {
       if (!keepMedia) { if (ref) c.media = ref; else delete c.media }
       if (link) c.url = link; else delete c.url
     }
-    if (existing) update(s => { const c = (s.customEx || []).find(x => x.id === id); if (c) {
-      c.n = name; c.bp = bp; c.desc = d; c.tg = tg; c.sm = sm; c.muscleGroups = groups; c.primaries = prim; c.secondaries = sm; c.eq = eq
+    void completion.run(() => update(s => {
+      s.customEx ||= []
+      let c = s.customEx.find(x => x.id === id)
+      if (!c && existing) throw new Error('exercise-missing')
+      if (!c) { c = { id, custom: true }; s.customEx.push(c) }
+      Object.assign(c, { n: name, bp, desc: d, tg, sm, muscleGroups: groups, primaries: prim, secondaries: sm, eq })
       extra(c)
-    } })
-    else {
-      id = 'c' + uid()
-      update(s => { const c = { id, n: name, bp, desc: d, tg, sm, muscleGroups: groups, primaries: prim, secondaries: sm, eq, custom: true }; extra(c); (s.customEx = s.customEx || []).push(c) })
-    }
-    // The file goes to the server now rather than after the state's own debounce: another device
-    // that sees the reference first shows a tile until it arrives.
-    if (ref) syncMedia({ force: true })
-    close()
-    toast(existing ? t('Saved') : t('“{0}” created', name))
-    onDone && onDone(EXIDX[id])
+    }), () => {
+      close()
+      toast(existing ? t('Saved') : t('“{0}” created', name))
+      onDone && onDone(EXIDX[id])
+    })
   }
   return <>
     <h3>{existing ? t('Edit custom exercise') : t('Create your own exercise')}</h3>
@@ -1132,7 +1156,7 @@ function CustomExForm({ existing, prefill, onDone, close }) {
       value={desc} onChange={e => setDesc(e.target.value)} />
     <CustomMediaField media={media} url={url} onChange={onMedia} />
     <div style={{ height: 14 }} />
-    <Button variant="primary" onClick={save}>{existing ? t('Save') : t('Create exercise')}</Button>
+    <Button variant="primary" disabled={completion.saving} onClick={save}>{existing ? t('Save') : t('Create exercise')}</Button>
     {existing && <><div style={{ height: 8 }} /><Button variant="danger" icon="trash" onClick={() => { close(); deleteCustomEx(existing) }}>{t('Delete exercise')}</Button></>}
   </>
 }
@@ -1347,6 +1371,8 @@ export function swapActiveWorkoutExercise(index) {
 /* ============================ equipment profiles ============================ */
 // Create or edit one profile ("Home", "Gym", ...): a name plus a checklist of what you have.
 function EquipmentProfileSheet({ profile, close }) {
+  const completion = useDurableSave()
+  const draft = useRef(null)
   const update = useStore(s => s.update)
   const nameRef = useRef(null)
   const [checked, setChecked] = useState(new Set(profile?.equipment || []))
@@ -1354,19 +1380,15 @@ function EquipmentProfileSheet({ profile, close }) {
   const save = () => {
     const name = (nameRef.current.value || '').trim()
     if (!name) { return }
-    update(s => {
+    if (!profile && !draft.current) draft.current = newProfile(name)
+    void completion.run(() => update(s => {
       s.equipProfiles = s.equipProfiles || []
       const equipment = [...checked]
-      if (profile) {
-        const p = s.equipProfiles.find(x => x.id === profile.id)
-        if (p) { p.name = name; p.equipment = equipment }
-      } else {
-        const p = newProfile(name); p.equipment = equipment
-        s.equipProfiles.push(p)
-        if (!s.activeEquipId) s.activeEquipId = p.id
-      }
-    })
-    close()
+      let p = s.equipProfiles.find(x => x.id === (profile?.id || draft.current.id))
+      if (!p && profile) throw new Error('profile-missing')
+      if (!p) { p = { ...draft.current }; s.equipProfiles.push(p); if (!s.activeEquipId) s.activeEquipId = p.id }
+      p.name = name; p.equipment = equipment
+    }), close)
   }
   return <>
     <h3>{profile ? t('Edit profile') : t('New equipment profile')}</h3>
@@ -1383,7 +1405,7 @@ function EquipmentProfileSheet({ profile, close }) {
     <div className="dim small" style={{ marginTop: 10 }}>
       {t('Body-weight exercises are always available, in every profile.')}
     </div>
-    <div style={{ height: 14 }} /><Button variant="primary" onClick={save}>{t('Save')}</Button>
+    <div style={{ height: 14 }} /><Button variant="primary" disabled={completion.saving} onClick={save}>{t('Save')}</Button>
   </>
 }
 export const equipmentProfileSheet = profile => ui().openSheet(close => <EquipmentProfileSheet profile={profile} close={close} />)
@@ -2028,7 +2050,7 @@ function DayOverride({ iso, close }) {
     <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{changed && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
     {missed && <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{t('Log this workout')}</Button></div>}
     {coach.length > 0 && <>
-      <h4 className="sec" style={{ marginTop: 0 }}>{ownLoop ? t('Your loop') : t('Coach week')}</h4>
+      <h4 className="sec" style={{ marginTop: 0 }}>{ownLoop ? t('Your loop') : t('Planned sessions')}</h4>
       <div className="list" style={{ marginBottom: 8 }}>{coach.map(row)}</div>
     </>}
     <div className="list">
@@ -2079,6 +2101,7 @@ export const dayAssignSheet = day => ui().openSheet(close => <DayAssign day={day
 // the session keeps the length it had. The PR badges of the exercises it trained are worked out
 // again, because "this was a record" is a claim about the sessions before it.
 function WorkoutDateEdit({ w, onDone, close }) {
+  const completion = useDurableSave()
   const [date, setDate] = useState(w.d)
   const [time, setTime] = useState(startTimeOf(w))
   const today = todayISO()
@@ -2090,13 +2113,14 @@ function WorkoutDateEdit({ w, onDone, close }) {
     if (!(S().workouts || []).some(x => sameWorkout(x, w))) { close(); return }
     // It keeps its length, so the end it would have is what has to be in the past.
     if (endsInFuture(date, time, durationMinOf(w))) { toast(t('That’s still in the future. Try an earlier start.')); return }
-    update(s => {
+    void completion.run(() => update(s => {
       const next = moveWorkout(s.workouts, w, date, time)
       if (next) s.workouts = next
+    }), () => {
+      close()
+      onDone && onDone()
+      toast(t('Workout moved'))
     })
-    close()
-    onDone && onDone()
-    toast(t('Workout moved'))
   }
   return <>
     <h3>{t('Change date & time')}</h3>
@@ -2106,7 +2130,7 @@ function WorkoutDateEdit({ w, onDone, close }) {
     <Row icon="clock" title={t('Start time')}>
       <input type="time" className="timef" value={time} onChange={e => setTime(e.target.value)} /></Row>
     <div style={{ height: 18 }} />
-    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    <Button variant="primary" disabled={completion.saving} onClick={save}>{t('Save')}</Button>
   </>
 }
 export const workoutDateSheet = (w, onDone) => ui().openSheet(close => <WorkoutDateEdit w={w} onDone={onDone} close={close} />)
@@ -2115,6 +2139,8 @@ export const workoutDateSheet = (w, onDone) => ui().openSheet(close => <WorkoutD
 // (Discord). The start stays, the end follows it; the sets, the order of history and the badges
 // do not depend on the length and are left alone.
 function WorkoutDurationEdit({ w, onDone, close }) {
+  const completion = useDurableSave()
+  const changedBefore = useRef(false)
   const [dur, setDur] = useState(durationMinOf(w))
   // A cleared field reads as 0, and saving that made the session one minute long without a word
   // (QA 1.3.9): it is refused with the reason under the field, and the saved length stays.
@@ -2123,15 +2149,16 @@ function WorkoutDurationEdit({ w, onDone, close }) {
   const save = () => {
     if (durInvalid) { toast(t('Enter how long it took (at least 1 minute).')); return }
     if (durTooLong) { toast(t('That’s more than a day. Keep it to 24 hours or less.')); return }
-    let changed = false
-    update(s => {
+    let changed = changedBefore.current
+    void completion.run(() => update(s => {
       const next = setWorkoutDuration(s.workouts, w, dur)   // at least a minute, however the field was left
-      if (next) { s.workouts = next; changed = true }
+      if (next) { s.workouts = next; changed = true; changedBefore.current = true }
+    }), () => {
+      close()
+      if (!changed) return
+      onDone && onDone()
+      toast(t('Duration changed'))
     })
-    close()
-    if (!changed) return
-    onDone && onDone()
-    toast(t('Duration changed'))
   }
   return <>
     <h3>{t('Change duration')}</h3>
@@ -2142,7 +2169,7 @@ function WorkoutDurationEdit({ w, onDone, close }) {
     {durInvalid && <div className="small" style={{ color: 'var(--red)', marginTop: 6 }}>{t('Enter how long it took (at least 1 minute).')}</div>}
     {durTooLong && <div className="small" style={{ color: 'var(--red)', marginTop: 6 }}>{t('That’s more than a day. Keep it to 24 hours or less.')}</div>}
     <div style={{ height: 18 }} />
-    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    <Button variant="primary" disabled={completion.saving} onClick={save}>{t('Save')}</Button>
   </>
 }
 export const workoutDurationSheet = (w, onDone) => ui().openSheet(close => <WorkoutDurationEdit w={w} onDone={onDone} close={close} />)
@@ -2192,6 +2219,7 @@ function WorkoutDetail({ w, close }) {
       {ex && <Thumb ex={ex} />}
       <div className="grow"><div className={`tt ${exerciseNameClass(ex)}`} style={{ fontWeight: 600 }}>{nameOf(e)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
         <div className="ss">{e.sets.filter(hasCompletedWork).map(s => setLabel(e.id, s, e.target, speedUnitOf(st))).join('  ·  ') || t('no sets')}</div>
+        {e.sets.map((set, index) => <SetHeartRateSummaries key={index} set={set} label={t('Set {0}', index + 1)} />)}
         {e.note && <div className="small dim" style={{ marginTop: 3 }}>
           {e.notePin && <Icon name="pin" style={{ fontSize: 12, marginInlineEnd: 4, verticalAlign: '-1px', color: 'var(--yellow)' }} />}{e.note}
         </div>}</div>
@@ -2391,6 +2419,7 @@ export function beginWorkout(routineIds, bw) {
   })
   useUI.getState().stopRest()
   navToWorkout()
+  requestWearWorkoutOpen()
 }
 
 // "Repeat today" (#58): a saved workout's exercises as a new freestyle session dated today, each
@@ -2412,6 +2441,7 @@ export function repeatWorkout(w, close) {
     })
     useUI.getState().stopRest()
     if (close) closeThenNav(close, '/workout'); else navToWorkout()
+    requestWearWorkoutOpen()
     if (skipped) toast(tn('{0} exercise no longer exists and was left out.', '{0} exercises no longer exist and were left out.', skipped))
   }
   if (st.weighIn === false) { go(null); return }
@@ -2584,6 +2614,7 @@ export function addRoutineToSessionSheet() {
    A routine's own `note` (a plan's instruction for this exercise) is edited in the config sheet
    and is deliberately not here: it belongs to the plan, not to the day or to the movement. */
 function ExerciseNote({ entryIdx, close }) {
+  const completion = useDurableSave()
   const noteRef = useRef(null)
   const onNoteFocus = useSheetKeyboard(noteRef)
   const st = useStore(s => s.S)
@@ -2601,7 +2632,7 @@ function ExerciseNote({ entryIdx, close }) {
   const save = () => {
     const today = note.trim().slice(0, NOTE_MAX)
     const always = standing.trim().slice(0, NOTE_MAX)
-    update(s => {
+    void completion.run(() => update(s => {
       const e = s.active?.entries?.[entryIdx]
       if (e) {
         if (today) { e.note = today; if (pin) e.notePin = true; else delete e.notePin }
@@ -2612,8 +2643,7 @@ function ExerciseNote({ entryIdx, close }) {
         if (always) s.exNotes[entry.id] = always
         else delete s.exNotes[entry.id]
       }
-    })
-    close()
+    }), close)
   }
 
   return <>
@@ -2637,7 +2667,7 @@ function ExerciseNote({ entryIdx, close }) {
         onChange={e => setStanding(e.target.value)} />
     </>}
     <div style={{ height: 18 }} />
-    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    <Button variant="primary" disabled={completion.saving} onClick={save}>{t('Save')}</Button>
   </>
 }
 export const exerciseNoteSheet = entryIdx => ui().openSheet(close => <ExerciseNote entryIdx={entryIdx} close={close} />)
@@ -2648,6 +2678,7 @@ export const exerciseNoteSheet = entryIdx => ui().openSheet(close => <ExerciseNo
    fact because "notes you can write during a workout" is the point; a note you can only add
    once the session is filed is a different, smaller feature. */
 function SessionNote({ close }) {
+  const completion = useDurableSave()
   const noteRef = useRef(null)
   const onNoteFocus = useSheetKeyboard(noteRef)
   const st = useStore(s => s.S)
@@ -2659,8 +2690,9 @@ function SessionNote({ close }) {
 
   const save = () => {
     const text = note.trim().slice(0, NOTE_MAX)
-    update(s => { if (!s.active) return; if (text) s.active.note = text; else delete s.active.note })
+    void completion.run(() => update(s => { if (!s.active) return; if (text) s.active.note = text; else delete s.active.note }), () => {
     close()
+    })
   }
 
   return <>
@@ -2669,12 +2701,13 @@ function SessionNote({ close }) {
       placeholder={t('How the session went as a whole.')}
       onFocus={onNoteFocus} onChange={e => setNote(e.target.value)} />
     <div style={{ height: 18 }} />
-    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    <Button variant="primary" disabled={completion.saving} onClick={save}>{t('Save')}</Button>
   </>
 }
 export const sessionNoteSheet = () => ui().openSheet(close => <SessionNote close={close} />)
 
 function RenameWorkout({ close }) {
+  const completion = useDurableSave()
   const inputRef = useRef(null)
   const onFocus = useSheetKeyboard(inputRef)
   const st = useStore(s => s.S)
@@ -2689,12 +2722,11 @@ function RenameWorkout({ close }) {
 
   const save = () => {
     if (!canSave) return
-    update(s => {
+    void completion.run(() => update(s => {
       if (!s.active) return
       s.active.name = trimmed
       s.active.customName = true
-    })
-    close()
+    }), close)
   }
 
   return <>
@@ -2704,7 +2736,7 @@ function RenameWorkout({ close }) {
       onFocus={onFocus} onChange={e => setName(e.target.value)}
       onKeyDown={e => { if (e.key === 'Enter' && canSave) save() }} />
     <div style={{ height: 18 }} />
-    <Button variant="primary" disabled={!canSave} onClick={save}>{t('Save')}</Button>
+    <Button variant="primary" disabled={!canSave || completion.saving} onClick={save}>{t('Save')}</Button>
   </>
 }
 export const renameWorkoutSheet = () => ui().openSheet(close => <RenameWorkout close={close} />)
@@ -2727,37 +2759,54 @@ function WorkoutComplete({ close }) {
 }
 export const workoutCompleteSheet = () => ui().openSheet(close => <WorkoutComplete close={close} />, { kind: 'center' })
 
-export function saveWorkoutEdits(onExit = () => nav('/history')) {
-  // A save decision left open after the editor already closed (a second prompt from a route
-  // exit that raced the first save) has nothing to save or delete: it only finishes leaving.
-  if (!S().active?.editingWorkoutId) { onExit(); return }
-  // An edit that unticked or removed every set would save a workout with nothing in it, which
-  // the history would still list and count as a training day. Deleting it is what that edit
-  // means; Keep editing goes back to the sets.
-  if (editLeftEmpty(S().active)) {
-    confirmSheet({
-      title: t('Delete workout?'),
+// Observe the expected post-action context. A later owner/draft transition cancels
+// all success effects, even when another draft is opened and closed during the write.
+function workoutSaveGuard() {
+  const initial = useStore.getState()
+  let valid = initial.localReady
+  const stop = useStore.subscribe(current => {
+    if (!current.localReady || current.ownerKey !== initial.ownerKey || current.activeSessionToken !== initial.activeSessionToken) valid = false
+  })
+  return { current: () => valid, async flush() { try { await useStore.getState().flushLocal(); return valid } finally { stop() } } }
+}
+
+export async function saveWorkoutEdits(onExit = () => nav('/history')) {
+  const original = S().active
+  if (!original?.editingWorkoutId) {
+    const guard = workoutSaveGuard()
+    try { if (await guard.flush()) onExit() } catch (error) { if (guard.current()) toast(t(error.message)) }
+    return
+  }
+  const save = async deleting => {
+    let guard
+    try {
+      if (deleting) useStore.getState().deleteHistoryEdit(); else useStore.getState().saveHistoryEdit()
+      useUI.getState().stopRest(); useUI.getState().stopWork()
+      guard = workoutSaveGuard()
+      if (!await guard.flush()) return
+      void useStore.getState().autoBackupNow().catch(() => {})
+      toast(t(deleting ? 'Workout deleted' : 'Workout updated'))
+      onExit()
+    } catch (error) {
+      if (!guard || guard.current()) {
+        // The saved intent remains retryable; keep the editor open after a failed write.
+        if (guard && !S().active) {
+          useStore.getState().update(s => { s.active = structuredClone(original) }, false)
+          try { await useStore.getState().flushLocal() } catch { /* Keep the original save error and retryable editor. */ }
+        }
+        toast(t(error.message))
+      }
+    }
+  }
+  if (editLeftEmpty(original)) {
+    confirmSheet({ title: t('Delete workout?'),
       message: t('No sets are left in this workout, so there is nothing to save. Delete it from your history?') + mediaGoesToo(editedRecord(S())),
       confirmText: t('Delete workout'), cancelText: t('Keep editing'), danger: true,
-      onConfirm: () => {
-        useStore.getState().deleteHistoryEdit()
-        useUI.getState().stopRest()
-        useUI.getState().stopWork()
-        useStore.getState().autoBackupNow()
-        toast(t('Workout deleted'))
-        onExit()
-      },
+      onConfirm: () => save(true),
     })
     return
   }
-  try {
-    useStore.getState().saveHistoryEdit()
-    useUI.getState().stopRest()
-    useUI.getState().stopWork()
-    useStore.getState().autoBackupNow()
-    toast(t('Workout updated'))
-    onExit()
-  } catch (error) { toast(t(error.message)) }
+  return save(false)
 }
 
 // The one save prompt that may be open: { id, onExit }. Closing the editor and a route exit
@@ -2826,7 +2875,7 @@ export function finishWorkout() {
   const total = setUnitsTotal(A.entries)
   if (!done) { confirmSheet({ title: t('Nothing logged yet'), message: t('You haven’t checked off any sets. Finish the workout anyway?'), confirmText: t('Finish anyway'), onConfirm: doFinishWorkout }); return }
   if (done < total) { confirmSheet({ title: t('Finish early?'), message: tn('{0} set still unchecked. Finish the workout now?', '{0} sets still unchecked. Finish the workout now?', total - done), confirmText: t('Finish workout'), onConfirm: doFinishWorkout }); return }
-  doFinishWorkout()
+  return doFinishWorkout()
 }
 // The workout screen's Finish pill (v1.3.11): one sheet with both ways out, Finish and save or
 // Discard. It says what finishWorkout's confirm would have said about sets still unchecked, so
@@ -2848,7 +2897,7 @@ export function finishWorkoutSheet({ onDiscard } = {}) {
     ],
   })
 }
-function doFinishWorkout() {
+async function doFinishWorkout() {
   const st = S()
   const A = st.active
   if (!A) return
@@ -2896,13 +2945,15 @@ function doFinishWorkout() {
     // A rotation pass this app manages starts its next pass the moment the last session lands
     // (lib/rotation.js). A planner's queue is left alone: it completes and waits for its writer.
     refillAfter(s, w)
-  })
-  useStore.getState().autoBackupNow()
+  }, true, { kind: 'finish' })
   useUI.getState().stopRest()
   // A hold still counting (a plank left unchecked, then Finish early) goes with the workout, as
   // on Discard: its bar is app-wide and would chime over the summary, and its callback writes
   // into s.active, which is gone. What it held is not logged, like any set left unchecked.
   useUI.getState().stopWork()
+  const guard = workoutSaveGuard()
+  try { if (!await guard.flush()) return } catch (error) { if (guard.current()) toast(t(error.message)); return }
+  void useStore.getState().autoBackupNow().catch(() => {})
   beep(snd(), 880, 0.15); beep(snd(), 1100, 0.15, 0.18); beep(snd(), 1320, 0.3, 0.36)
   ui().openSheet(close => <FinishSummary w={shown} prs={prs} e1prs={e1prs} close={close} />, { kind: 'center', locked: true })
 }

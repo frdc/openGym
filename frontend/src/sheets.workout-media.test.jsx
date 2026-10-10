@@ -10,6 +10,13 @@ import { createRoot } from 'react-dom/client'
 const h = vi.hoisted(() => ({ ingest: null }))
 vi.mock('./lib/media-ingest.js', () => ({ ingestMediaFile: (...a) => h.ingest(...a) }))
 
+const runtimeFixture = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const { createUIStoreFixture } = await import('./store/ui-test-runtime.js')
+  runtimeFixture.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: runtimeFixture.fixture.useStore }
+})
 import { DEF, useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { _setLangState } from './lib/i18n-core.js'
@@ -42,6 +49,7 @@ function renderTop() {
 }
 const settle = async () => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
 async function pick(host, count = 1, ingested = count) {
+  await settle()
   const input = host.querySelector('.wmedia input[type="file"]')
   const files = Array.from({ length: count }, (_, i) => new File(['x' + i], `IMG_00${i}.HEIC`, { type: 'image/heic' }))
   Object.defineProperty(input, 'files', { value: files, configurable: true })
@@ -56,14 +64,14 @@ async function pick(host, count = 1, ingested = count) {
 const workout = extra => ({ id: 'w1', d: '2026-09-15', start: Date.UTC(2026, 8, 15, 17), end: Date.UTC(2026, 8, 15, 18), name: 'Push', vol: 0, prs: [], routineIds: [], entries: [], _ts: 5, ...extra })
 
 let media, next
-beforeEach(() => {
+beforeEach(async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   useUI.setState({ sheets: [], toastMsg: '' })
-  useStore.setState({ S: { ...structuredClone(DEF), workouts: [workout()] }, user: null, config: null })
+  await runtimeFixture.fixture.prepare({ ...structuredClone(DEF), workouts: [workout()] })
   _setLangState('en', null, null, null)
   document.body.innerHTML = ''
   media = createMediaStore({ ...memoryBackend(), persistent: true, name: 'test' }, { objectURL: { createObjectURL: () => 'blob:t/1', revokeObjectURL() {} } })
-  _setMediaStore(media)
+  _setMediaStore(media, useStore.getState().ownerKey)
   next = 1
   h.ingest = vi.fn(async () => {
     const n = next++
@@ -72,27 +80,30 @@ beforeEach(() => {
     return { media: r, blobs: [{ hash: r.hash, blob: new Blob(['main' + n]), mime: r.mime }, { hash: r.poster.hash, blob: new Blob(['poster' + n]), mime: 'image/webp' }], warnings: [] }
   })
 })
-afterEach(() => {
+afterEach(async () => {
   act(() => { mounted.splice(0).forEach(root => root.unmount()) })
   _setMediaStore(null)
+  await runtimeFixture.fixture.close()
 })
 
 describe('a workout\'s photos and videos', () => {
-  it('asks for images and videos, several at once', () => {
+  it('asks for images and videos, several at once', async () => {
     workoutDetailSheet(S().workouts[0])
-    const input = renderTop().querySelector('.wmedia input[type="file"]')
+    const host = renderTop(); await settle()
+    const input = host.querySelector('.wmedia input[type="file"]')
     expect(input.getAttribute('accept')).toBe('image/*,video/*')
     expect(input.multiple).toBe(true)
   })
 
-  it('a picked photo and video land on the saved record, stamped, with their files pending — never the file name', async () => {
+  it('a picked photo and video land on the saved record, stamped, with their files local — never the file name', async () => {
     workoutDetailSheet(S().workouts[0])
     const host = renderTop()
     await pick(host, 2)
     const w = S().workouts[0]
     expect(w.media).toEqual([refOf(1), refOf(2, 'video')])
     expect(w._ts).toBeGreaterThan(5)
-    expect([...media.pendingNow()].sort()).toEqual([hex(1), hex(101), hex(2), hex(102)].sort())
+    expect([...media.pendingNow()]).toEqual([])
+    expect((await media.list()).map(r => r.hash).sort()).toEqual([hex(1), hex(101), hex(2), hex(102)].sort())
     expect(host.querySelectorAll('.wmedia-item')).toHaveLength(2)
     expect(host.querySelectorAll('.wmedia-kind')).toHaveLength(1)   // the play badge on the video
     expect(JSON.stringify(S())).not.toContain('IMG_00')
@@ -149,49 +160,34 @@ describe('a workout\'s photos and videos', () => {
     expect(h.ingest).toHaveBeenCalledTimes(2)
     expect(S().workouts[0].media).toHaveLength(WORKOUT_MEDIA_MAX)
     expect(useUI.getState().toastMsg).toBe(`Up to ${WORKOUT_MEDIA_MAX} photos or videos per workout.`)
-    expect([...media.pendingNow()]).toHaveLength(4)   // two files, each with its poster
+    expect(await media.list()).toHaveLength(4)   // two files, each with its poster
   })
 
-  it('a server without media storage: no section while there is nothing; with some, no Add and why', () => {
-    useStore.setState({ user: { id: 'u1', name: 'One' }, config: { passkeys: true } })
-    workoutDetailSheet(S().workouts[0])
-    expect(renderTop().querySelector('.wmedia')).toBeNull()
-    useStore.setState(s => ({ S: { ...s.S, workouts: [workout({ media: [refOf(1)] })] } }))
-    workoutDetailSheet(S().workouts[0])
-    const host = renderTop()
-    expect(host.querySelectorAll('.wmedia-item')).toHaveLength(1)
-    expect(host.querySelector('.wmedia-add')).toBeNull()
-    expect(host.textContent).toContain('Your server does not store photos and videos yet.')
-  })
-
-  it('signed in, Add is offered only when the server says a workout may carry media', () => {
-    const caps = { imageMB: 2, gifMB: 8, videoMB: 40, videoSec: 60, quotaMB: 200 }
-    useStore.setState({ user: { id: 'u1', name: 'One' }, config: { media: caps } })
-    expect(render(<WorkoutMediaSection w={S().workouts[0]} hint />).querySelector('.wmedia')).toBeNull()
-    useStore.setState({ config: { media: { ...caps, workouts: true } } })
-    expect(render(<WorkoutMediaSection w={S().workouts[0]} hint />).querySelector('.wmedia-add')).toBeTruthy()
-    // Config not known yet (offline start): offered, the files wait here.
-    useStore.setState({ config: null })
-    expect(render(<WorkoutMediaSection w={S().workouts[0]} />).querySelector('.wmedia-add')).toBeTruthy()
-    // A guest is not held to it: the files stay on the device.
-    useStore.setState({ user: null, config: { media: caps } })
-    expect(render(<WorkoutMediaSection w={S().workouts[0]} />).querySelector('.wmedia-add')).toBeTruthy()
+  it('offers local media regardless of server capability metadata', async () => {
+    for (const config of [null, { passkeys: true }, { media: {} }, { media: { workouts: false } }]) {
+      useStore.setState({ config })
+      const host = render(<WorkoutMediaSection w={S().workouts[0]} hint />)
+      await settle()
+      expect(host.querySelector('.wmedia-add')).toBeTruthy()
+    }
   })
 
   it('a browser that cannot store files shows no empty section', async () => {
     media = createMediaStore({ ...memoryBackend(), persistent: false, name: 'mem' }, { objectURL: { createObjectURL: () => 'blob:t/1', revokeObjectURL() {} } })
-    _setMediaStore(media)
+    _setMediaStore(media, useStore.getState().ownerKey)
     const host = render(<WorkoutMediaSection w={S().workouts[0]} hint />)
     await settle()
     expect(host.querySelector('.wmedia')).toBeNull()
   })
 
-  it('signed out, the finish screen\'s section explains itself; where the files live is said once there are some', () => {
+  it('signed out, the finish screen\'s section explains itself; where the files live is said once there are some', async () => {
     const host = render(<WorkoutMediaSection w={S().workouts[0]} hint />)
+    await settle()
     expect(host.textContent).toContain('A progress photo or a form-check video, kept with this workout.')
     expect(host.textContent).not.toContain('Kept on this device only')
     useStore.setState(s => ({ S: { ...s.S, workouts: [workout({ media: [refOf(1)] })] } }))
     const withOne = render(<WorkoutMediaSection w={S().workouts[0]} hint />)
+    await settle()
     expect(withOne.textContent).toContain('Kept on this device only')
   })
 

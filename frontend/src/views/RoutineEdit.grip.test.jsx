@@ -1,6 +1,17 @@
 // @vitest-environment happy-dom
 // The drag handle on pointer devices (#277, #114): a visible grip with a grab cursor, and a mouse
 // press on it picks the row up at once. The long press everywhere else is unchanged.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import React, { act } from 'react'
@@ -11,7 +22,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const sheets = vi.hoisted(() => ({
   exConfigSheet: vi.fn(), exercisePicker: vi.fn(), glyphPicker: vi.fn(), confirmSheet: vi.fn(),
 }))
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({})) }))
 vi.mock('../sheets.jsx', () => sheets)
 vi.mock('../components/Media.jsx', () => ({ Thumb: ({ ex }) => <span data-thumb={ex.id} /> }))
 vi.mock('../components/BodyMap.jsx', () => ({ default: () => null }))
@@ -48,20 +58,20 @@ function geometry(heights = rows().map(() => 70)) {
   vi.spyOn(list, 'getBoundingClientRect').mockImplementation(() => listRect)
   return { list, tops, bottoms, centers, listRect }
 }
-function mount(entries) {
-  useStore.setState({ S: stateFor(entries), user: null })
+async function mount(entries) {
+  await uiRuntime.fixture.applySnapshot({ S: stateFor(entries), user: null })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  act(() => root.render(<MemoryRouter initialEntries={['/plan/r/r1']}><Routes><Route path="/plan/r/:id" element={<RoutineEdit />} /></Routes></MemoryRouter>))
+  await act(async () => { await root.render(<MemoryRouter initialEntries={['/plan/r/r1']}><Routes><Route path="/plan/r/:id" element={<RoutineEdit />} /></Routes></MemoryRouter>); await uiRuntime.fixture.flush(); })
   return geometry()
 }
-function pointer(target, type, { id = 7, kind = 'touch', primary = true, button = 0, x = 120, y = 120 } = {}) {
+async function pointer(target, type, { id = 7, kind = 'touch', primary = true, button = 0, x = 120, y = 120 } = {}) {
   const event = new Event(type, { bubbles: true, cancelable: true })
   for (const [key, value] of Object.entries({ pointerId: id, pointerType: kind, isPrimary: primary, button, clientX: x, clientY: y })) {
     Object.defineProperty(event, key, { configurable: true, value })
   }
-  act(() => target.dispatchEvent(event))
+  await act(async () => { await target.dispatchEvent(event); await uiRuntime.fixture.flush(); })
   return event
 }
 const exercises = () => useStore.getState().S.routines[0].ex
@@ -84,8 +94,8 @@ const grip = i => rows()[i].querySelector('[data-drag-handle]')
 const cssSource = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
 describe('routine drag handle', () => {
-  it('puts a grip on every row, out of the accessibility tree, named for what it does', () => {
-    mount([configured('1001'), configured('1002')])
+  it('puts a grip on every row, out of the accessibility tree, named for what it does', async () => {
+    await mount([configured('1001'), configured('1002')])
     expect(rows().map(row => !!row.querySelector('.item [data-drag-handle] svg'))).toEqual([true, true])
     expect(grip(0).getAttribute('aria-hidden')).toBe('true')
     expect(grip(0).getAttribute('title')).toBe('Reorder exercises')
@@ -106,49 +116,49 @@ describe('routine drag handle', () => {
     expect(cssSource).toMatch(/#app \.list\.routine-list\{display:flex;flex-direction:column\}/)
   })
 
-  it('picks the row up at once under a mouse and drops it where it is let go', () => {
-    const layout = mount([configured('a'), configured('b'), configured('c'), configured('d')])
-    const down = pointer(grip(0), 'pointerdown', { kind: 'mouse', y: layout.centers[0] })
+  it('picks the row up at once under a mouse and drops it where it is let go', async () => {
+    const layout = (await mount([configured('a'), configured('b'), configured('c'), configured('d')]))
+    const down = (await pointer(grip(0), 'pointerdown', { kind: 'mouse', y: layout.centers[0] }))
     // No hold: lifted on the press itself, and the press does not go on to select text.
     expect(rows()[0].classList.contains('is-dragging')).toBe(true)
     expect(down.defaultPrevented).toBe(true)
-    pointer(grip(0), 'pointermove', { kind: 'mouse', y: layout.centers[2] + 1 })
-    pointer(grip(0), 'pointerup', { kind: 'mouse', y: layout.centers[2] + 1 })
+    await pointer(grip(0), 'pointermove', { kind: 'mouse', y: layout.centers[2] + 1 })
+    await pointer(grip(0), 'pointerup', { kind: 'mouse', y: layout.centers[2] + 1 })
     expect(exercises().map(e => e.id)).toEqual(['b', 'c', 'a', 'd'])
     // The click that follows the drop does not open the exercise's settings.
-    act(() => grip(2).click())
+    await act(async () => { await grip(2).click(); await uiRuntime.fixture.flush(); })
     expect(sheets.exConfigSheet).not.toHaveBeenCalled()
   })
 
-  it('leaves a click on the grip without a move as nothing at all', () => {
-    const layout = mount([configured('a'), configured('b')])
-    pointer(grip(1), 'pointerdown', { kind: 'mouse', y: layout.centers[1] })
-    pointer(grip(1), 'pointerup', { kind: 'mouse', y: layout.centers[1] })
-    act(() => grip(1).click())
+  it('leaves a click on the grip without a move as nothing at all', async () => {
+    const layout = (await mount([configured('a'), configured('b')]))
+    await pointer(grip(1), 'pointerdown', { kind: 'mouse', y: layout.centers[1] })
+    await pointer(grip(1), 'pointerup', { kind: 'mouse', y: layout.centers[1] })
+    await act(async () => { await grip(1).click(); await uiRuntime.fixture.flush(); })
     expect(exercises().map(e => e.id)).toEqual(['a', 'b'])
     expect(sheets.exConfigSheet).not.toHaveBeenCalled()
   })
 
-  it('keeps the long press for a mouse on the rest of the row, and for a finger on the grip', () => {
-    const layout = mount([configured('a'), configured('b')])
+  it('keeps the long press for a mouse on the rest of the row, and for a finger on the grip', async () => {
+    const layout = (await mount([configured('a'), configured('b')]))
     const item = rows()[0].querySelector('.item')
-    pointer(item, 'pointerdown', { kind: 'mouse', y: layout.centers[0] })
+    await pointer(item, 'pointerdown', { kind: 'mouse', y: layout.centers[0] })
     expect(rows()[0].classList.contains('is-dragging')).toBe(false)
-    act(() => vi.advanceTimersByTime(ROUTINE_LONG_PRESS_MS))
+    await act(async () => { await vi.advanceTimersByTime(ROUTINE_LONG_PRESS_MS); await uiRuntime.fixture.flush(); })
     expect(rows()[0].classList.contains('is-dragging')).toBe(true)
-    pointer(item, 'pointercancel', { kind: 'mouse', y: layout.centers[0] })
+    await pointer(item, 'pointercancel', { kind: 'mouse', y: layout.centers[0] })
 
-    act(() => vi.advanceTimersByTime(200))
-    const touch = pointer(grip(1), 'pointerdown', { kind: 'touch', y: layout.centers[1] })
+    await act(async () => { await vi.advanceTimersByTime(200); await uiRuntime.fixture.flush(); })
+    const touch = (await pointer(grip(1), 'pointerdown', { kind: 'touch', y: layout.centers[1] }))
     expect(touch.defaultPrevented).toBe(false)
     expect(rows()[1].classList.contains('is-dragging')).toBe(false)
-    act(() => vi.advanceTimersByTime(ROUTINE_LONG_PRESS_MS))
+    await act(async () => { await vi.advanceTimersByTime(ROUTINE_LONG_PRESS_MS); await uiRuntime.fixture.flush(); })
     expect(rows()[1].classList.contains('is-dragging')).toBe(true)
   })
 
-  it('ignores a right-click on the grip', () => {
-    const layout = mount([configured('a'), configured('b')])
-    pointer(grip(0), 'pointerdown', { kind: 'mouse', button: 2, y: layout.centers[0] })
+  it('ignores a right-click on the grip', async () => {
+    const layout = (await mount([configured('a'), configured('b')]))
+    await pointer(grip(0), 'pointerdown', { kind: 'mouse', button: 2, y: layout.centers[0] })
     expect(rows()[0].classList.contains('is-dragging')).toBe(false)
   })
 })

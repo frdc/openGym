@@ -19,27 +19,34 @@ const mocks = vi.hoisted(() => {
   })
   return state
 })
-vi.mock('../store/useStore.js', () => {
-  const useStore = selector => selector(mocks.snapshot())
-  useStore.getState = mocks.snapshot
-  return { useStore }
+const runtimeFixture = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const { createUIStoreFixture } = await import('../store/ui-test-runtime.js')
+  runtimeFixture.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: runtimeFixture.fixture.useStore }
 })
+import { useStore } from '../store/useStore.js'
+
 
 const EX = { id: 'bench', n: 'bench press', gif: 'bench.gif', img: 'bench.jpg' }
 
 let host, root
-beforeEach(() => {
+beforeEach(async () => {
+  await runtimeFixture.fixture.prepare()
   mocks.S = { gifSize: 'full' }
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
 })
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   host.remove()
+  await runtimeFixture.fixture.close()
 })
 
-const mount = props => act(() => root.render(<Media ex={EX} {...props} />))
+const applyFixture = () => runtimeFixture.fixture.setFixture(s => { Object.assign(s, { workoutView: 'cards' }, mocks.S) })
+const mount = props => act(() => { applyFixture(); root.render(<Media ex={EX} {...props} />) })
 
 describe('Media gifSize', () => {
   it('renders the full animation by default and toggles to mini in the workout', () => {
@@ -47,7 +54,8 @@ describe('Media gifSize', () => {
     expect(host.querySelector('.exmedia img')).toBeTruthy()
     expect(host.querySelector('.exmedia.mini')).toBeFalsy()
     act(() => { host.querySelector('.giftoggle').click() })
-    expect(mocks.S.gifSize).toBe('mini')
+    expect(useStore.getState().S.gifSize).toBe('mini')
+    mocks.S.gifSize = 'mini'
     mount({ minimizable: true })
     expect(host.querySelector('.exmedia.mini')).toBeTruthy()
   })
@@ -87,7 +95,7 @@ const custom = over => ({ id: 'c1', n: 'sandbag carry', bp: 'back', custom: true
 // Object URLs the store hands out, by file, so a test can tell which file an element shows.
 let media, made
 const settle = async () => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
-const mountCustom = async (ex, props = {}) => { act(() => root.render(<Media ex={ex} {...props} />)); await settle() }
+const mountCustom = async (ex, props = {}) => { act(() => { applyFixture(); root.render(<Media ex={ex} {...props} />) }); await settle() }
 async function holding(...hashes) {
   for (const h of hashes) await media.put(h, new Blob(['x']), { mime: h === MAIN ? 'image/webp' : 'image/webp', pending: false })
 }
@@ -99,7 +107,7 @@ describe('Media — a custom exercise', () => {
       objectURL: { createObjectURL: b => { const u = 'blob:t/' + made.length; made.push(u); return u }, revokeObjectURL: () => {} },
       canPlayType: () => ''
     })
-    _setMediaStore(media)
+    _setMediaStore(media, useStore.getState().ownerKey)
     HTMLMediaElement.prototype.play = vi.fn(function () { return Promise.resolve() })
     HTMLMediaElement.prototype.pause = vi.fn()
   })
@@ -284,7 +292,7 @@ describe('Thumb — a custom exercise', () => {
   beforeEach(() => {
     made = []
     media = createMediaStore(memoryBackend(), { objectURL: { createObjectURL: () => 'blob:t/' + made.push(1), revokeObjectURL: () => {} } })
-    _setMediaStore(media)
+    _setMediaStore(media, useStore.getState().ownerKey)
   })
   afterEach(() => _setMediaStore(null))
   const mountThumb = async ex => { act(() => root.render(<Thumb ex={ex} />)); await settle() }

@@ -515,7 +515,7 @@ const capStamps = m => {
  * as added back (`-now`) any entry `next` brought in again whose removal was on record (and any
  * favourite starred). Mutates and returns `next`; adds no `deleted` when there is nothing to record.
  */
-export function stampDeletions(prev, next, now = Date.now()) {
+export function stampDeletions(prev, next, now = Date.now(), { retainAllDeletions = false } = {}) {
   if (!next || typeof next !== 'object') return next
   const del = isMap(next.deleted) ? next.deleted : {}
   let touched = false
@@ -544,7 +544,7 @@ export function stampDeletions(prev, next, now = Date.now()) {
       if (had.has(k)) continue
       if (k in m ? m[k] > 0 : f === 'favEx') { m[k] = -now; changed = true }
     }
-    if (changed) { del[f] = capStamps(m); touched = true }
+    if (changed) { del[f] = retainAllDeletions ? m : capStamps(m); touched = true }
   }
   if (touched) next.deleted = del
   return next
@@ -555,17 +555,21 @@ const laterDel = (v, cur) => {
   const x = Number(v) || 0, y = Number(cur) || 0
   return Math.abs(x) > Math.abs(y) || (Math.abs(x) === Math.abs(y) && x < y)
 }
-/** Both copies' records of removals: per entry, the later stamp. */
-export function mergeDeletions(a, b) {
+/** Both copies' removals: per entry, the later stamp. Cloud records opt out of the legacy cap. */
+export function mergeDeletions(a, b, { retainAllDeletions = false } = {}) {
   const out = {}
   for (const f of Object.keys(DEL_LISTS)) {
-    const x = isMap(a?.[f]) ? a[f] : {}, y = isMap(b?.[f]) ? b[f] : {}
+    const x = a && Object.hasOwn(a, f) && isMap(a[f]) ? a[f] : {}
+    const y = b && Object.hasOwn(b, f) && isMap(b[f]) ? b[f] : {}
     const m = { ...x }
     // On equal stamps the add-back (negative) wins, whichever copy is first: two devices whose
     // clocks were lifted from the same stamp can record an Undo and a removal at the same time,
     // and a first-wins tie kept a different record on each side (QA 2026-10-06).
-    for (const [k, v] of Object.entries(y)) if (!(k in m) || laterDel(v, m[k])) m[k] = v
-    if (Object.keys(m).length) out[f] = capStamps(m)
+    for (const [k, v] of Object.entries(y)) if (!Object.hasOwn(m, k) || laterDel(v, m[k])) {
+      // Entity IDs are arbitrary; assignment to __proto__ would call an inherited setter.
+      Object.defineProperty(m, k, { value: v, enumerable: true, configurable: true, writable: true })
+    }
+    if (Object.keys(m).length) out[f] = retainAllDeletions ? m : capStamps(m)
   }
   return Object.keys(out).length ? out : null
 }
@@ -709,7 +713,7 @@ function applyEdits(out, n, o) {
 // `prefer` names the side whose settings, plan and per-exercise config win regardless of `_ts`:
 // on sign-in the server's profile is the truth and the device only contributes the entries it
 // logged while signed out. Without it the newer copy decides, as for a conflict between devices.
-export function mergeStates(a0, b0, { prefer } = {}) {
+export function mergeStates(a0, b0, { prefer, retainAllDeletions = false } = {}) {
   if (!a0) return b0 ? clone(b0) : b0
   if (!b0) return clone(a0)
   let a = a0, b = b0
@@ -818,7 +822,8 @@ export function mergeStates(a0, b0, { prefer } = {}) {
   // With `prefer` only the preferred side's removals count: a guest's are about the guest's own
   // entries, and keyed by day (weigh-ins) or exercise (favourites) they also named the account's
   // weigh-in of that day and its favourite, which the guest never had.
-  const deleted = prefer ? mergeDeletions(prefer === 'a' ? a.deleted : b.deleted, null) : mergeDeletions(a.deleted, b.deleted)
+  const deletionOptions = { retainAllDeletions }
+  const deleted = prefer ? mergeDeletions(prefer === 'a' ? a.deleted : b.deleted, null, deletionOptions) : mergeDeletions(a.deleted, b.deleted, deletionOptions)
   for (const w of applyDeletions(out, deleted)) {
     const k = String(workoutKey(w))
     const by = [n, o].filter(S => Number(S.deleted?.workouts?.[k]) > 0).map(S => S.exWeights)
@@ -902,10 +907,10 @@ export function keepReset(cur, next) {
 // stamps its settings, plan days and plans as changed at `now`, and keeps the record of removals.
 
 /** Stamps `next`, a restored backup, as described above. Mutates and returns `next`. */
-export function stampRestore(next, others = [], now = Date.now()) {
+export function stampRestore(next, others = [], now = Date.now(), options = {}) {
   if (!next || typeof next !== 'object') return next
-  let del = mergeDeletions(next.deleted, null)
-  for (const o of others) del = mergeDeletions(del, o?.deleted)
+  let del = mergeDeletions(next.deleted, null, options)
+  for (const o of others) del = mergeDeletions(del, o?.deleted, options)
   del = del || {}
   for (const [f, key] of Object.entries(DEL_LISTS)) {
     const m = del[f]
@@ -939,11 +944,11 @@ export function stampRestore(next, others = [], now = Date.now()) {
  * wins, and an entry only that device knew of is not named, so it stays. `others` are the copies
  * the replace knew: this device's and the server's. Mutates and returns `next`.
  */
-export function stampReplace(next, others = [], now = Date.now()) {
+export function stampReplace(next, others = [], now = Date.now(), options = {}) {
   if (!next || typeof next !== 'object') return next
   const known = {}
   for (const f of Object.keys(DEL_LISTS)) known[f] = others.flatMap(o => list(o?.[f])).filter(x => x != null)
-  stampDeletions(known, next, now)
+  stampDeletions(known, next, now, options)
   for (const f of ['workouts', 'routines', 'customEx', 'equipProfiles', 'gymCards']) {
     const versions = new Map()
     for (const o of others) for (const x of list(o?.[f])) if (x && typeof x === 'object' && x.id != null) versions.set(x.id, [...(versions.get(x.id) || []), x])

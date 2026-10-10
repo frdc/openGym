@@ -33,10 +33,6 @@ vi.mock('../store/useUI.js', () => {
   return { useUI }
 })
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
-vi.mock('../lib/api.js', () => ({
-  api: vi.fn(() => Promise.resolve({})), webauthnOK: () => true, passkeyLogin: vi.fn(), passkeyRegister: vi.fn(), IS_ANDROID: false,
-}))
-vi.mock('../lib/push.js', () => ({ pushSupported: () => false, enablePush: vi.fn(), disablePush: vi.fn(), sendTestPush: vi.fn() }))
 vi.mock('../lib/wakelock.js', () => ({ wakeLockSupported: () => false }))
 vi.mock('../lib/mobile.js', () => ({
   get MOBILE() { return mocks.MOBILE },
@@ -69,7 +65,7 @@ const idRow = el => [...el.querySelectorAll('.lrow')].find(r => r.querySelector(
 let writeText
 beforeEach(() => {
   mocks.S = { unit: 'kg', restSec: 90, restPauseSec: 15, sound: false, effort: 'none', gifSize: 'full', workouts: [], routines: [], exWeights: {} }
-  mocks.user = { id: ID, name: 'andi' }
+  mocks.user = { uid: ID, email: 'andi@example.com', displayName: 'andi' }
   mocks.MOBILE = false
   mocks.toast.mockClear()
   writeText = vi.fn(() => Promise.resolve())
@@ -80,7 +76,7 @@ afterEach(() => { act(() => { mounted.splice(0).forEach(({ root, host }) => { ro
 describe('Settings → Account ID', () => {
   it('a signed-in browser shows the id under Account, and a tap copies it', async () => {
     const page = mount(<Settings page="account" />)
-    const row = idRow(section(page, 'Account'))
+    const row = idRow(page)
     expect(row).toBeTruthy()
     expect(row.querySelector('.acct-id').textContent).toBe(ID)
     act(() => row.click())
@@ -89,10 +85,10 @@ describe('Settings → Account ID', () => {
     expect(mocks.toast).toHaveBeenCalledWith('Account ID copied')
   })
 
-  it('a paired phone shows it in the Server & sync block', () => {
+  it('a signed-in phone shows it in Account & sync', () => {
     mocks.MOBILE = true
     const page = mount(<Settings page="account" />)
-    expect(idRow(section(page, 'Server & sync')).querySelector('.acct-id').textContent).toBe(ID)
+    expect(idRow(page).querySelector('.acct-id').textContent).toBe(ID)
   })
 
   it('a clipboard that refuses says nothing, and the id stays on screen', async () => {

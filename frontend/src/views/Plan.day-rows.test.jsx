@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('../store/useStore.js', () => {
   const useStore = selector => (selector ? selector(mocks.snapshot()) : mocks.snapshot())
   useStore.getState = mocks.snapshot
+  useStore.subscribe = () => () => {}
   return { useStore, DEF: { reminder: { time: '17:30' } }, hasData: () => false }
 })
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.nav }))
@@ -92,15 +93,11 @@ describe('Plan — the menu', () => {
     return menuSheet.mock.calls.at(-1)[0]
   }
 
-  it('has no Coach banner on the page; the Coach is the menu’s last entry when it is available', () => {
+  it('has no Coach banner or menu entry even with legacy Coach configuration', () => {
     mocks.coach = true
     mount()
     expect(host.textContent).not.toContain('Plan design and reviews')
-    const menu = openMenu()
-    const coach = menu.items.filter(Boolean).at(-1)
-    expect(coach.label).toBe('Coach')
-    act(() => coach.onClick())
-    expect(mocks.nav).toHaveBeenCalledWith('/coach')
+    expect(openMenu().items.filter(Boolean).map(i => i.label)).not.toContain('Coach')
   })
 
   it('leaves the Coach out where it is not available', () => {

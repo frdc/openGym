@@ -7,4 +7,5 @@
      server; a phone in local mode keeps them in the zip export. -->
 <full-backup-content>
     <exclude domain="file" path="opengym-media/" />
+    <exclude domain="sharedpref" path="wear-heart-journal.xml" />
 </full-backup-content>

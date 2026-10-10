@@ -141,7 +141,7 @@ describe('Home — coach week progress row', () => {
   it('a complete week says so, every chip is inert, and the day goes back to the weekday plan', () => {
     setS({ workouts: [logged('d1'), logged('d2'), logged('d3')], week: { [new Date().getDay()]: ['own'] } })
     mount()
-    expect(status()).toBe('Week complete, ask the coach')
+    expect(status()).toBe('Week complete')
     expect(chips().every(c => c.disabled)).toBe(true)
     expect(host.querySelectorAll('.queue .row .small')[1].textContent).toBe('3 / 3')
     expect(todayTitle()).toBe('Core')

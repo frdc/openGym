@@ -3,6 +3,17 @@
 // back with Undo must come back as a stamped change: the removal another device already pulled
 // must not take it away again, whichever copy the merge counts as newer, and it keeps its place
 // in the list and on its weekdays. An edit another device made meanwhile still wins its field.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('../store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEF, useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
@@ -11,7 +22,6 @@ import { mergeStates, stampChange } from '../lib/sync-merge.js'
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
 vi.mock('../lib/sound.js', () => ({ beep: vi.fn(), chime: vi.fn(), vibrate: vi.fn(), alertBuzz: vi.fn(), unlock: vi.fn() }))
-vi.mock('../lib/api.js', () => ({ api: vi.fn(() => Promise.resolve({})), beacon: vi.fn(), appBase: () => '/' }))
 
 const clone = value => JSON.parse(JSON.stringify(value))
 const routine = (id, name, ts) => ({ id, name, emoji: null, _ts: ts, ex: [{ id: '0025', sets: 3, reps: 5 }] })
@@ -28,9 +38,9 @@ const shared = () => Object.assign(clone(DEF), {
 // Another device's change, stamped the way its store would stamp it.
 const change = (prev, fn, wall) => { const next = clone(prev); fn(next); next._ts = stampChange(prev, next, wall); return next }
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear()
-  useStore.setState({ S: shared(), user: null })
+  await uiRuntime.fixture.applySnapshot({ S: shared(), user: null })
 })
 afterEach(() => { localStorage.clear() })
 

@@ -17,7 +17,7 @@ import { t, tn } from '../lib/i18n.js'
 import { fmtDate, todayISO } from '../lib/format.js'
 import { workoutMediaOf, WORKOUT_MEDIA_MAX } from '../lib/media-refs.js'
 import { addWorkoutMedia } from '../lib/workout-media.js'
-import { syncMedia } from '../lib/media-sync.js'
+import { captureMediaContext } from '../lib/local-media.js'
 import { useMediaPicker } from '../components/CustomMediaField.jsx'
 import { CustomThumb, MediaView, useMediaUrl } from '../components/CustomMedia.jsx'
 import { Button } from '../components/ui.jsx'
@@ -156,15 +156,17 @@ export default function ProgressPhotos() {
   // Attaches straight onto today's already-logged workout — the file picker offers the camera
   // on a phone the same way WorkoutMedia.jsx's does, since it is the very same input.
   const onFile = async ev => {
+    const captured = captureMediaContext(useStore)
+    if (!captured) return
     const file = ev.target.files && ev.target.files[0]
     ev.target.value = ''
     if (!file || !today) return
     if (workoutMediaOf(today).length >= WORKOUT_MEDIA_MAX) { toast(t('Up to {0} photos or videos per workout.', WORKOUT_MEDIA_MAX)); return }
     const got = await pick(file)
-    if (!got) return
+    if (!captured.current() || !got) return
     let res
     update(s => { res = addWorkoutMedia(s, today, got) })
-    if (res === 'added') { toast(t('Photo added')); syncMedia({ force: true }) }
+    if (res === 'added') toast(t('Photo added'))
     else if (res === 'full') toast(t('Up to {0} photos or videos per workout.', WORKOUT_MEDIA_MAX))
     else if (res === 'gone') toast(t('Workout deleted'))
   }

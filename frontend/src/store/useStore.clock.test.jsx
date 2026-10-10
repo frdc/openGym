@@ -4,15 +4,16 @@
    it was made on (lib/sync-merge.js stampChange), so it wins over what it had already seen. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../lib/api.js', () => ({ api: vi.fn(), setRemoteAuth: vi.fn() }))
 vi.mock('./useUI.js', () => ({ useUI: { getState: () => ({ toast: vi.fn() }) } }))
 
-import { DEF, useStore } from './useStore.js'
+import { DEF } from './useStore.js'
+import { runtime } from './cloud-test-runtime.js'
+let useStore
 
 const clone = v => JSON.parse(JSON.stringify(v))
 const AHEAD = Date.now() + 86400000   // stamps written by a device a day ahead
 
-beforeEach(() => { localStorage.clear(); useStore.setState({ user: null, ready: true }) })
+beforeEach(async () => { localStorage.clear(); useStore = (await runtime()).store })
 afterEach(() => { localStorage.clear() })
 
 describe('update stamps after what the copy has seen', () => {

@@ -1,7 +1,10 @@
+import { createMediaStore } from './media-store.js'
+import { exportBackupZip } from './backup-media.js'
+import { readZip } from './zip.js'
 import { describe, it, expect, vi } from 'vitest'
 import { fsBackend, toBase64 } from './media-store-fs.js'
 import { sha256Hex } from './sha256.js'
-import { jpeg, mp4 } from './media-samples.test-util.js'
+import { jpeg, mp4, png } from './media-samples.test-util.js'
 
 // Capacitor's Filesystem, in memory: files as base64 (or UTF-8 text for index.json), keyed by
 // path. Each call is recorded, so the tests can see how a big file crossed the bridge.
@@ -69,7 +72,7 @@ describe('the phone backend', () => {
     expect(JSON.parse(new TextDecoder().decode(fs.files.get('opengym-media/index.json')))[hash]).toMatchObject({ mime: 'video/quicktime', pending: true })
   })
 
-  it('on start, keeps a file the index never listed as pending, and drops what points at nothing', async () => {
+  it('on start, recovers validated local files and quarantines mismatches and interrupted writes', async () => {
     const fs = fakeFs()
     const photo = jpeg()
     const video = mp4().file
@@ -88,11 +91,11 @@ describe('the phone backend', () => {
     await be.open()
     const recs = Object.fromEntries((await be.all()).map(r => [r.hash, r]))
     expect(Object.keys(recs).sort()).toEqual([ph, vh].sort())
-    expect(recs[ph]).toMatchObject({ mime: 'image/jpeg', size: photo.length, pending: true })
+    expect(recs[ph]).toMatchObject({ mime: 'image/jpeg', size: photo.length, pending: false })
     expect(recs[vh]).toMatchObject({ pending: false })
     await tick(5)
-    expect(fs.files.has(`opengym-media/${'e'.repeat(64)}.jpg`)).toBe(false)
-    expect(fs.files.has(`opengym-media/${'d'.repeat(64)}.webp.part`)).toBe(false)
+    expect(fs.files.has(`opengym-media/${'e'.repeat(64)}.jpg`)).toBe(true)
+    expect(fs.files.has(`opengym-media/${'d'.repeat(64)}.webp.part`)).toBe(true)
   })
 
   it('removes the file before the index entry, and clear empties the folder', async () => {
@@ -114,4 +117,128 @@ describe('the phone backend', () => {
     const be = fsBackend({ load: async () => { throw new Error('not a Capacitor build') } })
     expect(await be.open()).toBe(false)
   })
+})
+
+
+describe('native startup uncertainty', () => {
+  it('preserves unindexed originals when WebView reads fail', async () => {
+    const fs = fakeFs(), photo = jpeg(), h = await sha256Hex(photo)
+    fs.files.set(`opengym-media/${h}.jpg`, photo)
+    const be = fsBackend({ ...fs.deps, fetchImpl: async () => { throw new Error('temporary IO') } })
+    await be.open().catch(() => false)
+    expect(fs.files.has(`opengym-media/${h}.jpg`)).toBe(true)
+    expect(fs.files.has('opengym-media/index.json')).toBe(false)
+  })
+  it('does not replace unreadable index evidence', async () => {
+    const fs = fakeFs(), broken = new TextEncoder().encode('{broken')
+    fs.files.set('opengym-media/index.json', broken)
+    fs.files.set(`opengym-media/${await sha256Hex(jpeg())}.jpg`, jpeg())
+    await fsBackend(fs.deps).open().catch(() => false)
+    expect([...fs.files].find(([path]) => path.includes('index.corrupt-'))?.[1]).toEqual(broken)
+  })
+  it('scopes equal hashes and shares writes across factories for one native owner', async () => {
+    const fs = fakeFs(), h = await sha256Hex(jpeg())
+    const a = fsBackend({ ...fs.deps, ownerKey: 'A' }), b = fsBackend({ ...fs.deps, ownerKey: 'B' })
+    await a.open(); await b.open()
+    await a.put({ hash: h, mime: 'image/jpeg', size: jpeg().length }, new Blob([jpeg()]))
+    expect(await b.getBlob(h)).toBeNull()
+    expect(await b.all()).toEqual([])
+    const peer = fsBackend({ ...fs.deps, ownerKey: 'A' }); await peer.open()
+    expect(await peer.getBlob(h)).not.toBeNull()
+    await peer.put({ hash: 'b'.repeat(64), mime: 'image/jpeg', size: 1 }, new Blob(['b']))
+    expect((await a.all()).map(r => r.hash)).toContain('b'.repeat(64))
+    await a.flush()
+  })
+})
+
+it('readdir failure neither prunes indexed originals nor rewrites an empty index', async () => {
+  const fs = fakeFs(), h = await sha256Hex(jpeg())
+  const original = new TextEncoder().encode(JSON.stringify({ [h]: { hash: h, mime: 'image/jpeg', size: jpeg().length } }))
+  fs.files.set('opengym-media/index.json', original); fs.files.set(`opengym-media/${h}.jpg`, jpeg())
+  const mod = await fs.deps.load(); mod.Filesystem.readdir = async () => { throw new Error('IO') }
+  await expect(fsBackend(fs.deps).open()).rejects.toThrow('IO')
+  expect(fs.files.get('opengym-media/index.json')).toEqual(original)
+  expect(fs.calls.filter(c => c[0] === 'deleteFile')).toEqual([])
+})
+
+it('a parseable but invalid index is preserved as evidence instead of rewritten empty', async () => {
+  const fs = fakeFs(), original = new TextEncoder().encode(JSON.stringify({ ['a'.repeat(64)]: { mime: 'not-media', size: 1 } }))
+  fs.files.set('opengym-media/index.json', original)
+  expect(await fsBackend(fs.deps).open()).toBe(true)
+  expect([...fs.files].find(([path]) => path.includes('index.corrupt-'))?.[1]).toEqual(original)
+})
+
+it('can retry a transient original-read failure without clearing its recovery evidence', async () => {
+  const fs = fakeFs(), h = await sha256Hex(jpeg())
+  fs.files.set(`opengym-media/${h}.jpg`, jpeg())
+  let failed = true
+  const be = fsBackend({ ...fs.deps, fetchImpl: async url => { if (failed) throw new Error('transient'); return fs.deps.fetchImpl(url) } })
+  await expect(be.open()).rejects.toThrow('transient')
+  expect(fs.files.has(`opengym-media/${h}.jpg`)).toBe(true)
+  failed = false
+  expect(await be.open()).toBe(true)
+  expect(await be.getBlob(h)).not.toBeNull()
+})
+
+it('a replacement rename failure cannot delete an existing original', async () => {
+  const fs = fakeFs(), be = fsBackend(fs.deps), h = await sha256Hex(jpeg())
+  await be.open()
+  const rec = { hash: h, mime: 'image/jpeg', size: jpeg().length }
+  await be.put(rec, new Blob([jpeg()]))
+  const mod = await fs.deps.load(); mod.Filesystem.rename = async () => { throw new Error('rename IO') }
+  await expect(be.put(rec, new Blob([jpeg()]))).rejects.toThrow('rename IO')
+  expect(fs.files.get(`opengym-media/${h}.jpg`)).toEqual(jpeg())
+  await be.flush()
+})
+
+
+it.each(['{truncated', '[]', '{"invalid":{"mime":"no"}}'])('recovers verified originals from damaged index %s without discarding any evidence', async damaged => {
+  const fs = fakeFs(), photo = jpeg(), h = await sha256Hex(photo)
+  const original = new TextEncoder().encode(damaged)
+  fs.files.set('opengym-media/index.json', original)
+  fs.files.set(`opengym-media/${h}.jpg`, photo)
+  fs.files.set(`opengym-media/${'d'.repeat(64)}.jpg`, photo)
+  fs.files.set('opengym-media/unknown.bin', new Uint8Array([9]))
+  fs.files.set('opengym-media/unfinished.part', new Uint8Array([7]))
+  const be = fsBackend(fs.deps)
+  expect(await be.open()).toBe(true)
+  expect((await be.all()).map(r => r.hash)).toEqual([h])
+  expect(await sha256Hex(await be.getBlob(h))).toBe(h)
+  expect(await be.fileUrl(h)).toContain(h)
+  const evidence = [...fs.files].filter(([path]) => path.includes('index.corrupt-'))
+  expect(evidence).toHaveLength(1); expect(evidence[0][1]).toEqual(original)
+  const media = createMediaStore(be)
+  const ref = { kind: 'image', hash: h, mime: 'image/jpeg', size: photo.length, width: 4, height: 3 }
+  const exported = await exportBackupZip({ workouts: [], routines: [], customEx: [{ id: 'c', media: ref }] }, { media })
+  expect(exported).toMatchObject({ included: 1, missing: 0 })
+  expect(await sha256Hex((await readZip(exported.blob)).find(e => e.name === `media/${h}.jpg`).blob)).toBe(h)
+  const later = png(), laterHash = await sha256Hex(later)
+  await media.put(laterHash, new Blob([later]), { mime: 'image/png' })
+  await be.patch(h, { shownAt: 42 }); await be.flush()
+  const freshMod = { ...(await fs.deps.load()), Filesystem: { ...(await fs.deps.load()).Filesystem } }
+  const reopened = fsBackend({ ...fs.deps, load: async () => freshMod })
+  expect(await reopened.open()).toBe(true)
+  expect(await sha256Hex(await reopened.getBlob(h))).toBe(h)
+  expect(fs.files.get(evidence[0][0])).toEqual(original)
+  expect(fs.files.has('opengym-media/unknown.bin')).toBe(true)
+  expect(fs.files.has('opengym-media/unfinished.part')).toBe(true)
+  expect(fs.files.has(`opengym-media/${'d'.repeat(64)}.jpg`)).toBe(true)
+  expect(fs.calls.filter(c => c[0] === 'deleteFile')).toEqual([])
+  expect(fs.calls.filter(c => c[0] === 'rename').every(c => c[1].endsWith('.part'))).toBe(true)
+})
+
+
+it.each(['read', 'listing', 'preserve', 'verify'])('fails closed on %s IO while retaining damaged index and originals', async stage => {
+  const fs = fakeFs(), h = await sha256Hex(jpeg()), original = new TextEncoder().encode('{broken')
+  fs.files.set('opengym-media/index.json', original); fs.files.set(`opengym-media/${h}.jpg`, jpeg())
+  const { Filesystem: fsApi } = await fs.deps.load(), read = fsApi.readFile, write = fsApi.writeFile
+  if (stage === 'read') fsApi.readFile = async () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }) }
+  if (stage === 'listing') fsApi.readdir = async () => { throw new Error('EACCES') }
+  if (stage === 'preserve') fsApi.writeFile = async () => { throw new Error('ENOSPC') }
+  if (stage === 'verify') fsApi.writeFile = async args => { await write({ ...args, data: btoa('torn') }) }
+  await expect(fsBackend(fs.deps).open()).rejects.toThrow()
+  expect(fs.files.get('opengym-media/index.json')).toEqual(original)
+  expect(fs.files.get(`opengym-media/${h}.jpg`)).toEqual(jpeg())
+  expect(fs.calls.some(c => c[0] === 'deleteFile' || c[0] === 'rename')).toBe(false)
+  fsApi.readFile = read; fsApi.writeFile = write
 })

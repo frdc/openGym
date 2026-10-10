@@ -4,7 +4,7 @@ import { fmtDate } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import Icon from './Icon.jsx'
 
-// Home's progress row for a coach week (S.queue) — it stands in for the seven weekday dots
+// Home's progress row for a plan week (S.queue) — it stands in for the seven weekday dots
 // while a planner-written queue runs the week, because its sessions have no weekday: they are done in
 // order, on whatever days you train. One chip per session in slot order; the next undone one
 // is lit, and any undone chip starts its own routine, in whatever order the day calls for. A
@@ -23,9 +23,9 @@ export default function QueueRow({ S, today, onStart, managed }) {
   // "today" only when the today row really offers it: a 'rest' or routine override for today
   // wins over the queue there (effectiveRoutineIds), and this line must not contradict it.
   const shownToday = !!next && effectiveRoutineIds(S, today, today).includes(next.id)
-  // A pass this app manages refills itself (lib/rotation.js) — "ask the coach" and naming a
-  // whole week are a planner's copy, wrong for a pass with no coach and no week shape at all.
-  const status = v.complete ? (managed ? t('Round complete') : t('Week complete, ask the coach'))
+  // A pass this app manages refills itself (lib/rotation.js) and speaks in rounds;
+  // a retained weekly plan keeps its week wording.
+  const status = v.complete ? (managed ? t('Round complete') : t('Week complete'))
     : v.waiting ? (managed ? t('Next round starts {0}.', fmtDate(v.startsOn, true)) : t('Next week starts {0}', fmtDate(v.startsOn, true)))
     : shownToday ? t('Next: {0}, today', next.name)
     : next ? t('Next: {0}', next.name)
@@ -35,7 +35,7 @@ export default function QueueRow({ S, today, onStart, managed }) {
       {/* Your own loop is called 'Rotation' in the language on screen: its saved name is only ever
           the word itself, which older saves kept in the language the loop was made in. */}
       <div className="small muted" style={{ fontWeight: 500 }}>{managed ? t('Rotation') : v.label}</div>
-      {/* Your own loop speaks in rounds, as Plan does; a coach's week keeps its plain count. */}
+      {/* Your own loop speaks in rounds, as Plan does; a plan week keeps its plain count. */}
       <div className="small muted">{managed ? t('{0} of {1} done this round.', v.items.length - v.remaining.length, v.items.length) : `${v.items.length - v.remaining.length} / ${v.items.length}`}</div>
     </div>
     {/* The state word keeps its sentence case ("Up next", as on Plan): .chip capitalizes every

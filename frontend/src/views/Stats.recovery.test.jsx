@@ -28,9 +28,12 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('../store/useStore.js', () => ({
-  useStore: selector => selector({ S: mocks.S }),
-}))
+vi.mock('../store/useStore.js', () => {
+  const useStore = selector => selector({ S: mocks.S })
+  useStore.getState = () => ({ S: mocks.S })
+  useStore.subscribe = () => () => {}
+  return { useStore }
+})
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
 vi.mock('../sheets.jsx', () => ({
   bwSheet: () => {}, goalSheet: () => {}, calendarSheet: () => {}, workoutDetailSheet: () => {},

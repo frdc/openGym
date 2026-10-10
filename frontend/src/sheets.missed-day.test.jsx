@@ -2,6 +2,17 @@
 // #284: "I forgot to check in, so it appears later in the history as a missed day." A planned day
 // in the past with nothing logged offers to log it, from the week strip and the calendar (both
 // open the day sheet), and what gets logged is built like any session of that plan.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
@@ -17,24 +28,24 @@ const clone = v => JSON.parse(JSON.stringify(v))
 const S = () => useStore.getState().S
 const mounted = []
 
-function mountTopSheet() {
+async function mountTopSheet() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const button = (host, text) => [...host.querySelectorAll('button')].find(b => b.textContent.trim() === text)
 // Mounted before the click's own act(): a render nested inside it lands only once it is over.
-function tapInTopSheet(text) {
-  const target = button(mountTopSheet(), text)
+async function tapInTopSheet(text) {
+  const target = button((await mountTopSheet()), text)
   expect(target, text).toBeTruthy()
-  act(() => { target.click() })
+  await act(async () => { target.click(); await uiRuntime.fixture.flush(); })
 }
 
-function install(extra = {}) {
+async function install(extra = {}) {
   const st = clone(DEF)
   Object.assign(st, {
     routines: [
@@ -44,10 +55,10 @@ function install(extra = {}) {
     // Monday trains both routines as one session, Friday just the first.
     week: { 1: ['A', 'B'], 5: ['A'] }, dayPlan: {}, active: null, workouts: [], weighIn: false,
   }, extra)
-  useStore.setState({ S: st, user: null })
+  await uiRuntime.fixture.applySnapshot({ S: st, user: null })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   // Wednesday 16 September 2026, midday.
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date('2026-09-16T12:00:00'))
@@ -55,7 +66,7 @@ beforeEach(() => {
   localStorage.clear()
   useUI.setState({ sheets: [], toasts: [] })
   document.body.innerHTML = ''
-  install()
+  await install()
 })
 afterEach(() => {
   act(() => { mounted.splice(0).forEach(root => root.unmount()) })
@@ -63,32 +74,32 @@ afterEach(() => {
 })
 
 describe('logging a missed planned day', () => {
-  it('is offered on a past planned day with nothing logged, and nowhere else', () => {
-    const offered = iso => {
+  it('is offered on a past planned day with nothing logged, and nowhere else', async () => {
+    const offered = async iso => {
       useUI.setState({ sheets: [] })
       dayOverrideSheet(iso)
-      return !!button(mountTopSheet(), 'Log this workout')
+      return !!button((await mountTopSheet()), 'Log this workout')
     }
-    expect(offered('2026-09-14')).toBe(true)                 // Monday, missed
-    expect(offered('2026-09-15')).toBe(false)                // Tuesday, a rest day
-    expect(offered('2026-09-16')).toBe(false)                // today: that is still a Start
-    expect(offered('2026-09-18')).toBe(false)                // Friday, still to come
-    install({ workouts: [{ id: 'w', d: '2026-09-11', start: 1, end: 2, name: 'Push', entries: [], prs: [] }] })
-    expect(offered('2026-09-11')).toBe(false)                // last Friday, logged
-    install({ dayPlan: { '2026-09-14': 'rest' } })
-    expect(offered('2026-09-14')).toBe(false)                // Monday moved to rest
+    expect((await offered('2026-09-14'))).toBe(true)                 // Monday, missed
+    expect((await offered('2026-09-15'))).toBe(false)                // Tuesday, a rest day
+    expect((await offered('2026-09-16'))).toBe(false)                // today: that is still a Start
+    expect((await offered('2026-09-18'))).toBe(false)                // Friday, still to come
+    await install({ workouts: [{ id: 'w', d: '2026-09-11', start: 1, end: 2, name: 'Push', entries: [], prs: [] }] })
+    expect((await offered('2026-09-11'))).toBe(false)                // last Friday, logged
+    await install({ dayPlan: { '2026-09-14': 'rest' } })
+    expect((await offered('2026-09-14'))).toBe(false)                // Monday moved to rest
   })
 
-  it('opens "Log a past workout" on that day with the day\'s routines, as one session', () => {
+  it('opens "Log a past workout" on that day with the day\'s routines, as one session', async () => {
     dayOverrideSheet('2026-09-14')
-    tapInTopSheet('Log this workout')
+    await tapInTopSheet('Log this workout')
     // the day sheet made way for the log sheet
     expect(useUI.getState().sheets).toHaveLength(1)
-    const host = mountTopSheet()
+    const host = (await mountTopSheet())
     expect(host.querySelector('h3').textContent).toBe('Log a past workout')
     expect(host.querySelector('input[type=date]').value).toBe('2026-09-14')
     expect(host.textContent).toContain('Push + Pull')
-    act(() => { button(host, 'Continue').click() })
+    await act(async () => { button(host, 'Continue').click(); await uiRuntime.fixture.flush(); })
 
     const A = S().active
     expect(A).toMatchObject({ d: '2026-09-14', name: 'Push + Pull', routineIds: ['A', 'B'], backfill: { durationMin: 60, replaceId: null } })
@@ -96,19 +107,19 @@ describe('logging a missed planned day', () => {
     expect(A.entries.map(e => [e.id, e.rid, e.planned?.sets, e.planned?.reps])).toEqual([[BENCH, 'A', 2, 10], [ROW, 'B', 3, 8]])
   })
 
-  it('offers a single planned routine as the routine itself', () => {
+  it('offers a single planned routine as the routine itself', async () => {
     dayOverrideSheet('2026-09-11')
-    tapInTopSheet('Log this workout')
-    tapInTopSheet('Continue')
+    await tapInTopSheet('Log this workout')
+    await tapInTopSheet('Continue')
     expect(S().active).toMatchObject({ d: '2026-09-11', name: 'Push', routineIds: ['A'] })
   })
 
-  it('files a completed workout on that date once its sets are marked done', () => {
+  it('files a completed workout on that date once its sets are marked done', async () => {
     dayOverrideSheet('2026-09-14')
-    tapInTopSheet('Log this workout')
-    tapInTopSheet('Continue')
-    act(() => { useStore.getState().update(s => { s.active.entries = markAllSetsDone(s.active.entries) }) })
-    act(() => finishWorkout())
+    await tapInTopSheet('Log this workout')
+    await tapInTopSheet('Continue')
+    await act(async () => { useStore.getState().update(s => { s.active.entries = markAllSetsDone(s.active.entries) }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await finishWorkout(); await uiRuntime.fixture.flush(); })
     expect(S().active).toBeNull()
     const [w] = S().workouts
     expect(w).toMatchObject({ d: '2026-09-14', routineIds: ['A', 'B'] })
@@ -123,34 +134,34 @@ describe('logging a missed planned day', () => {
   // Review of #284: Monday missed, the routine trained again on Tuesday, Monday logged on
   // Wednesday. Built from the whole log, Monday opened at the weight Tuesday had progressed to and
   // was saved with it, filed ahead of Tuesday: a spike on the chart and a best set dated a day early.
-  it('builds a missed day from the sessions before it, not from one logged after it', () => {
+  it('builds a missed day from the sessions before it, not from one logged after it', async () => {
     const pushed = (id, d, w) => ({
       id, d, start: new Date(d + 'T18:00:00').getTime(), end: new Date(d + 'T19:00:00').getTime(), name: 'Push',
       routineIds: ['A'], prs: [], entries: [{ id: BENCH, rid: 'A', target: { sets: 2, reps: 10, weight: w, mode: 'reps' },
         planned: { sets: 2, reps: 10, weight: 50 }, sets: [{ w, r: 10, done: true }, { w, r: 10, done: true }] }],
     })
-    install({ workouts: [pushed('fri', '2026-09-11', 50), pushed('tue', '2026-09-15', 52.5)] })
+    await install({ workouts: [pushed('fri', '2026-09-11', 50), pushed('tue', '2026-09-15', 52.5)] })
     dayOverrideSheet('2026-09-14')
-    tapInTopSheet('Log this workout')
-    tapInTopSheet('Continue')
+    await tapInTopSheet('Log this workout')
+    await tapInTopSheet('Continue')
     const bench = S().active.entries.find(e => e.id === BENCH)
     expect(bench.sets.filter(s => s.phase !== 'warmup').map(s => s.w)).toEqual([52.5, 52.5])
     expect(bench.target.weight).toBe(52.5)
   })
 
-  it('still refuses while a workout is running', () => {
+  it('still refuses while a workout is running', async () => {
     const toast = vi.fn()
     useUI.setState({ toast })
-    install({ active: { id: 'live', entries: [] } })
+    await install({ active: { id: 'live', entries: [] } })
     dayOverrideSheet('2026-09-14')
-    tapInTopSheet('Log this workout')
+    await tapInTopSheet('Log this workout')
     expect(toast).toHaveBeenCalledWith('Finish the current workout first.')
     expect(useUI.getState().sheets).toHaveLength(0)
   })
 
-  it('treats a click event from the History button as no day at all', () => {
+  it('treats a click event from the History button as no day at all', async () => {
     logPastWorkoutSheet({ type: 'click', target: null })
-    const host = mountTopSheet()
+    const host = (await mountTopSheet())
     expect(host.querySelector('input[type=date]').value).toBe('2026-09-15')
     expect(host.textContent).toContain('Freestyle')
   })
@@ -165,22 +176,22 @@ describe('badges on a workout logged into the past', () => {
     routineIds: ['A'], prs, entries: [{ id: BENCH, rid: 'A', target: { sets: 1, reps: 10, weight: w, mode: 'reps' },
       sets: [{ w, r: 10, done: true }] }],
   })
-  it('awards what the day leads with and takes the badge from a later session it outdoes', () => {
-    install({ workouts: [pushed('fri', '2026-09-11', 50, [BENCH]), pushed('tue', '2026-09-15', 52.5, [BENCH])] })
+  it('awards what the day leads with and takes the badge from a later session it outdoes', async () => {
+    await install({ workouts: [pushed('fri', '2026-09-11', 50, [BENCH]), pushed('tue', '2026-09-15', 52.5, [BENCH])] })
     dayOverrideSheet('2026-09-14')
-    tapInTopSheet('Log this workout')
-    tapInTopSheet('Continue')
-    act(() => { useStore.getState().update(s => {
+    await tapInTopSheet('Log this workout')
+    await tapInTopSheet('Continue')
+    await act(async () => { useStore.getState().update(s => {
       s.active.entries = markAllSetsDone(s.active.entries).map(e => e.id === BENCH
         ? { ...e, sets: e.sets.map(x => (x.phase === 'warmup' ? x : { ...x, w: 60 })) }
         : e)
-    }) })
-    act(() => finishWorkout())
+    }); await uiRuntime.fixture.flush(); })
+    await act(async () => { await finishWorkout(); await uiRuntime.fixture.flush(); })
     const byDay = Object.fromEntries(S().workouts.map(w => [w.d, w.prs]))
     expect(byDay['2026-09-14']).toContain(BENCH)
     expect(byDay['2026-09-15']).not.toContain(BENCH)   // 52.5 no longer leads what came before it
     expect(byDay['2026-09-11']).toContain(BENCH)
     // The summary names it.
-    expect(mountTopSheet().textContent).toContain('New PR:')
+    expect((await mountTopSheet()).textContent).toContain('New PR:')
   })
 })

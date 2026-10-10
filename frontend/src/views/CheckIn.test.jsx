@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   writes: [],          // { push } per update() call, in order
   sheets: [],          // every openSheet render fn, in order
   camera: null,        // the props the browser CameraScan sheet was handed
+  flushLocal: vi.fn(async () => {}),
   toast: vi.fn(),
   nav: vi.fn(),
   confirmSheet: vi.fn(),
@@ -41,7 +42,7 @@ const update = vi.fn((mut, push = true) => {
 })
 
 vi.mock('../store/useStore.js', () => {
-  const snap = () => ({ S: mocks.S, update })
+  const snap = () => ({ S: mocks.S, update, flushLocal: mocks.flushLocal, getContext: () => ({ localReady: true, ownerKey: 'card-owner', epoch: 1 }) })
   const useStore = selector => selector ? selector(snap()) : snap()
   useStore.getState = snap
   return { useStore }
@@ -85,7 +86,7 @@ beforeEach(() => {
   mocks.camera = null
   mocks.toast.mockClear(); mocks.nav.mockClear(); mocks.confirmSheet.mockClear()
   mocks.scanCode.mockReset(); mocks.importCodeFromImage.mockReset()
-  update.mockClear()
+  update.mockClear(); mocks.flushLocal.mockReset().mockResolvedValue(undefined)
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
   sheetHost = document.createElement('div'); document.body.appendChild(sheetHost); sheetRoot = createRoot(sheetHost)
   camHost = document.createElement('div'); document.body.appendChild(camHost); camRoot = createRoot(camHost)
@@ -602,4 +603,19 @@ describe('CheckIn — the sheet openers', () => {
     expect(labelField().value).toBe('Zenith')
     expect(sheetHost.querySelector('[data-qr]').getAttribute('data-qr')).toBe('Z-1')
   })
+})
+
+it('card Save retains draft through a held write and failure, then retries the same created card', async () => {
+  let release
+  mocks.flushLocal.mockImplementation(()=>new Promise((_,reject)=>{release=reject}))
+  openAddCard();const {close}=await openSheet()
+  mocks.MOBILE=true; mocks.scanCode.mockResolvedValue({fmt:'qrcode',value:'durable-card'}); await tap(sheetBtn('Scan'))
+  // The app's parent card sheet stays mounted while the camera sheet closes.
+  await tap(sheetBtn('Save card'))
+  expect(close).not.toHaveBeenCalled();expect(mocks.toast).not.toHaveBeenCalledWith('Card added')
+  const id=mocks.S.gymCards[0].id
+  await act(async()=>{release(new Error('quota'))})
+  expect(close).not.toHaveBeenCalled();expect(mocks.toast).toHaveBeenCalledWith('Changes could not be saved on this device. Keep the app open and try again.')
+  mocks.flushLocal.mockResolvedValue(undefined);await tap(sheetBtn('Save card'))
+  expect(mocks.S.gymCards.map(c=>c.id)).toEqual([id]);expect(close).toHaveBeenCalledOnce()
 })

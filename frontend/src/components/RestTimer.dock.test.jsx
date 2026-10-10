@@ -6,16 +6,24 @@ import RestTimer, { applyRestLeft } from './RestTimer.jsx'
 import { useUI } from '../store/useUI.js'
 import { useStore } from '../store/useStore.js'
 
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async original => {
+  const actual = await original()
+  const { createUIStoreFixture } = await import('../store/ui-test-runtime.js')
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close() })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('../lib/sound.js', () => ({ beep: vi.fn(), chime: vi.fn(), vibrate: vi.fn(), alertBuzz: vi.fn() }))
 
 let host, root, originalS
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers()
   originalS = useStore.getState().S
-  useStore.setState({ S: { ...originalS, sound: false } })
+  await uiRuntime.fixture.prepare({ sound: false, active: { id: 'timer', entries: [] } })
   useUI.setState({ timer: null, work: null, timerFlashId: 0, sheets: [] })
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -23,11 +31,11 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  act(() => root.render(null))
+  act(() => root.unmount())
   useUI.getState().stopRest()
   useUI.getState().stopWork()
   useUI.setState({ sheets: [] })
-  useStore.setState({ S: originalS })
+
   host.remove()
   vi.useRealTimers()
 })

@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => {
   state.stopWork = vi.fn(() => { state.work = null })
   state.storeSnapshot = () => ({
     S: state.S,
+    ownerKey: 'isolated-view-owner', localReady: true, activeSessionToken: 'isolated-view-draft',
     user: null,
     update: mut => {
       const next = structuredClone(state.S)
@@ -103,10 +104,6 @@ vi.mock('../components/DurationWheel.jsx', () => ({ durationSheet: mocks.duratio
 vi.mock('../components/WorkoutSettingsSheet.jsx', () => ({ workoutSettingsSheet: mocks.workoutSettingsSheet }))
 // api.js reads navigator.userAgent at module scope. This file installs its own DOM inside the
 // tests rather than declaring a vitest environment, so it must not depend on an ambient one.
-vi.mock('../lib/api.js', () => ({
-  api: vi.fn(() => Promise.resolve({})),
-  IS_APPLE: false, IS_ANDROID: false, BIO: 'biometrics',
-}))
 
 let dom
 let root
@@ -262,6 +259,21 @@ afterEach(async () => {
 })
 
 describe('Workout set completion flow', () => {
+  it('shows heart rate only for completed sets without changing rest or logging', async () => {
+    const heartRate = {
+      v: 1, status: 'pending', effortEndMs: 10000, recoveryEndMs: null,
+      points: [[0, 120], [10000, 150]], effort: { count: 2, mean: 135, peak: 150 }, recovery: null,
+      milestones: [],
+    }
+    await mount([exercise('plain-bench', [true, false], { sets: [
+      { w: 60, r: 8, done: true, heartRate }, { w: 60, r: 8, done: false, heartRate },
+    ] })])
+    expect(container.querySelectorAll('[aria-label="Set heart rate"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Mean 135 bpm · Peak 150 bpm')
+    expect(mocks.startRest).not.toHaveBeenCalled()
+    expect(mocks.S.active.entries[0].sets[1].done).toBe(false)
+  })
+
   it('rests the exercise\'s warm-up rest between ramp sets, and its working rest after the last ramp set', async () => {
     await mount([exercise('ramped-squat', [false, false, false, false], {
       target: { mode: 'reps', reps: 6, weight: 125, bodyweight: false, restSec: 150, warmupRestSec: 45 },

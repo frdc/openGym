@@ -4,10 +4,10 @@
 // before the setting existed (no key) still reads as on through DEF and `!== false`.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../lib/api.js', () => ({ api: vi.fn() }))
 vi.mock('./useUI.js', () => ({ useUI: { getState: () => ({ toast: vi.fn() }) } }))
 
-import { freshState, DEF, restoredStateFor, restartedState, useStore } from './useStore.js'
+import { runtime } from './cloud-test-runtime.js'
+import { freshState, DEF, restoredStateFor, restartedState } from './useStore.js'
 
 describe('weigh-in default', () => {
   it('a fresh profile starts with the weigh-in off', () => {
@@ -40,10 +40,10 @@ describe('exercise animations default', () => {
 // defaults as a first run, in the language already on screen, and the reset keeps its stamps.
 describe('starting over', () => {
   const old = () => ({ ...JSON.parse(JSON.stringify(DEF)), lang: 'de', weighIn: true, gifSize: 'full', resetAt: 5, resetIds: { workouts: ['w-old'] }, workouts: [{ id: 'w1', d: '2026-09-01', entries: [] }] })
-  afterEach(() => { localStorage.clear(); useStore.setState({ S: JSON.parse(JSON.stringify(DEF)), user: null, ready: false }) })
+
 
   it('Reset everything gives weigh-in off and small animations, in the same language', async () => {
-    useStore.setState({ S: old(), user: null })
+    const { store: useStore, saved } = await runtime({ initial: old() })
     await useStore.getState().resetEverything()
     const S = useStore.getState().S
     expect(S.weighIn).toBe(false)
@@ -52,21 +52,18 @@ describe('starting over', () => {
     expect(S.langAuto).toBe(false)
     expect(S.workouts).toEqual([])
     expect(S.resetAt).toBeGreaterThan(5)
-    expect(S.resetIds.workouts).toEqual(expect.arrayContaining(['w-old', 'w1']))
+    expect((await saved()).recoveryCopies[0].state.resetIds.workouts).toContain('w-old')
+    expect((await saved()).recoveryCopies[0].state.workouts[0].id).toBe('w1')
   })
 
   it('restartedState keeps a language nobody picked yet marked as such', () => {
     expect(restartedState({ lang: 'ar', langAuto: true })).toMatchObject({ lang: 'ar', langAuto: true, weighIn: false, gifSize: 'mini' })
   })
 
-  it('another account signing in on this device starts from the same new profile', () => {
-    localStorage.setItem('gym_owner', 'user-1')
-    useStore.setState({ S: old(), user: { id: 'user-1' } })
-    useStore.getState().setUser({ id: 'user-2', name: 'Two' })
-    const S = useStore.getState().S
-    expect(S.workouts).toEqual([])
-    expect(S.weighIn).toBe(false)
-    expect(S.gifSize).toBe('mini')
-    expect(S.lang).toBe('de')
+  it('another confirmed account starts from fresh defaults without the old profile', async () => {
+    const h = await runtime(); await h.auth('a')
+    h.store.getState().update(s => { Object.assign(s, old()) }, false); await h.store.getState().flushLocal(); await h.auth('b')
+    expect(h.store.getState().S).toMatchObject({ workouts: [], weighIn: false, gifSize: 'mini' })
+    expect(h.store.getState().S.lang).not.toBe('de')
   })
 })

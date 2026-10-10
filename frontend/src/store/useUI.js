@@ -1,37 +1,31 @@
 import { create } from 'zustand'
 import { uid } from '../lib/format.js'
 import { beep, chime, vibrate, alertBuzz } from '../lib/sound.js'
-import { api } from '../lib/api.js'
 import { t } from '../lib/i18n.js'
-import { deviceId } from '../lib/push.js'
 import { MOBILE } from '../lib/mobile.js'
 import { armRestAlert, bindNativeRest, disarmRestAlert, holdRestAlert } from '../lib/rest-alert.js'
 import { useStore } from './useStore.js'
 import { REST_MAX } from '../lib/duration.js'
 import { accentValue } from '../lib/accent.js'
 
-// Fire-and-forget: lets the server push a "rest over" alert if this tab gets suspended
-// before the local timer completes. No-ops for guests / offline. The device id keeps the
-// timer this browser's own: a desktop tab finishing its rest on screen used to cancel the
-// alert the phone in the gym was waiting for, because the server held one timer per account.
-const pushRestTimer = sec => { if (useStore.getState().user) api('/api/push/rest-timer', { method: 'POST', body: JSON.stringify({ seconds: sec, deviceId: deviceId() }) }).catch(() => {}) }
-const cancelPushRestTimer = () => { if (useStore.getState().user) api('/api/push/rest-timer/cancel', { method: 'POST', body: JSON.stringify({ deviceId: deviceId() }) }).catch(() => {}) }
-
-// Books the end of a rest with whatever can announce it while the app is not looking: in the
-// Android app a native alarm and the countdown notification, everywhere else (and wherever that
-// alarm could not be set) the server's push. The web build books the push at once, as before.
-// A switch-sides pause (Workout.jsx SWITCH_SIDES_SEC) books no server push, whose words are "rest over":
-// it is ten seconds between the two sides of a hold, and the app is in your hand.
+// Context is authoritative local metadata, never an ID from a workout backup.
+const timerContext = () => {
+  const { ownerKey, localReady, activeSessionToken } = useStore.getState()
+  return { ownerKey, localReady, activeSessionToken }
+}
+const validContext = context => {
+  const current = timerContext()
+  return !!context?.localReady && !!context.ownerKey && !!context.activeSessionToken && current.localReady
+    && current.ownerKey === context.ownerKey && current.activeSessionToken === context.activeSessionToken
+}
+const guardedDone = (work, done) => (...args) => { if (validContext(work.context)) done?.(...args) }
 const bookRestEnd = (endsAt, totalSec, kind) => {
+  const tm = useUI.getState().timer
+  if (!MOBILE || !validContext(tm?.context)) return
   const switching = kind === 'switch'
-  if (!MOBILE) { if (!switching) pushRestTimer(Math.max(1, Math.round((endsAt - Date.now()) / 1000))); return }
   const { S } = useStore.getState()
-  armRestAlert(endsAt, { title: switching ? t('Switch sides') : t('Rest’s over. Next set!'), countdownTitle: switching ? t('Switch sides') : t('Rest'), totalSec, accent: accentValue(S), sound: !!S.sound, vibrate: S.vibrate !== false, alarmBuzz: S.vibrate !== false && !!S.vibrateOnSilent })
-    .then(ok => {
-      // Only for the rest that asked: one skipped or moved since then has booked its own end.
-      const tm = useUI.getState().timer
-      if (!ok && !switching && tm && !tm.paused && !tm.ready && tm.endsAt === endsAt) pushRestTimer(Math.max(1, Math.round((endsAt - Date.now()) / 1000)))
-    })
+  // The adapter serializes native operations and the token follows native actions.
+  void armRestAlert(endsAt, { timerToken: tm.timerToken, title: switching ? t('Switch sides') : t('Rest’s over. Next set!'), countdownTitle: switching ? t('Switch sides') : t('Rest'), totalSec, accent: accentValue(S), sound: !!S.sound, vibrate: S.vibrate !== false, alarmBuzz: S.vibrate !== false && !!S.vibrateOnSilent }).catch(() => {})
 }
 
 const notificationsSupported = () => typeof window !== 'undefined' && 'Notification' in window
@@ -41,30 +35,23 @@ const notificationsSupported = () => typeof window !== 'undefined' && 'Notificat
 // "the countdown hit zero while the app was actually open" from "it hit zero while
 // backgrounded/closed and we're only just catching up now that it's open again" — the
 // latter must skip beep/vibrate/flash and rely on the alert armed when the rest started
-// (a native alarm on the mobile build, Web Push on the web build). The toast still shows
+// (a native alarm on the mobile build). The toast still shows
 // on reopen so a countdown that vanished does not look like a bug.
 let pageHiddenAt = null
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (document.hidden) pageHiddenAt = Date.now() })
 }
 
-// The Push switch in Settings is the one place notifications are turned on, and "on" means this
-// browser holds a push subscription. This local alert used to ignore it: every rest asked for the
-// permission by itself, and once granted — a page cannot hand a permission back — it fired with the
-// switch off (issue #239). Off is off now; the permission is only ever asked for by the switch.
-const restAlertsOn = async reg => {
-  if (Notification.permission !== 'granted') return false
-  try { return !!(await reg?.pushManager?.getSubscription?.()) } catch { return false }
-}
+// Local browser alerts use an existing permission and never request one during a rest.
+const restAlertsOn = async () => Notification.permission === 'granted'
 
-const maybeRestNotification = async () => {
+const maybeRestNotification = async timer => {
   if (!notificationsSupported()) return
   if (!document.hidden && document.visibilityState !== 'hidden') return
   try {
     const reg = await navigator.serviceWorker?.getRegistration?.()
-    if (!(await restAlertsOn(reg))) return
-    // Same tag as the server's push (api/push-messages.js): whichever lands second replaces the
-    // first instead of stacking a second banner. No body — it only repeated the title.
+    if (!(await restAlertsOn(reg)) || !validContext(timer.context) || useUI.getState().timer?.timerToken !== timer.timerToken) return
+    // One local rest alert replaces the preceding one. No body duplicates the title.
     // Android Chrome forbids the Notification constructor (Illegal constructor) - the
     // service-worker registration path is the one that actually pops there.
     const opts = { tag: 'rest-timer', icon: 'icon-512.png' }
@@ -101,6 +88,7 @@ const runWork = (set, get) => {
   workTick = () => {
     const wk = get().work
     if (!wk) return
+    if (!validContext(wk.context)) { get().stopWork(); return }
     const left = Math.max(wk.overtime ? -MAX_WORK_OVERTIME_SEC : 0, Math.round((wk.endsAt - Date.now()) / 1000))
     const seenLive = !document.hidden && pageHiddenAt === null
     if (!document.hidden) pageHiddenAt = null
@@ -112,7 +100,7 @@ const runWork = (set, get) => {
         alertBuzz([200, 100, 200]); get().flashTimer()
       }
       if (wk.overtime && left > -MAX_WORK_OVERTIME_SEC) { set({ work: { ...wk, left, alerted: true } }); return }
-      const done = workDone || ownerDone(wk)
+      const done = guardedDone(wk, workDone || ownerDone(wk))
       get().stopWork()
       // `chimed` tells the set's own tick that this end has already sounded and buzzed — not
       // so when overtime ran out, whose end chime played when the target was reached.
@@ -140,9 +128,10 @@ const ownerSet = o => {
 // goes to its set, and a hold that ran out (or got its Done) ticks the set off. No rest follows:
 // that is the workout screen's to start, and the hold mostly ended while the app was away.
 const ownerDone = wk => !wk?.owner ? null : (elapsed, { abandoned = false } = {}) => {
-  if (!ownerSet(wk.owner)) return
+  if (!validContext(wk.context) || !ownerSet(wk.owner)) return
   const { idx, i } = wk.owner
   useStore.getState().update(s => {
+    if (!validContext(wk.context) || !ownerSet(wk.owner)) return
     const st = s.active.entries[idx].sets[i]
     st.sec = elapsed
     if (abandoned) { if (st.planSec == null) st.planSec = wk.total; return }
@@ -163,6 +152,7 @@ const runRest = (set, get) => {
   timerTick = () => {
     const tm = get().timer
     if (!tm || tm.ready || tm.paused) return
+    if (!validContext(tm.context)) { get().stopRest(); return }
     const left = Math.max(0, Math.round((tm.endsAt - Date.now()) / 1000))
     const seenLive = !document.hidden && pageHiddenAt === null
     if (!document.hidden) pageHiddenAt = null
@@ -189,8 +179,8 @@ const runRest = (set, get) => {
       // The native alarm is left armed: this tick can come a little early, and with the screen
       // locked it never runs at all.
       get().toast(t('Rest’s over. Next set!'))
-      if (!MOBILE) maybeRestNotification()
-      cancelPushRestTimer()
+      if (!MOBILE) maybeRestNotification(tm)
+
       stopRestTicking()
       set({ timer: { ...tm, left: 0, ready: true } })
       return
@@ -221,9 +211,9 @@ export const useUI = create((set, get) => ({
     set(s => ({ timerFlashId: s.timerFlashId + 1 }))
   },
 
-  openSheet(render, { kind = 'sheet', locked = false } = {}) {
+  openSheet(render, { kind = 'sheet', locked = false, accountAuth = false } = {}) {
     const id = uid()
-    set(s => ({ sheets: [...s.sheets, { id, render, kind, locked }] }))
+    set(s => ({ sheets: [...s.sheets, { id, render, kind, locked, accountAuth }] }))
     const close = () => get().closeSheet(id)
     return { id, close, lock: v => set(s => ({ sheets: s.sheets.map(x => x.id === id ? { ...x, locked: v } : x) })) }
   },
@@ -262,6 +252,8 @@ export const useUI = create((set, get) => ({
   },
 
   startRest(sec, forIdx, { kind, forSet } = {}) {
+    const context = timerContext()
+    if (!validContext(context)) return
     get().stopRest()
     // Rest timer set to Off. Stopping and returning rather than starting a zero-length timer
     // keeps every caller honest: the four places that start a rest do not each need to know.
@@ -281,7 +273,8 @@ export const useUI = create((set, get) => ({
     // with no beep, no vibration and no flash. Each timer starts from where the page is now.
     pageHiddenAt = document.hidden ? Date.now() : null
     const endsAt = Date.now() + sec * 1000
-    set({ timer: { left: sec, total: sec, endsAt, forIdx, ...(forSet != null ? { forSet } : {}), ...(kind === 'switch' ? { kind } : {}) } })
+    retainTimer(REST_KEY)
+    set({ timer: { context, timerToken: uid(), left: sec, total: sec, endsAt, forIdx, ...(forSet != null ? { forSet } : {}), ...(kind === 'switch' ? { kind } : {}) } })
     bookRestEnd(endsAt, sec, kind)
     runRest(set, get)
   },
@@ -293,17 +286,18 @@ export const useUI = create((set, get) => ({
   pauseRest() {
     const tm = get().timer
     if (!tm || tm.ready || tm.paused) return
+    if (!validContext(tm.context)) { get().stopRest(); return }
     stopRestTicking()
-    cancelPushRestTimer()
+
     const left = Math.max(1, Math.round((tm.endsAt - Date.now()) / 1000))
-    holdRestAlert(left, tm.total)
+    holdRestAlert(left, tm.total, tm.timerToken)
     set({ timer: { ...tm, left, paused: true } })
   },
   // Carrying on from where the pause held it: the end moves out by however long the pause was,
   // and the push that announces it is booked again for the new time.
   resumeRest() {
     const tm = get().timer
-    if (!tm?.paused) return
+    if (!tm?.paused || !validContext(tm.context)) return
     const { paused, ...rest } = tm
     // As in startRest: the page may have been hidden and shown while paused, and that is no
     // catch-up of a countdown that was not running.
@@ -315,7 +309,7 @@ export const useUI = create((set, get) => ({
   },
   addRest(sec) {
     const tm = get().timer
-    if (!tm) return
+    if (!tm || !validContext(tm.context)) return
     if (tm.ready) { if (sec > 0) get().startRest(Math.min(sec, REST_MAX), tm.forIdx, { forSet: tm.forSet }); else get().stopRest(); return }
     // +15 s stops where the wheel does (15:00), so the two never disagree about a rest's length.
     if (sec > 0) sec = Math.min(sec, Math.max(0, REST_MAX - tm.left))
@@ -326,7 +320,7 @@ export const useUI = create((set, get) => ({
     if (left <= 0) { get().stopRest(); return }
     // Paused, there is no end to move and nothing booked on the server: the time is simply held,
     // and the notification holds the new figure.
-    if (tm.paused) { set({ timer: { ...tm, left, total: tm.total + sec } }); holdRestAlert(left, tm.total + sec); return }
+    if (tm.paused) { set({ timer: { ...tm, left, total: tm.total + sec } }); holdRestAlert(left, tm.total + sec, tm.timerToken); return }
     const endsAt = tm.endsAt + sec * 1000
     set({ timer: { ...tm, left, total: tm.total + sec, endsAt } })
     bookRestEnd(endsAt, tm.total + sec, tm.kind)
@@ -344,15 +338,16 @@ export const useUI = create((set, get) => ({
   // already called Ready opens it again. Nothing is sent back: the notification already shows it.
   followNativeRest({ endsAt, left, total, paused }) {
     const tm = get().timer
-    const forIdx = tm?.forIdx
+    if (!tm || !validContext(tm.context)) return
+    const forIdx = tm.forIdx
     const kind = { ...(tm?.kind === 'switch' ? { kind: 'switch' } : {}), ...(tm?.forSet != null ? { forSet: tm.forSet } : {}) }
     if (paused) {
       stopRestTicking()
-      set({ timer: { left, total, endsAt, forIdx, ...kind, paused: true } })
+      set({ timer: { context: tm.context, timerToken: tm.timerToken, left, total, endsAt, forIdx, ...kind, paused: true } })
       return
     }
     const ticking = !!timerInt && !!tm && !tm.paused && !tm.ready
-    set({ timer: { left, total, endsAt, forIdx, ...kind } })
+    set({ timer: { context: tm.context, timerToken: tm.timerToken, left, total, endsAt, forIdx, ...kind } })
     if (ticking) return
     // As in resumeRest: a hide from while it was held or over is no catch-up of this countdown.
     pageHiddenAt = document.hidden ? Date.now() : null
@@ -362,8 +357,8 @@ export const useUI = create((set, get) => ({
     stopRestTicking()
     // Skip, Dismiss, a rest replacing this one and "rest off" all take the native alarm and
     // its notifications down with it, or the alert fires after the user already moved on.
-    disarmRestAlert()
-    if (get().timer) cancelPushRestTimer()
+    disarmRestAlert(get().timer?.timerToken)
+
     set({ timer: null })
   },
 
@@ -381,29 +376,33 @@ export const useUI = create((set, get) => ({
      the app being killed (restoreWork below). onDone is a closure and cannot be kept, so the owner
      says where the time goes, and the workout screen binds its handler again (bindWork). */
   startWork(sec, label, onDone, owner = null) {
+    const context = timerContext()
+    if (!validContext(context)) return
     get().abandonWork()   // a hold this one replaces keeps what it held, same as a rest replacing one
     get().stopRest()
     const total = Math.max(1, Math.round(sec) || 1)
     const endsAt = Date.now() + total * 1000
     workDone = onDone
     pageHiddenAt = document.hidden ? Date.now() : null   // see startRest: a stale hide is not a catch-up
-    set({ work: { left: total, total, endsAt, label, overtime: useStore.getState().S.timedSetOvertime === true, ...(owner ? { owner } : {}) } })
+    retainTimer(WORK_KEY)
+    set({ work: { context, left: total, total, endsAt, label, overtime: useStore.getState().S.timedSetOvertime === true, ...(owner ? { owner } : {}) } })
     runWork(set, get)
   },
   // The workout screen, back on a hold restored after a reload: `make(work)` gives it the handler
   // its own start would have. Nothing to do for a hold that has one, or whose set is gone.
   bindWork(make) {
     const wk = get().work
-    if (!wk?.owner || workDone || !ownerSet(wk.owner)) return
+    if (!wk?.owner || workDone || !validContext(wk.context) || !ownerSet(wk.owner)) return
     workDone = make(wk)
   },
   // Ended the hold early — log what was actually held.
   finishWorkEarly() {
     const wk = get().work
     if (!wk) return
+    if (!validContext(wk.context)) { get().stopWork(); return }
     const startedAt = wk.endsAt - wk.total * 1000
     const elapsed = Math.max(1, Math.min(wk.total + (wk.overtime ? MAX_WORK_OVERTIME_SEC : 0), Math.round((Date.now() - startedAt) / 1000)))
-    const done = workDone || ownerDone(wk)
+    const done = guardedDone(wk, workDone || ownerDone(wk))
     vibrate(30)
     get().stopWork()
     if (done) done(elapsed)
@@ -417,8 +416,9 @@ export const useUI = create((set, get) => ({
   abandonWork() {
     const wk = get().work
     if (!wk) { get().stopWork(); return }
+    if (!validContext(wk.context)) { get().stopWork(); return }
     const elapsed = wk.total - wk.left
-    const done = workDone || ownerDone(wk)
+    const done = guardedDone(wk, workDone || ownerDone(wk))
     get().stopWork()
     // Under two seconds there is nothing to keep: that is a play button tapped by accident, or
     // tapped and thought better of, and rounding it up to one second the way an early finish does
@@ -446,26 +446,35 @@ export const useUI = create((set, get) => ({
 // A rest that ended meanwhile, or one left with no session running, is dropped.
 export const REST_KEY = 'gym_rest'
 const restStore = () => { try { return typeof localStorage === 'undefined' ? null : localStorage } catch { return null } }
+const protectedTimerRecords = new Map()
+const protectedRecord = (storage, key) => {
+  const raw = protectedTimerRecords.get(key)
+  if (!raw) return false
+  if (storage.getItem(key) === raw) return true
+  protectedTimerRecords.delete(key)
+  return false
+}
 const saveRest = tm => {
   const ss = restStore()
   if (!ss) return
   try {
+    if (protectedRecord(ss, REST_KEY)) return
     if (!tm || tm.ready) ss.removeItem(REST_KEY)
-    else ss.setItem(REST_KEY, JSON.stringify({ endsAt: tm.endsAt, total: tm.total, forIdx: tm.forIdx ?? null, forSet: tm.forSet ?? null, kind: tm.kind || null, paused: !!tm.paused, left: tm.left }))
+    else ss.setItem(REST_KEY, JSON.stringify({ context: tm.context, timerToken: tm.timerToken, endsAt: tm.endsAt, total: tm.total, forIdx: tm.forIdx ?? null, forSet: tm.forSet ?? null, kind: tm.kind || null, paused: !!tm.paused, left: tm.left }))
   } catch { /* the rest just does not outlive a reload */ }
 }
 export function restoreRest(now = Date.now()) {
   const ss = restStore()
   let saved = null
   try { saved = JSON.parse(ss?.getItem(REST_KEY) || 'null') } catch { saved = null }
-  if (!saved || useUI.getState().timer) return false
+  if (!saved || useUI.getState().timer || !validContext(saved.context)) return false
   const total = Math.round(Number(saved.total))
   const ok = useStore.getState().S?.active && total > 0 && (saved.paused ? saved.left > 0 : saved.endsAt > now)
   if (!ok) { try { ss.removeItem(REST_KEY) } catch { /* nothing to drop */ } return false }
-  const base = { total, forIdx: saved.forIdx ?? undefined, ...(saved.forSet != null ? { forSet: saved.forSet } : {}), ...(saved.kind === 'switch' ? { kind: 'switch' } : {}) }
+  const base = { context: saved.context, timerToken: saved.timerToken || uid(), total, forIdx: saved.forIdx ?? undefined, ...(saved.forSet != null ? { forSet: saved.forSet } : {}), ...(saved.kind === 'switch' ? { kind: 'switch' } : {}) }
   if (saved.paused) {
     useUI.setState({ timer: { ...base, left: Math.round(saved.left), endsAt: saved.endsAt, paused: true } })
-    if (MOBILE) holdRestAlert(Math.round(saved.left), total)
+    if (MOBILE) holdRestAlert(Math.round(saved.left), total, base.timerToken)
     return true
   }
   pageHiddenAt = typeof document !== 'undefined' && document.hidden ? now : null
@@ -488,19 +497,20 @@ const saveWork = wk => {
   const ls = restStore()
   if (!ls) return
   try {
+    if (protectedRecord(ls, WORK_KEY)) return
     if (!wk?.owner) ls.removeItem(WORK_KEY)
-    else ls.setItem(WORK_KEY, JSON.stringify({ endsAt: wk.endsAt, total: wk.total, label: wk.label || '', overtime: !!wk.overtime, alerted: !!wk.alerted, owner: wk.owner }))
+    else ls.setItem(WORK_KEY, JSON.stringify({ context: wk.context, endsAt: wk.endsAt, total: wk.total, label: wk.label || '', overtime: !!wk.overtime, alerted: !!wk.alerted, owner: wk.owner }))
   } catch { /* the hold just does not outlive a reload */ }
 }
 export function restoreWork(now = Date.now()) {
   const ls = restStore()
   let saved = null
   try { saved = JSON.parse(ls?.getItem(WORK_KEY) || 'null') } catch { saved = null }
-  if (!saved || useUI.getState().work) return false
+  if (!saved || useUI.getState().work || !validContext(saved.context)) return false
   const total = Math.round(Number(saved.total))
   const drop = () => { try { ls.removeItem(WORK_KEY) } catch { /* nothing to drop */ } return false }
   if (!(total > 0) || !(saved.endsAt > 0) || !ownerSet(saved.owner)) return drop()
-  const wk = { left: total, total, endsAt: saved.endsAt, label: saved.label || '', overtime: !!saved.overtime, ...(saved.alerted ? { alerted: true } : {}), owner: saved.owner }
+  const wk = { context: saved.context, left: total, total, endsAt: saved.endsAt, label: saved.label || '', overtime: !!saved.overtime, ...(saved.alerted ? { alerted: true } : {}), owner: saved.owner }
   const left = Math.round((saved.endsAt - now) / 1000)
   // Over while the app was away: held to the end (overtime past the target is not known, and
   // the target is what was planned), with no chime for an end nobody was there for.
@@ -521,10 +531,33 @@ restoreWork()
 // service first, then mirror that into the in-app timer. skip ends it. Seconds round up, as the
 // notification's clock does, so a pause in the last half second still holds a second here.
 bindNativeRest(ev => {
-  if (!ev) return
+  const timer = useUI.getState().timer
+  if (!ev || !validContext(timer?.context) || !ev.timerToken || ev.timerToken !== timer.timerToken) return
   if (ev.type === 'skip') { useUI.getState().stopRest(); return }
   const left = Math.ceil((ev.leftMs || 0) / 1000)
   if (!(left > 0)) return
   const total = Math.max(left, Math.round((ev.totalMs || 0) / 1000))
   useUI.getState().followNativeRest({ endsAt: ev.endsAt, left, total, paused: !!ev.paused })
+})
+
+// Preserve displaced records for explicit recovery; never bind unscoped legacy timers.
+function retainTimer(key) {
+  const storage = restStore()
+  let raw
+  try {
+    raw = storage?.getItem(key)
+    if (!raw) { protectedTimerRecords.delete(key); return }
+    const copies = JSON.parse(storage.getItem('gym_timer_recovery') || '[]')
+    if (!copies.some(copy => copy.key === key && copy.raw === raw)) copies.push({ key, raw })
+    storage.setItem('gym_timer_recovery', JSON.stringify(copies))
+    protectedTimerRecords.delete(key)
+  } catch { if (raw) protectedTimerRecords.set(key, raw) }
+}
+useStore.subscribe((state, previous) => {
+  const changed = state.ownerKey !== previous.ownerKey || state.activeSessionToken !== previous.activeSessionToken || state.localReady !== previous.localReady
+  if (!changed) return
+  const ui = useUI.getState()
+  if (ui.work && !validContext(ui.work.context)) { retainTimer(WORK_KEY); ui.stopWork() }
+  if (ui.timer && !validContext(ui.timer.context)) { retainTimer(REST_KEY); ui.stopRest() }
+  if (state.localReady) { restoreWork(); restoreRest() }
 })

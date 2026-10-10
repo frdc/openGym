@@ -1,8 +1,19 @@
 // @vitest-environment happy-dom
 // "Repeat today" in a saved workout's sheet (#58): a new freestyle session dated today, seeded
 // from this workout; the record itself is left as it is.
+
+const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./store/useStore.js', async original => {
+  const actual = (await original())
+  const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
+  uiRuntime.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: uiRuntime.fixture.useStore }
+})
+afterEach(async () => { await uiRuntime.fixture.close(); })
+beforeEach(() => uiRuntime.fixture.begin())
+afterEach(async () => { await uiRuntime.fixture.flush(); })
 import React, { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it , vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -22,13 +33,13 @@ const workout = () => ({
   ],
 })
 
-function renderTop() {
+async function renderTop() {
   const sheet = useUI.getState().sheets.at(-1)
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
   mounted.push(root)
-  act(() => root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))))
+  await act(async () => { await root.render(sheet.render(() => useUI.getState().closeSheet(sheet.id))); await uiRuntime.fixture.flush(); })
   return host
 }
 const button = (host, label) => [...host.querySelectorAll('button')].find(b => b.textContent.trim() === label)
@@ -36,21 +47,21 @@ const button = (host, label) => [...host.querySelectorAll('button')].find(b => b
 describe('WorkoutDetail — repeat today', () => {
   let navigated
 
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     navigated = null
     setNav(to => { navigated = to })
     useUI.setState({ sheets: [], toastMsg: '' })
-    useStore.setState(s => ({ S: { ...s.S, workouts: [], routines: [], active: null, weighIn: false } }))
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [], routines: [], active: null, weighIn: false } }))
     document.body.innerHTML = ''
   })
   afterEach(() => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }) })
 
-  it('starts a freestyle session today from this workout and leaves the record alone', () => {
+  it('starts a freestyle session today from this workout and leaves the record alone', async () => {
     const saved = workout()
-    useStore.setState(s => ({ S: { ...s.S, workouts: [saved] } }))
-    const host = (workoutDetailSheet(saved), renderTop())
-    act(() => { button(host, 'Repeat today').click() })
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [saved] } }))
+    const host = (workoutDetailSheet(saved), (await renderTop()))
+    await act(async () => { button(host, 'Repeat today').click(); await uiRuntime.fixture.flush(); })
     const active = useStore.getState().S.active
     expect(active).toMatchObject({ d: todayISO(), routineIds: [], name: 'Push', cur: 0, bw: null })
     expect(active.entries.map(e => e.id)).toEqual([A, B])
@@ -61,20 +72,20 @@ describe('WorkoutDetail — repeat today', () => {
     expect(useUI.getState().toastMsg).toMatch(/1 exercise no longer exists/)
   })
 
-  it('asks for the weigh-in first when that is on', () => {
+  it('asks for the weigh-in first when that is on', async () => {
     const saved = workout()
-    useStore.setState(s => ({ S: { ...s.S, workouts: [saved], weighIn: true } }))
-    const host = (workoutDetailSheet(saved), renderTop())
-    act(() => { button(host, 'Repeat today').click() })
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [saved], weighIn: true } }))
+    const host = (workoutDetailSheet(saved), (await renderTop()))
+    await act(async () => { button(host, 'Repeat today').click(); await uiRuntime.fixture.flush(); })
     expect(useStore.getState().S.active).toBeNull()
     expect(useUI.getState().sheets.length).toBe(1)
     expect(navigated).toBeNull()
   })
 
-  it('is disabled while a workout is running', () => {
+  it('is disabled while a workout is running', async () => {
     const saved = workout()
-    useStore.setState(s => ({ S: { ...s.S, workouts: [saved], active: { id: 'x', d: todayISO(), start: 1, entries: [] } } }))
-    const host = (workoutDetailSheet(saved), renderTop())
+    await uiRuntime.fixture.applySnapshot(s => ({ S: { ...s.S, workouts: [saved], active: { id: 'x', d: todayISO(), start: 1, entries: [] } } }))
+    const host = (workoutDetailSheet(saved), (await renderTop()))
     expect(button(host, 'Repeat today').disabled).toBe(true)
   })
 })

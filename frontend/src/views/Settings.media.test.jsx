@@ -4,7 +4,6 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Settings from './Settings.jsx'
 import { createMediaStore, memoryBackend, _setMediaStore } from '../lib/media-store.js'
-import { _resetMediaOwed } from '../lib/media-owed.js'
 import { readZip, zipStore } from '../lib/zip.js'
 import { sha256Hex } from '../lib/sha256.js'
 import { jpeg } from '../lib/media-samples.test-util.js'
@@ -39,11 +38,15 @@ const mocks = vi.hoisted(() => {
   })
   return state
 })
-vi.mock('../store/useStore.js', () => {
-  const useStore = selector => selector ? selector(mocks.snapshot()) : mocks.snapshot()
-  useStore.getState = mocks.snapshot
-  return { useStore, DEF: { reminder: { time: '17:30' }, workouts: [] }, hasData: () => false }
+const runtimeFixture = vi.hoisted(() => ({ fixture: null }))
+vi.mock('../store/useStore.js', async importOriginal => {
+  const actual = await importOriginal()
+  const { createUIStoreFixture } = await import('../store/ui-test-runtime.js')
+  runtimeFixture.fixture = createUIStoreFixture(actual.createWorkoutStore, actual.freshState)
+  return { ...actual, useStore: runtimeFixture.fixture.useStore }
 })
+import { runtime } from '../store/cloud-test-runtime.js'
+import { useStore } from '../store/useStore.js'
 vi.mock('../store/useUI.js', () => {
   const snap = () => ({ toast: (...a) => mocks.toast(...a), openSheet: vi.fn() })
   const useUI = selector => selector ? selector(snap()) : snap()
@@ -51,13 +54,8 @@ vi.mock('../store/useUI.js', () => {
   return { useUI }
 })
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
-vi.mock('../lib/api.js', () => ({
-  api: (...a) => mocks.api(...a), webauthnOK: () => false, passkeyLogin: vi.fn(), passkeyRegister: vi.fn(), IS_ANDROID: false,
-}))
-vi.mock('../lib/push.js', () => ({ pushSupported: () => false, enablePush: vi.fn(), disablePush: vi.fn(), sendTestPush: vi.fn() }))
 vi.mock('../lib/wakelock.js', () => ({ wakeLockSupported: () => false }))
-vi.mock('../lib/mobile.js', () => ({ MOBILE: false, isAndroid: () => Promise.resolve(false), shareExport: vi.fn(), shareExportBlob: vi.fn(), syncReminder: vi.fn() }))
-vi.mock('../lib/coach-api.js', () => ({ forgetCoach: vi.fn(() => Promise.resolve()) }))
+vi.mock('../lib/mobile.js', async importOriginal => ({ ...await importOriginal(), MOBILE: false, isAndroid: () => Promise.resolve(false), shareExport: vi.fn(), shareExportBlob: vi.fn(), syncReminder: vi.fn() }))
 vi.mock('./MobileOnboarding.jsx', () => ({ ConnectSheet: () => null }))
 vi.mock('../sheets.jsx', () => ({
   starterPlanSheet: vi.fn(), confirmSheet: (...a) => mocks.confirmSheet(...a), importFromApp: vi.fn(),
@@ -83,7 +81,7 @@ const stateWithPhoto = () => ({
 
 beforeEach(async () => {
   HASH = await sha256Hex(PHOTO)
-  media = createMediaStore(memoryBackend())
+  media = createMediaStore({ ...memoryBackend(), persistent: true })
   _setMediaStore(media)
   mocks.S = stateWithPhoto()
   mocks.user = null
@@ -96,12 +94,21 @@ beforeEach(async () => {
   document.body.appendChild(host)
   root = createRoot(host)
 })
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   host.remove()
   _setMediaStore(null)
+  await runtimeFixture.fixture.close()
 })
-const mount = async () => { act(() => root.render(<Settings page="data" />)); await settle() }
+const mount = async () => {
+  const rt = await runtime({ initial: mocks.S, cloud: !!mocks.user })
+  if (mocks.user) { await rt.auth(mocks.user.id); rt.store.getState().replaceState(mocks.S); await rt.store.getState().flushLocal() }
+  await runtimeFixture.fixture.attach(rt.store)
+  useStore.setState({ config: mocks.config })
+  _setMediaStore(media, useStore.getState().ownerKey)
+  mocks.importBackup = vi.spyOn(useStore.getState(), 'importBackup')
+  act(() => root.render(<Settings page="data" />)); await settle()
+}
 
 describe('Settings — photos and videos', () => {
   it('the JSON export says it leaves them out, the zip row and the Photos & videos row appear', async () => {
@@ -115,15 +122,14 @@ describe('Settings — photos and videos', () => {
   // QA, v1.3.9: a paired phone started in airplane mode has no config yet (it is never cached),
   // and the row called its photos "Kept on this device only" — the guest's sentence — with no
   // count of what was waiting, while they went up by themselves once it was back online.
-  it('signed in with the server\'s config not known yet (an offline start): waiting to upload, not kept here only', async () => {
-    _resetMediaOwed()
-    await media.put(HASH, new Blob([PHOTO]), { mime: 'image/jpeg', pending: true })
+  it('signed in offline still describes media as local only', async () => {
+    await media.put(HASH, new Blob([PHOTO]), { mime: 'image/jpeg', pending: false })
     mocks.user = { id: 'u1', name: 'Ana' }
     mocks.config = null
     mocks.sync = { status: 'offline', offline: true }
     await mount()
-    expect(row('Photos & videos').textContent).not.toContain('Kept on this device only')
-    expect(row('Photos & videos').textContent).toContain('1 waiting to upload')
+    expect(row('Photos & videos').textContent).toContain('Kept on this device only')
+    expect(row('Photos & videos').textContent).not.toContain('waiting to upload')
   })
 
   it('signed in to a server that stores no photos or videos: kept on this device only', async () => {
@@ -167,7 +173,7 @@ describe('Settings — photos and videos', () => {
     } finally { vi.restoreAllMocks() }
   })
 
-  it('importing a zip keeps its photo as pending, once confirmed', async () => {
+  it('importing a zip keeps its photo locally, once confirmed', async () => {
     const S = stateWithPhoto()
     const zip = await zipStore([{ name: 'opengym-backup.json', blob: new Blob([JSON.stringify(S)]) }, { name: `media/${HASH}.jpg`, blob: new Blob([PHOTO]) }])
     await mount()
@@ -178,7 +184,7 @@ describe('Settings — photos and videos', () => {
     expect(mocks.confirmSheet).toHaveBeenCalledTimes(1)
     expect(await media.has(HASH)).toBe(false)          // nothing before the confirm
     await act(async () => { await mocks.confirmSheet.mock.calls[0][0].onConfirm() })
-    expect(await media.get(HASH)).toMatchObject({ mime: 'image/jpeg', pending: true })
+    expect(await media.get(HASH)).toMatchObject({ mime: 'image/jpeg', pending: false })
     expect(mocks.importBackup).toHaveBeenCalledTimes(1)
     expect(mocks.importBackup.mock.calls[0][0].customEx[0].media.hash).toBe(HASH)
     expect(mocks.importBackup.mock.calls[0][1]).toEqual({ mergeWith: null })   // the replace
@@ -187,7 +193,7 @@ describe('Settings — photos and videos', () => {
   // QA, v1.3.9: the import replaced a workout another device had synced meanwhile, unsaid.
   it('importing over a server that has workouts the backup lacks says how many, and can merge them in', async () => {
     mocks.user = { id: 'u1', name: 'Ana' }
-    mocks.conflict = { workouts: 2, state: { workouts: [] }, rev: 9 }
+    mocks.S.workouts = [1, 2].map(n => ({ id: 'w' + n, d: '2026-09-01', start: n, end: n + 1, entries: [] }))
     const S = stateWithPhoto()
     await mount()
     const input = host.querySelector('input[type="file"][accept^=".json"]')
@@ -200,49 +206,87 @@ describe('Settings — photos and videos', () => {
     expect(sheet.items.map(i => i.label)).toEqual(['Replace anyway', 'Merge them in', 'Cancel'])
     await act(async () => { await sheet.items[1].onClick() })
     expect(mocks.importBackup).toHaveBeenCalledTimes(1)
-    expect(mocks.importBackup.mock.calls[0][1]).toEqual({ mergeWith: mocks.conflict })
+    expect(mocks.importBackup.mock.calls[0][1].mergeWith.workouts).toBe(2)
+    expect(useStore.getState().S.workouts).toHaveLength(2)
     await act(async () => { await sheet.items[0].onClick() })
     expect(mocks.importBackup.mock.calls[1][1]).toEqual({ mergeWith: null })
   })
 
-  it('Reset, signed in: pushes, asks the server to sweep, and keeps only what a stash refers to', async () => {
+  it('reset retains originals, recovery files and editor holds while physical GC is deferred', async () => {
     mocks.user = { id: 'u1', name: 'Ana' }
-    mocks.config = { media: { imageMB: 2 } }
     const other = 'c'.repeat(64)
-    await media.put(HASH, new Blob([PHOTO]), { mime: 'image/jpeg', pending: false })
-    await media.put(other, new Blob(['x']), { mime: 'image/png', pending: true })
-    mocks.stashed = new Set([other])
+    await media.put(HASH, new Blob([PHOTO]), { mime: 'image/jpeg' })
+    await media.put(other, new Blob(['x']), { mime: 'image/png' })
+    const release = media.hold([other])
     await mount()
     act(() => { row('Reset everything').click() })
-    act(() => { mocks.confirmSheet.mock.calls[0][0].onConfirm() })
-    await until(async () => !(await media.has(HASH)))
-    expect(mocks.pushState).toHaveBeenCalled()
-    expect(mocks.api.mock.calls.map(c => c[0])).toContain('/api/media/sweep')
-    expect(await media.has(HASH)).toBe(false)
+    await act(async () => { await mocks.confirmSheet.mock.calls[0][0].onConfirm() })
+    await settle()
+    expect(useStore.getState().S.customEx).toEqual([])
+    expect(await media.has(HASH)).toBe(true)
     expect(await media.has(other)).toBe(true)
+    expect(mocks.api).not.toHaveBeenCalled()
+    release()
   })
 
-  it('Reset: no sweep before the empty state is on the server, nor for a guest', async () => {
-    mocks.user = { id: 'u1', name: 'Ana' }
-    mocks.config = { media: { imageMB: 2 } }
-    mocks.sync = { status: 'offline' }
+  it('a ZIP confirmation captured before an owner transition cannot import into the new profile', async () => {
+    const zip = await zipStore([{ name: 'opengym-backup.json', blob: new Blob([JSON.stringify(stateWithPhoto())]) }, { name: `media/${HASH}.jpg`, blob: new Blob([PHOTO]) }])
     await mount()
-    act(() => { row('Reset everything').click() })
-    act(() => { mocks.confirmSheet.mock.calls[0][0].onConfirm() })
-    await until(() => mocks.pushState.mock.calls.length > 0)
-    await settle()
-    expect(mocks.api.mock.calls.map(c => c[0])).not.toContain('/api/media/sweep')
-    act(() => root.unmount())
-    root = createRoot(host)
-    mocks.user = null
-    mocks.sync = { status: 'ok' }
-    mocks.confirmSheet.mockClear(); mocks.api.mockClear()
-    await media.put(HASH, new Blob([PHOTO]), { mime: 'image/jpeg', pending: true })
-    await mount()
-    act(() => { row('Reset everything').click() })
-    act(() => { mocks.confirmSheet.mock.calls[0][0].onConfirm() })
-    await until(async () => !(await media.has(HASH)))
-    expect(mocks.api).not.toHaveBeenCalled()
+    const input = host.querySelector('input[type="file"][accept^=".json"]')
+    Object.defineProperty(input, 'files', { value: [new File([zip], 'backup.zip')], configurable: true })
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })))
+    await until(() => mocks.confirmSheet.mock.calls.length > 0)
+    const confirmation = mocks.confirmSheet.mock.calls[0][0]
+    const rt = await runtime(); await rt.auth('B')
+    await runtimeFixture.fixture.attach(rt.store)
+    await act(async () => { await confirmation.onConfirm() })
+    expect(useStore.getState().S.customEx).toEqual([])
     expect(await media.has(HASH)).toBe(false)
   })
+  it('a ZIP destination storage error is reported and never claims the backup was imported', async () => {
+    const zip = await zipStore([{ name: 'opengym-backup.json', blob: new Blob([JSON.stringify(stateWithPhoto())]) }, { name: `media/${HASH}.jpg`, blob: new Blob([PHOTO]) }])
+    await mount()
+    media.put = async () => { throw new Error('ENOSPC') }
+    const input = host.querySelector('input[type="file"][accept^=".json"]')
+    Object.defineProperty(input, 'files', { value: [new File([zip], 'backup.zip')], configurable: true })
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })))
+    await until(() => mocks.confirmSheet.mock.calls.length > 0)
+    await act(async () => { await mocks.confirmSheet.mock.calls[0][0].onConfirm() })
+    expect(mocks.toast).toHaveBeenCalledWith('There is no room left on this device for that file.')
+    expect(mocks.toast).not.toHaveBeenCalledWith('Backup imported')
+    expect(mocks.importBackup).not.toHaveBeenCalled()
+  })
+  it('does not attach ZIP originals through a memory-only fallback', async () => {
+    media = createMediaStore(memoryBackend())
+    const zip = await zipStore([{ name: 'opengym-backup.json', blob: new Blob([JSON.stringify(stateWithPhoto())]) }, { name: `media/${HASH}.jpg`, blob: new Blob([PHOTO]) }])
+    await mount()
+    const input = host.querySelector('input[type="file"][accept^=".json"]')
+    Object.defineProperty(input, 'files', { value: [new File([zip], 'backup.zip')], configurable: true })
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })))
+    await until(() => mocks.confirmSheet.mock.calls.length > 0)
+    await act(async () => { await mocks.confirmSheet.mock.calls[0][0].onConfirm() })
+    expect(mocks.importBackup).not.toHaveBeenCalled()
+    expect(await media.has(HASH)).toBe(false)
+  })
+
+})
+
+it.each([
+  ['unavailable', 'Could not connect'],
+  ['firestore/unavailable', 'Could not connect'],
+  ['auth/network-request-failed', 'Could not connect'],
+  ['storage-full', 'Something went wrong'],
+  ['permission-denied', 'Something went wrong'],
+  ['invalid-document', 'Something went wrong'],
+])('backup preview reports %s without importing or claiming success', async (code, message) => {
+  await mount()
+  act(() => useStore.setState({ importConflict: async () => { throw Object.assign(new Error('private diagnostic'), {code}) } }))
+  const input=host.querySelector('input[type="file"][accept^=".json"]')
+  Object.defineProperty(input,'files',{value:[new File([JSON.stringify(stateWithPhoto())],'backup.json')],configurable:true})
+  act(()=>input.dispatchEvent(new Event('change',{bubbles:true})))
+  await until(()=>mocks.toast.mock.calls.length>0)
+  expect(mocks.toast).toHaveBeenCalledWith(message)
+  expect(mocks.toast).not.toHaveBeenCalledWith('Backup imported')
+  expect(mocks.importBackup).not.toHaveBeenCalled()
+  expect(mocks.confirmSheet).not.toHaveBeenCalled();expect(mocks.menuSheet).not.toHaveBeenCalled()
 })

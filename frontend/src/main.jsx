@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import { MOBILE } from './lib/mobile.js'
 import { useStore } from './store/useStore.js'
-import { startMediaSync } from './lib/media-sync.js'
+import { startLocalMedia } from './lib/local-media.js'
 import { startNativeKeyboard } from './lib/native-keyboard.js'
 import './index.css'
 
@@ -14,9 +14,9 @@ createRoot(document.getElementById('root')).render(
   <StrictMode><App /></StrictMode>
 )
 
-// The photos and videos of custom exercises, in every build (the phone and the demo included):
-// uploads of what the server lacks, the local clean-up, and the plan's files kept offline.
-startMediaSync(useStore)
+// Own photos and videos stay in the local media archive for the current owner.
+// Lifecycle handling preserves local references and pending backup work.
+startLocalMedia({ appStore: useStore })
 
 // Android 15 does not resize the page for the soft keyboard; the app says how much it covers and
 // this keeps the focused field above it. Idle everywhere else.
