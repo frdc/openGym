@@ -1,5 +1,16 @@
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "نبض المجموعة",
+  "Heart rate effort": "الجهد",
+  "Heart rate recovery": "التعافي",
+  "No heart rate readings": "لا توجد قراءات للنبض",
+  "Heart rate pending": "قراءة النبض قيد الانتظار",
+  "Partial heart rate readings": "قراءات نبض جزئية",
+  "Heart rate over time": "النبض بمرور الوقت",
+  "Set ended": "نهاية المجموعة",
+  "Mean {0} bpm · Peak {1} bpm": "المتوسط {0} bpm · الذروة {1} bpm",
+  "{0} s": "{0} ث",
+  "{0} s: {1} bpm ({2} bpm)": "{0} ث: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "تسجيل الدخول بالبريد الإلكتروني وكلمة المرور غير مفعّل لهذا التطبيق. تواصل مع المسؤول. يمكنك متابعة استخدام هذا الجهاز محليًا.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "يعيد تعيين الملف النشط على هذا الجهاز والحساب على الأجهزة الأخرى عند اتصالها. تُحتفظ بنسخ الاسترداد المحلية والصور ومقاطع الفيديو الأصلية.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "يعيد تعيين الملف النشط على هذا الجهاز. تُحتفظ بنسخ الاسترداد المحلية والصور ومقاطع الفيديو الأصلية.",
@@ -2033,4 +2044,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "سيكرر openGym هذه الجلسات المخططة بعد إكمالها جميعًا. قد يستبدل استيراد خطة جديدة هذا التناوب.",
   "{0} pending changes": "{0} تغييرات معلقة",
 
+  "Open on watch": "فتح على الساعة",
+  "Request sent to watch": "تم إرسال الطلب إلى الساعة",
+  "Watch unavailable": "الساعة غير متاحة",
 }

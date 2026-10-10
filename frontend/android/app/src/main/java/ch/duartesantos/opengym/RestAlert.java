@@ -274,7 +274,8 @@ public final class RestAlert {
         if (vibrate) b.setVibrate(VIBRATE);
         if (Build.VERSION.SDK_INT >= 26) b.setOnlyAlertOnce(false);
         else b.setPriority(Notification.PRIORITY_HIGH);
-        if (localOnly) b.setLocalOnly(true);
+        String acknowledgedKey = ctx.getSharedPreferences("wear-ack", Context.MODE_PRIVATE).getString("alarmKey", "");
+        if (localOnly || WearBridgeGuard.acknowledged(acknowledgedKey, intent.getStringExtra("timerToken"), intent.getLongExtra("at", 0))) b.setLocalOnly(true);
         try {
             nm.notify(id, b.build());
             return true;

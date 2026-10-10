@@ -1,5 +1,16 @@
 // Hungarian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Sorozat pulzusa",
+  "Heart rate effort": "Terhelés",
+  "Heart rate recovery": "Regenerálódás",
+  "No heart rate readings": "Nincs pulzusmérés",
+  "Heart rate pending": "Pulzusmérés függőben",
+  "Partial heart rate readings": "Részleges pulzusmérések",
+  "Heart rate over time": "Pulzus az idő függvényében",
+  "Set ended": "Sorozat vége",
+  "Mean {0} bpm · Peak {1} bpm": "Átlag {0} bpm · Csúcs {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Az e-mailes és jelszavas bejelentkezés nincs engedélyezve ebben az alkalmazásban. Keresd a rendszergazdát. Az eszközt továbbra is használhatod helyileg.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Visszaállítja az aktív profilt ezen az eszközön és a fiókot a többi eszközön, amikor azok csatlakoznak. A helyi helyreállítási másolatok és az eredeti fotók és videók megmaradnak.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Visszaállítja az aktív profilt ezen az eszközön. A helyi helyreállítási másolatok és az eredeti fotók és videók megmaradnak.",
@@ -1983,4 +1994,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "Az openGym megismétli ezeket a tervezett edzéseket, ha mind elkészültek. Egy új terv importálása felülírhatja ezt a rotációt.",
   "{0} pending changes": "{0} függő módosítás",
 
+  "Open on watch": "Megnyitás az órán",
+  "Request sent to watch": "Kérés elküldve az órának",
+  "Watch unavailable": "Az óra nem érhető el",
 }

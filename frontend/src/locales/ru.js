@@ -1,5 +1,16 @@
 // Russian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Пульс в подходе",
+  "Heart rate effort": "Нагрузка",
+  "Heart rate recovery": "Восстановление",
+  "No heart rate readings": "Нет измерений пульса",
+  "Heart rate pending": "Ожидание пульса",
+  "Partial heart rate readings": "Неполные измерения пульса",
+  "Heart rate over time": "Пульс во времени",
+  "Set ended": "Конец подхода",
+  "Mean {0} bpm · Peak {1} bpm": "Среднее {0} bpm · Пик {1} bpm",
+  "{0} s": "{0} с",
+  "{0} s: {1} bpm ({2} bpm)": "{0} с: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Вход по почте и паролю не включён для этого приложения. Обратитесь к администратору. Вы можете продолжать пользоваться устройством локально.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Сбрасывает активный профиль на этом устройстве и аккаунт на других устройствах после их подключения. Локальные копии для восстановления и оригиналы фото и видео сохраняются.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Сбрасывает активный профиль на этом устройстве. Локальные копии для восстановления и оригиналы фото и видео сохраняются.",
@@ -1984,4 +1995,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym повторит эти запланированные занятия после завершения всех. Импорт нового плана может заменить эту ротацию.",
   "{0} pending changes": "Ожидающих изменений: {0}",
 
+  "Open on watch": "Открыть на часах",
+  "Request sent to watch": "Запрос отправлен на часы",
+  "Watch unavailable": "Часы недоступны",
 }

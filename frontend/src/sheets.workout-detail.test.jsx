@@ -58,6 +58,26 @@ afterEach(() => {
 })
 
 describe('workout detail', () => {
+  it('shows retained per-set and completed-side heart-rate measurements in history', async () => {
+    const heartRate = {
+      v: 1, status: 'partial', effortEndMs: 10000, recoveryEndMs: 42000,
+      points: [[0, 120], [10000, 150], [42000, 130]],
+      effort: { count: 2, mean: 135, peak: 150 }, recovery: { count: 1, mean: 130, peak: 130 },
+      milestones: [{ seconds: 30, atMs: 42000, bpm: 130, delta: 20 }],
+    }
+    workoutDetailSheet(workout([
+      { id: lifts[0], target: { mode: 'reps' }, sets: [done(100, 8, { heartRate })] },
+      { id: lifts[1], target: { mode: 'reps', perSide: true }, sets: [{ done: false, sides: {
+        L: done(20, 8, { heartRate }), R: { w: 20, r: 8, done: false },
+      } }] },
+    ]))
+    const host = await mountTopSheet()
+    expect(host.querySelectorAll('[aria-label="Set heart rate"]')).toHaveLength(2)
+    expect(host.textContent).toContain('Mean 135 bpm · Peak 150 bpm')
+    expect(host.textContent).toContain('32 s: 130 bpm (−20 bpm)')
+    expect(host.textContent).toContain('Left')
+  })
+
   it('lists a drop-set\'s drops and a rest-pause set\'s bursts', async () => {
     workoutDetailSheet(workout([
       { id: lifts[0], target: { mode: 'reps' }, sets: [done(100, 8, { type: 'dropset', drops: [{ w: 80, r: 6 }, { w: 60, r: 5 }] })] },

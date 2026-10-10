@@ -8,7 +8,7 @@ import { useUI } from '../store/useUI.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
-import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
+import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, insertWarmupRow, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
 import { fmtNum, fmtPlate, exerciseNameText, fmtDate, fmtDaysAgo, todayISO, exCount, DAYN } from '../lib/format.js'
 import { speedUnitOf, toSpeed, fromSpeed } from '../lib/speed.js'
 import { beep, vibrate, unlock } from '../lib/sound.js'
@@ -25,6 +25,7 @@ import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWo
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
+import { SetHeartRateSummaries } from '../components/HeartRateSummary.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
 import { defaultIncrement, weightIncrement, stepWeight } from '../lib/progression.js'
@@ -35,9 +36,13 @@ import { sessionNoProg, setSessionNoProg, setEntryNoProg, joinSessionNoProg } fr
 import { glyphOf } from '../lib/glyphs.js'
 import { markAllSetsDone, sessionHistory } from '../lib/backfill.js'
 import { bestSetFor } from '../lib/exercise-history.js'
-import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, setSideField, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt, WEIGHT_ORIGIN_MANUAL } from '../lib/workout-model.js'
+import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt } from '../lib/workout-model.js'
 import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit } from '../lib/active-workout-order.js'
 import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
+import { registerWearCompletion, registerWearEditing, openWearApp } from '../lib/wear-bridge.js'
+import { projectWearState, validateWearCommand } from '../lib/wear-protocol.js'
+import { setWorkoutField } from '../lib/workout-set-field.js'
+import { isAndroid } from '../lib/mobile.js'
 import { MUSCLE_NAME } from '../lib/muscles.js'
 
 // How long after a key starts a hold the same key is not yet its "Done" (#133). A USB button
@@ -142,13 +147,9 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // stays right. The done tick goes through onToggleSide → toggle() instead, so ticking a side
   // still fires the rest timer / auto-advance / workout-complete flow.
   const setSide = (i, side, field, v) => {
-    if (field !== 'w') return mutSet(i, row => setSideField(row, side, field, v))
     update(s => {
       const e = s.active.entries[entryIdx]
-      const row = setSideField(e.sets[i], side, field, v)
-      row.sides[side].weightOrigin = WEIGHT_ORIGIN_MANUAL
-      e.sets[i] = row
-      e.sets = cascadeWeight(e.sets, i, v, side)
+      setWorkoutField(e, i, field, v, side)
     }, true)
   }
   // Drop/burst edits accept an optional `side` ('L'|'R'): present for a per-side row (edits that
@@ -695,6 +696,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
               <Icon name="swap" /><span>{t('Psst: swipe a set. Left deletes, right copies.')}</span><Icon name="xmark" />
             </button>
           </div>}
+          <SetHeartRateSummaries set={s} label={t('Set {0}', phaseNum)} />
           {loadLine(String(i))}
           {/* Drop-sets and rest-pause bursts extend this same row — no long rest, no new set.
               A planned exercise arrives with these already filled in (applyIntensifierPlan);
@@ -888,6 +890,15 @@ function ActiveWorkout() {
   const { startRest: liveRest, stopRest, stopWork, work, timer } = useUI()
   const A = S.active
   const editing = !!A.editingWorkoutId
+  const [watchButton, setWatchButton] = useState(false)
+  const [openingWatch, setOpeningWatch] = useState(false)
+  useEffect(() => { let live = true; void isAndroid().then(android => { if (live) setWatchButton(android) }); return () => { live = false } }, [])
+  const openWatch = async () => {
+    setOpeningWatch(true)
+    try { await openWearApp(); useUI.getState().toast(t('Request sent to watch')) }
+    catch { useUI.getState().toast(t('Watch unavailable')) }
+    finally { setOpeningWatch(false) }
+  }
   // A past workout has no rest to time — the sets were done days ago. The work timer for
   // timed sets stays, since counting a hold is how its duration gets entered.
   const startRest = (A.backfill || editing) ? () => {} : liveRest
@@ -1074,17 +1085,12 @@ function ActiveWorkout() {
   // Clearing an optional field drops the key rather than storing null, so a set only carries
   // what was actually logged — in the session, in history and in a backup.
   const setField = (idx, i, field, v) => mutEntry(idx, e => {
-    if (v == null) delete e.sets[i][field]; else e.sets[i][field] = v
     // Typing a duration IS the new plan, the same way ticking the row ends it: a plan a displaced
     // hold put aside must not outrank what you just typed, or the field would read 45 and the ▶
     // would still hold the 30 the row was asking for before.
-    if (field === 'sec') delete e.sets[i].planSec
     // Changing a weight cascades to following inherited sets of the same phase, so a correction
     // carries through without retyping every row while explicit manual exceptions stay put.
-    if (field === 'w') {
-      e.sets[i].weightOrigin = WEIGHT_ORIGIN_MANUAL
-      e.sets = cascadeWeight(e.sets, i, v)
-    }
+    setWorkoutField(e, i, field, v)
   })
   const modeAt = idx => modeOf({ ...(A.entries[idx].target || {}), id: A.entries[idx].id })
   const addSet = idx => mutEntry(idx, e => {
@@ -1644,6 +1650,26 @@ function ActiveWorkout() {
     }
   }
 
+  const wearCompletion = useRef(null)
+  wearCompletion.current = target => {
+    if (editing || useUI.getState().sheets.length || useUI.getState().work) throw new Error('unavailable')
+    const fresh = useStore.getState().S.active
+    const next = nextOpenSet(fresh?.entries, fresh?.cur)
+    if (!next || next.idx !== target.entryIdx || next.i !== target.setIdx || (next.side || null) !== (target.side || null)) throw new Error('stale-target')
+    if (!next.current) focusUnit(next.idx)
+    toggle(next.idx, next.i, next.side)
+  }
+  useEffect(() => registerWearCompletion(target => wearCompletion.current(target)), [])
+  const wearEditing = useRef(null)
+  wearEditing.current = (target, command) => {
+    const store = useStore.getState(), ui = useUI.getState()
+    const state = projectWearState({ S: store.S, contextToken: command.contextToken, revision: command.revision, ready: store.localReady && !!store.activeSessionToken, editingReady: !editing && !ui.sheets.length && !ui.work })
+    const code = validateWearCommand(command, state)
+    if (code) throw Object.assign(new Error(code), { code })
+    store.update(s => setWorkoutField(s.active.entries[target.entryIdx], target.setIdx, command.field, command.value, target.side), true)
+  }
+  useEffect(() => registerWearEditing((target, command) => wearEditing.current(target, command)), [])
+
   // Hardware keys (issue #133, lib/workout-keys.js): Space or Enter ticks the next set, ← and →
   // switch exercise. The listener is added once and calls the handler of the latest render, so
   // toggle() and navigateUnit() always see the session as it is now.
@@ -1708,6 +1734,7 @@ function ActiveWorkout() {
   }, [])
 
   return <div className="narrow">
+    {watchButton && !editing && <Button size="sm" variant="ghost" disabled={openingWatch} onClick={openWatch}>{t('Open on watch')}</Button>}
     {/* In list mode the whole session scrolls under the header, so the header (name, clock,
         set counter, discard/finish, progress) stays pinned — the one thing you want in view
         while you are somewhere in the middle of a long stack. Cards mode never scrolls far. */}

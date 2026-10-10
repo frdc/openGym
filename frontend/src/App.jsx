@@ -16,6 +16,7 @@ import { useWakeLock } from './lib/wakelock.js'
 import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { MOBILE } from './lib/mobile.js'
+import { bindWearBridge } from './lib/wear-bridge.js'
 import { exitWorkoutEdit, startFlow } from './sheets.jsx'
 import LocalStartup from './components/LocalStartup.jsx'
 import TabBar from './components/TabBar.jsx'
@@ -60,6 +61,7 @@ function applyPrefs(theme, accent) {
 }
 
 function Shell() {
+  useEffect(() => MOBILE ? bindWearBridge() : undefined, [])
   const navigate = useNavigate()
   const loc = useLocation()
   const navType = useNavigationType()

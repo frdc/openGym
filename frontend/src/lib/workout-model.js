@@ -194,6 +194,8 @@ const sideOf = value => {
   if (v.rir != null) out.rir = v.rir
   if (v.rpe != null) out.rpe = v.rpe
   if (v.weightOrigin === WEIGHT_ORIGIN_MANUAL) out.weightOrigin = WEIGHT_ORIGIN_MANUAL
+  if (v.at != null) out.at = v.at
+  if (v.heartRate != null) out.heartRate = v.heartRate
   // A side can carry its own intensifier (issue #60): drop-sets and rest-pause bursts are logged
   // per limb, exactly like the main set, so the same {type, drops, clusters} shape rides on the
   // side. Reuses the row-level helpers below (addDrop/dropsOf/…), which read this very shape.

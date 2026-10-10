@@ -1,5 +1,16 @@
 // Simplified Chinese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "组心率",
+  "Heart rate effort": "运动",
+  "Heart rate recovery": "恢复",
+  "No heart rate readings": "无心率读数",
+  "Heart rate pending": "等待心率",
+  "Partial heart rate readings": "心率读数不完整",
+  "Heart rate over time": "心率随时间变化",
+  "Set ended": "组结束",
+  "Mean {0} bpm · Peak {1} bpm": "平均 {0} bpm · 峰值 {1} bpm",
+  "{0} s": "{0} 秒",
+  "{0} s: {1} bpm ({2} bpm)": "{0} 秒：{1} bpm（{2} bpm）",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "此应用尚未启用电子邮件和密码登录。请联系管理员。你可以继续在此设备上本地使用。",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "重置此设备上的当前档案，并在其他设备联网时重置账户。本地恢复副本和原始照片及视频会保留。",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "重置此设备上的当前档案。本地恢复副本和原始照片及视频会保留。",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "所有计划训练完成后，openGym 将重复这些训练。导入新计划可能替换此轮换。",
   "{0} pending changes": "{0} 项待处理更改",
 
+  "Open on watch": "在手表上打开",
+  "Request sent to watch": "已向手表发送请求",
+  "Watch unavailable": "手表不可用",
 }

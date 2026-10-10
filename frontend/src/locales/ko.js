@@ -1,5 +1,16 @@
 // Korean UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "세트 심박수",
+  "Heart rate effort": "운동",
+  "Heart rate recovery": "회복",
+  "No heart rate readings": "심박수 측정값 없음",
+  "Heart rate pending": "심박수 대기 중",
+  "Partial heart rate readings": "일부 심박수 측정값",
+  "Heart rate over time": "시간에 따른 심박수",
+  "Set ended": "세트 종료",
+  "Mean {0} bpm · Peak {1} bpm": "평균 {0} bpm · 최고 {1} bpm",
+  "{0} s": "{0}초",
+  "{0} s: {1} bpm ({2} bpm)": "{0}초: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "이 앱에서 이메일과 비밀번호 로그인이 활성화되지 않았습니다. 관리자에게 문의하세요. 이 기기에서 로컬로 계속 사용할 수 있습니다.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "이 기기의 활성 프로필을 초기화하고 다른 기기가 연결되면 계정도 초기화합니다. 로컬 복구 사본과 원본 사진 및 동영상은 보관됩니다.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "이 기기의 활성 프로필을 초기화합니다. 로컬 복구 사본과 원본 사진 및 동영상은 보관됩니다.",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "계획된 세션을 모두 완료하면 openGym이 반복합니다. 새 계획을 가져오면 이 순환이 교체될 수 있습니다.",
   "{0} pending changes": "대기 중인 변경 사항 {0}개",
 
+  "Open on watch": "시계에서 열기",
+  "Request sent to watch": "시계로 요청을 보냈습니다",
+  "Watch unavailable": "시계를 사용할 수 없습니다",
 }

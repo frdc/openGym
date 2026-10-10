@@ -1,5 +1,16 @@
 // Hindi UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "सेट की हृदय गति",
+  "Heart rate effort": "प्रयास",
+  "Heart rate recovery": "रिकवरी",
+  "No heart rate readings": "हृदय गति की रीडिंग नहीं",
+  "Heart rate pending": "हृदय गति लंबित",
+  "Partial heart rate readings": "हृदय गति की आंशिक रीडिंग",
+  "Heart rate over time": "समय के साथ हृदय गति",
+  "Set ended": "सेट समाप्त",
+  "Mean {0} bpm · Peak {1} bpm": "औसत {0} bpm · अधिकतम {1} bpm",
+  "{0} s": "{0} सेकंड",
+  "{0} s: {1} bpm ({2} bpm)": "{0} सेकंड: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "इस ऐप में ई-मेल और पासवर्ड से साइन इन चालू नहीं है। व्यवस्थापक से संपर्क करें। आप इस डिवाइस का स्थानीय रूप से उपयोग जारी रख सकते हैं।",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "इस डिवाइस पर सक्रिय प्रोफ़ाइल और अन्य डिवाइसों के कनेक्ट होने पर खाते को रीसेट करता है। स्थानीय रिकवरी प्रतियाँ और मूल फ़ोटो और वीडियो रखे जाते हैं।",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "इस डिवाइस पर सक्रिय प्रोफ़ाइल रीसेट करता है। स्थानीय रिकवरी प्रतियाँ और मूल फ़ोटो और वीडियो रखे जाते हैं।",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "सभी नियोजित सत्र पूरे होने पर openGym इन्हें दोहराएगा। नया प्लान आयात करने पर यह रोटेशन बदल सकता है।",
   "{0} pending changes": "{0} लंबित बदलाव",
 
+  "Open on watch": "घड़ी पर खोलें",
+  "Request sent to watch": "घड़ी को अनुरोध भेजा गया",
+  "Watch unavailable": "घड़ी उपलब्ध नहीं है",
 }

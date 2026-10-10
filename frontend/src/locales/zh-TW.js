@@ -1,4 +1,15 @@
 export default {
+  "Set heart rate": "組心率",
+  "Heart rate effort": "運動",
+  "Heart rate recovery": "恢復",
+  "No heart rate readings": "無心率讀數",
+  "Heart rate pending": "等待心率",
+  "Partial heart rate readings": "心率讀數不完整",
+  "Heart rate over time": "心率隨時間變化",
+  "Set ended": "組結束",
+  "Mean {0} bpm · Peak {1} bpm": "平均 {0} bpm · 峰值 {1} bpm",
+  "{0} s": "{0} 秒",
+  "{0} s: {1} bpm ({2} bpm)": "{0} 秒：{1} bpm（{2} bpm）",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "此應用程式尚未啟用電子郵件與密碼登入。請聯絡管理員。你可以繼續在此裝置上本機使用。",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "重設此裝置上的目前個人檔案，並在其他裝置連線時重設帳戶。本機復原副本與原始相片及影片會保留。",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "重設此裝置上的目前個人檔案。本機復原副本與原始相片及影片會保留。",
@@ -1973,4 +1984,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "所有計畫訓練完成後，openGym 將重複這些訓練。匯入新計畫可能取代此輪替。",
   "{0} pending changes": "{0} 項待處理變更",
 
+  "Open on watch": "在手錶上開啟",
+  "Request sent to watch": "已向手錶傳送請求",
+  "Watch unavailable": "手錶無法使用",
 }

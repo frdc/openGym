@@ -1,5 +1,16 @@
 // German UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Herzfrequenz des Satzes",
+  "Heart rate effort": "Belastung",
+  "Heart rate recovery": "Erholung",
+  "No heart rate readings": "Keine Herzfrequenzmesswerte",
+  "Heart rate pending": "Herzfrequenz ausstehend",
+  "Partial heart rate readings": "Unvollständige Herzfrequenzmesswerte",
+  "Heart rate over time": "Herzfrequenz im Zeitverlauf",
+  "Set ended": "Satzende",
+  "Mean {0} bpm · Peak {1} bpm": "Mittelwert {0} bpm · Spitzenwert {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Die Anmeldung per E-Mail und Passwort ist für diese App nicht aktiviert. Wende dich an die Administration. Du kannst dieses Gerät weiterhin lokal nutzen.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Setzt das aktive Profil auf diesem Gerät und das Konto auf anderen Geräten zurück, sobald diese sich verbinden. Lokale Wiederherstellungskopien und originale Fotos und Videos bleiben erhalten.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Setzt das aktive Profil auf diesem Gerät zurück. Lokale Wiederherstellungskopien und originale Fotos und Videos bleiben erhalten.",
@@ -2000,4 +2011,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym wiederholt diese geplanten Einheiten, sobald alle abgeschlossen sind. Ein neu importierter Plan kann diese Rotation ersetzen.",
   "{0} pending changes": "{0} ausstehende Änderungen",
 
+  "Open on watch": "Auf der Uhr öffnen",
+  "Request sent to watch": "Anfrage an die Uhr gesendet",
+  "Watch unavailable": "Uhr nicht verfügbar",
 }

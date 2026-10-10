@@ -1,5 +1,16 @@
 // French UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Fréquence cardiaque de la série",
+  "Heart rate effort": "Effort",
+  "Heart rate recovery": "Récupération",
+  "No heart rate readings": "Aucune mesure de fréquence cardiaque",
+  "Heart rate pending": "Fréquence cardiaque en attente",
+  "Partial heart rate readings": "Mesures partielles de fréquence cardiaque",
+  "Heart rate over time": "Fréquence cardiaque au fil du temps",
+  "Set ended": "Fin de la série",
+  "Mean {0} bpm · Peak {1} bpm": "Moyenne {0} bpm · Pic {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s : {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "La connexion par e-mail et mot de passe n’est pas activée pour cette application. Contactez l’administrateur. Vous pouvez continuer à utiliser cet appareil localement.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Réinitialise le profil actif sur cet appareil et le compte sur les autres appareils lorsqu’ils se connectent. Les copies locales de récupération et les photos et vidéos originales sont conservées.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Réinitialise le profil actif sur cet appareil. Les copies locales de récupération et les photos et vidéos originales sont conservées.",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym répétera ces séances planifiées lorsqu’elles seront toutes terminées. Importer un nouveau programme peut remplacer cette rotation.",
   "{0} pending changes": "{0} modifications en attente",
 
+  "Open on watch": "Ouvrir sur la montre",
+  "Request sent to watch": "Demande envoyée à la montre",
+  "Watch unavailable": "Montre indisponible",
 }

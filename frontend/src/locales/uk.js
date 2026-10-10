@@ -1,5 +1,16 @@
 // Ukrainian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Пульс у підході",
+  "Heart rate effort": "Навантаження",
+  "Heart rate recovery": "Відновлення",
+  "No heart rate readings": "Немає вимірювань пульсу",
+  "Heart rate pending": "Очікування пульсу",
+  "Partial heart rate readings": "Неповні вимірювання пульсу",
+  "Heart rate over time": "Пульс у часі",
+  "Set ended": "Кінець підходу",
+  "Mean {0} bpm · Peak {1} bpm": "Середнє {0} bpm · Пік {1} bpm",
+  "{0} s": "{0} с",
+  "{0} s: {1} bpm ({2} bpm)": "{0} с: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Вхід за поштою та паролем не ввімкнено для цього застосунку. Зверніться до адміністратора. Ви можете й далі користуватися пристроєм локально.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Скидає активний профіль на цьому пристрої та обліковий запис на інших пристроях після їх підключення. Локальні копії для відновлення та оригінали фото й відео зберігаються.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Скидає активний профіль на цьому пристрої. Локальні копії для відновлення та оригінали фото й відео зберігаються.",
@@ -1977,4 +1988,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym повторить ці заплановані заняття після завершення всіх. Імпорт нового плану може замінити цю ротацію.",
   "{0} pending changes": "Змін в очікуванні: {0}",
 
+  "Open on watch": "Відкрити на годиннику",
+  "Request sent to watch": "Запит надіслано на годинник",
+  "Watch unavailable": "Годинник недоступний",
 }

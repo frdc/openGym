@@ -1,5 +1,16 @@
 // Portuguese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Batimentos da série",
+  "Heart rate effort": "Esforço",
+  "Heart rate recovery": "Recuperação",
+  "No heart rate readings": "Sem leituras de frequência cardíaca",
+  "Heart rate pending": "Frequência cardíaca pendente",
+  "Partial heart rate readings": "Leituras parciais de frequência cardíaca",
+  "Heart rate over time": "Frequência cardíaca ao longo do tempo",
+  "Set ended": "Fim da série",
+  "Mean {0} bpm · Peak {1} bpm": "Média {0} bpm · Pico {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "O acesso por e-mail e palavra-passe não está ativado nesta aplicação. Contacte o administrador. Pode continuar a usar este dispositivo localmente.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Repõe o perfil ativo neste dispositivo e a conta nos outros dispositivos quando se ligarem. As cópias locais de recuperação e as fotografias e vídeos originais são mantidos.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Repõe o perfil ativo neste dispositivo. As cópias locais de recuperação e as fotografias e vídeos originais são mantidos.",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "O openGym repete estas sessões planeadas quando estiverem todas concluídas. Importar um novo plano pode substituir esta rotação.",
   "{0} pending changes": "{0} alterações pendentes",
 
+  "Open on watch": "Abrir no relógio",
+  "Request sent to watch": "Pedido enviado ao relógio",
+  "Watch unavailable": "Relógio indisponível",
 }

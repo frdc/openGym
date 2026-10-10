@@ -26,6 +26,10 @@ Firebase public configuration is compiled at build time as documented in README.
 
 The iOS source shell is retained with the obsolete vault pod removed. `build:mobile` intentionally syncs Android only, so Windows does not imply fresh iOS assets or CocoaPods success. To validate iOS on macOS, build mobile assets with the runner, explicitly run `npx cap sync ios`, then `node scripts/check-mobile-bundle.mjs --ios`, followed by a separate Xcode build/device check. Never ship an existing iOS public directory without that fresh sync. No iOS QA is claimed here.
 
+## Wear OS básico
+
+O módulo `wear` gera um APK acompanhante para Galaxy Watch Ultra/Wear OS. Ele mostra exercício/série e controla conclusão e descanso; o app Android continua responsável por salvar o treino. Compilar com `gradlew.bat --no-daemon :app:assembleDebug :wear:assembleDebug`. Os dois APKs debug usam `ch.duartesantos.opengym.test` e devem ser assinados pelo mesmo certificado. Ver [instalação, limitações e checklist físico](dev/WEAR_OS_VERIFICATION.md). Batimentos não fazem parte desta primeira versão.
+
 ## Updates
 
 The upstream APK updater/download action is retired until an adapted signed release channel is reviewed. PWA service-worker updates remain. Inherited publishing, release/upload and mirror workflows are removed; compilation does not publish anything.

@@ -1,5 +1,16 @@
 // Turkish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Set nabzı",
+  "Heart rate effort": "Efor",
+  "Heart rate recovery": "Toparlanma",
+  "No heart rate readings": "Nabız ölçümü yok",
+  "Heart rate pending": "Nabız bekleniyor",
+  "Partial heart rate readings": "Kısmi nabız ölçümleri",
+  "Heart rate over time": "Zaman içindeki nabız",
+  "Set ended": "Set sonu",
+  "Mean {0} bpm · Peak {1} bpm": "Ortalama {0} bpm · Tepe {1} bpm",
+  "{0} s": "{0} sn",
+  "{0} s: {1} bpm ({2} bpm)": "{0} sn: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "Bu uygulamada e-posta ve parolayla giriş etkin değil. Yöneticiyle iletişime geçin. Bu cihazı yerel olarak kullanmaya devam edebilirsiniz.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Bu cihazdaki etkin profili ve diğer cihazlar bağlandığında hesabı sıfırlar. Yerel kurtarma kopyaları ve orijinal fotoğraf ve videolar korunur.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Bu cihazdaki etkin profili sıfırlar. Yerel kurtarma kopyaları ve orijinal fotoğraf ve videolar korunur.",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym bu planlanmış seansları hepsi tamamlandığında tekrarlar. Yeni bir planı içe aktarmak bu rotasyonu değiştirebilir.",
   "{0} pending changes": "{0} bekleyen değişiklik",
 
+  "Open on watch": "Saatte aç",
+  "Request sent to watch": "İstek saate gönderildi",
+  "Watch unavailable": "Saat kullanılamıyor",
 }

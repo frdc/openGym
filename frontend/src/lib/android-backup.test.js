@@ -19,7 +19,7 @@ describe('Android backup rules', () => {
     expect(manifest).toMatch(/android:allowBackup="true"/)
   })
 
-  it('both leave the media folder out of the cloud backup, and only that', () => {
+  it('keeps training and transfer media while excluding device-specific watch bindings', () => {
     expect(legacy).toMatch(/<full-backup-content>[\s\S]*<\/full-backup-content>/)
     expect(legacy).toMatch(EXCLUDE)
     const cloud = modern.match(/<cloud-backup>([\s\S]*?)<\/cloud-backup>/)?.[1] || ''
@@ -27,8 +27,13 @@ describe('Android backup rules', () => {
     // An <include> would turn either list into an allowlist and drop everything else.
     expect(legacy).not.toMatch(/<include/)
     expect(modern).not.toMatch(/<include/)
-    // Device transfer is left alone, so it takes everything.
-    expect(modern).not.toMatch(/<device-transfer/)
+    const journal = /<exclude\s+domain="sharedpref"\s+path="wear-heart-journal\.xml"\s*\/>/
+    expect(legacy).toMatch(journal)
+    expect(cloud).toMatch(journal)
+    const transfer = modern.match(/<device-transfer>([\s\S]*?)<\/device-transfer>/)?.[1] || ''
+    expect(transfer).toMatch(journal)
+    expect(transfer).not.toMatch(EXCLUDE)
+    for (const content of [legacy, cloud, transfer]) expect(content).not.toMatch(/<exclude[^>]*(?:opengym-state|heartRate)/)
   })
 
   it('no comment carries a double dash, which breaks the Android build (v1.3.6)', () => {

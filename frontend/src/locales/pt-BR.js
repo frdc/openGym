@@ -4,6 +4,20 @@
 import pt from './pt.js'
 
 export const PT_BR_OVERRIDES = {
+  "Set heart rate": "Batimentos da série",
+  "Heart rate effort": "Esforço",
+  "Heart rate recovery": "Recuperação",
+  "No heart rate readings": "Sem leituras de frequência cardíaca",
+  "Heart rate pending": "Frequência cardíaca pendente",
+  "Partial heart rate readings": "Leituras parciais de frequência cardíaca",
+  "Heart rate over time": "Frequência cardíaca ao longo do tempo",
+  "Set ended": "Fim da série",
+  "Mean {0} bpm · Peak {1} bpm": "Média {0} bpm · Pico {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s: {1} bpm ({2} bpm)",
+  "Open on watch": "Abrir no relógio",
+  "Request sent to watch": "Solicitação enviada ao relógio",
+  "Watch unavailable": "Relógio indisponível",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "O acesso por e-mail e senha não está habilitado neste aplicativo. Fale com o administrador. Você pode continuar usando este dispositivo localmente.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Redefine o perfil ativo neste dispositivo e a conta nos outros dispositivos quando eles se conectarem. As cópias locais de recuperação e as fotos e vídeos originais são mantidos.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Redefine o perfil ativo neste dispositivo. As cópias locais de recuperação e as fotos e vídeos originais são mantidos.",

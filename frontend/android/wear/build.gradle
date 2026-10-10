@@ -1,0 +1,28 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'ch.duartesantos.opengym'
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId 'ch.duartesantos.opengym'
+        minSdkVersion 30
+        targetSdkVersion 35
+        versionCode 1
+        versionName '0.1.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    buildTypes { debug { applicationIdSuffix '.test' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }
+}
+
+dependencies {
+    implementation 'androidx.health:health-services-client:1.1.0'
+    // Health Services exposes ListenableFuture in its Java API but declares Guava runtime-only.
+    implementation 'com.google.guava:guava:32.0.1-android'
+    implementation 'androidx.wear:wear-ongoing:1.1.0'
+    implementation "androidx.core:core:$androidxCoreVersion"
+    implementation 'com.google.android.gms:play-services-wearable:20.0.1'
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+}

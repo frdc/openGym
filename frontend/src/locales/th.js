@@ -1,5 +1,16 @@
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "อัตราการเต้นหัวใจของเซ็ต",
+  "Heart rate effort": "ออกแรง",
+  "Heart rate recovery": "ฟื้นตัว",
+  "No heart rate readings": "ไม่มีค่าอัตราการเต้นหัวใจ",
+  "Heart rate pending": "รอค่าอัตราการเต้นหัวใจ",
+  "Partial heart rate readings": "ค่าอัตราการเต้นหัวใจบางส่วน",
+  "Heart rate over time": "อัตราการเต้นหัวใจตามเวลา",
+  "Set ended": "สิ้นสุดเซ็ต",
+  "Mean {0} bpm · Peak {1} bpm": "เฉลี่ย {0} bpm · สูงสุด {1} bpm",
+  "{0} s": "{0} วินาที",
+  "{0} s: {1} bpm ({2} bpm)": "{0} วินาที: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "แอปนี้ยังไม่ได้เปิดใช้การลงชื่อเข้าใช้ด้วยอีเมลและรหัสผ่าน โปรดติดต่อผู้ดูแลระบบ คุณยังใช้แอปบนอุปกรณ์นี้แบบภายในเครื่องได้",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "รีเซ็ตโปรไฟล์ที่ใช้งานบนอุปกรณ์นี้และบัญชีบนอุปกรณ์อื่นเมื่อเชื่อมต่อ สำเนากู้คืนในเครื่องและรูปภาพกับวิดีโอต้นฉบับจะยังคงอยู่",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "รีเซ็ตโปรไฟล์ที่ใช้งานบนอุปกรณ์นี้ สำเนากู้คืนในเครื่องและรูปภาพกับวิดีโอต้นฉบับจะยังคงอยู่",
@@ -1991,4 +2002,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym จะทำเซสชันที่วางแผนไว้เหล่านี้ซ้ำเมื่อเสร็จครบทั้งหมด การนำเข้าแผนใหม่อาจแทนที่รอบหมุนเวียนนี้",
   "{0} pending changes": "การเปลี่ยนแปลงที่รอดำเนินการ {0} รายการ",
 
+  "Open on watch": "เปิดบนนาฬิกา",
+  "Request sent to watch": "ส่งคำขอไปยังนาฬิกาแล้ว",
+  "Watch unavailable": "นาฬิกาไม่พร้อมใช้งาน",
 }

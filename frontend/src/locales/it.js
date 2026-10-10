@@ -1,5 +1,16 @@
 // Italian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Frequenza cardiaca della serie",
+  "Heart rate effort": "Sforzo",
+  "Heart rate recovery": "Recupero",
+  "No heart rate readings": "Nessuna lettura della frequenza cardiaca",
+  "Heart rate pending": "Frequenza cardiaca in attesa",
+  "Partial heart rate readings": "Letture parziali della frequenza cardiaca",
+  "Heart rate over time": "Frequenza cardiaca nel tempo",
+  "Set ended": "Fine della serie",
+  "Mean {0} bpm · Peak {1} bpm": "Media {0} bpm · Picco {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "L’accesso con e-mail e password non è abilitato per questa app. Contatta l’amministratore. Puoi continuare a usare questo dispositivo localmente.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Reimposta il profilo attivo su questo dispositivo e l’account sugli altri dispositivi quando si connettono. Le copie locali di recupero e le foto e i video originali vengono conservati.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Reimposta il profilo attivo su questo dispositivo. Le copie locali di recupero e le foto e i video originali vengono conservati.",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym ripeterà queste sessioni pianificate quando saranno tutte completate. Importare un nuovo piano può sostituire questa rotazione.",
   "{0} pending changes": "{0} modifiche in sospeso",
 
+  "Open on watch": "Apri sull’orologio",
+  "Request sent to watch": "Richiesta inviata all’orologio",
+  "Watch unavailable": "Orologio non disponibile",
 }

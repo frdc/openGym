@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 
 const uiRuntime = vi.hoisted(() => ({ fixture: null }))
+vi.mock('./lib/wear-bridge.js', () => ({ requestWearWorkoutOpen: vi.fn() }))
+import { requestWearWorkoutOpen } from './lib/wear-bridge.js'
 vi.mock('./store/useStore.js', async original => {
   const actual = (await original())
   const { createUIStoreFixture } = (await import('./store/ui-test-runtime.js'))
@@ -41,6 +43,7 @@ beforeEach(async () => {
 
 describe('beginWorkout with a routine-id list', () => {
   it('concatenates the routines’ entries in order, stamps rid, derives the name', async () => {
+    requestWearWorkoutOpen.mockClear()
     await act(async () => { await beginWorkout(['strength', 'core'], null); await uiRuntime.fixture.flush(); })
     const a = useStore.getState().S.active
     expect(a.routineIds).toEqual(['strength', 'core'])
@@ -48,6 +51,7 @@ describe('beginWorkout with a routine-id list', () => {
     expect(a.entries.map(e => e.rid)).toEqual(['strength', 'core', 'core'])
     expect(a).not.toHaveProperty('routineId')
     expect(a).not.toHaveProperty('excludeFromProgression')
+    expect(requestWearWorkoutOpen).toHaveBeenCalledOnce()
   })
 
   it('a single-element list is an ordinary single-routine session', async () => {

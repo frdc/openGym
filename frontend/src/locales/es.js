@@ -1,5 +1,16 @@
 // Spanish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Set heart rate": "Frecuencia cardíaca de la serie",
+  "Heart rate effort": "Esfuerzo",
+  "Heart rate recovery": "Recuperación",
+  "No heart rate readings": "Sin lecturas de frecuencia cardíaca",
+  "Heart rate pending": "Frecuencia cardíaca pendiente",
+  "Partial heart rate readings": "Lecturas parciales de frecuencia cardíaca",
+  "Heart rate over time": "Frecuencia cardíaca a lo largo del tiempo",
+  "Set ended": "Fin de la serie",
+  "Mean {0} bpm · Peak {1} bpm": "Media {0} bpm · Máximo {1} bpm",
+  "{0} s": "{0} s",
+  "{0} s: {1} bpm ({2} bpm)": "{0} s: {1} bpm ({2} bpm)",
   "E-mail/password sign-in is not enabled for this app. Contact the host administrator. You can keep using this device locally.": "El acceso con correo y contraseña no está habilitado en esta aplicación. Contacta con el administrador. Puedes seguir usando este dispositivo localmente.",
   "Resets the active profile on this device and the account on other devices when they connect. Local recovery copies and original photos and videos are retained.": "Restablece el perfil activo en este dispositivo y la cuenta en los demás dispositivos cuando se conecten. Se conservan las copias locales de recuperación y las fotos y vídeos originales.",
   "Resets the active profile on this device. Local recovery copies and original photos and videos are retained.": "Restablece el perfil activo en este dispositivo. Se conservan las copias locales de recuperación y las fotos y vídeos originales.",
@@ -1980,4 +1991,7 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym repetirá estas sesiones planificadas cuando todas estén completas. Importar un plan nuevo puede sustituir esta rotación.",
   "{0} pending changes": "{0} cambios pendientes",
 
+  "Open on watch": "Abrir en el reloj",
+  "Request sent to watch": "Solicitud enviada al reloj",
+  "Watch unavailable": "Reloj no disponible",
 }

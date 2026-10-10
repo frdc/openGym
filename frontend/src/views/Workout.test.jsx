@@ -259,6 +259,21 @@ afterEach(async () => {
 })
 
 describe('Workout set completion flow', () => {
+  it('shows heart rate only for completed sets without changing rest or logging', async () => {
+    const heartRate = {
+      v: 1, status: 'pending', effortEndMs: 10000, recoveryEndMs: null,
+      points: [[0, 120], [10000, 150]], effort: { count: 2, mean: 135, peak: 150 }, recovery: null,
+      milestones: [],
+    }
+    await mount([exercise('plain-bench', [true, false], { sets: [
+      { w: 60, r: 8, done: true, heartRate }, { w: 60, r: 8, done: false, heartRate },
+    ] })])
+    expect(container.querySelectorAll('[aria-label="Set heart rate"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Mean 135 bpm · Peak 150 bpm')
+    expect(mocks.startRest).not.toHaveBeenCalled()
+    expect(mocks.S.active.entries[0].sets[1].done).toBe(false)
+  })
+
   it('rests the exercise\'s warm-up rest between ramp sets, and its working rest after the last ramp set', async () => {
     await mount([exercise('ramped-squat', [false, false, false, false], {
       target: { mode: 'reps', reps: 6, weight: 125, bodyweight: false, restSec: 150, warmupRestSec: 45 },
