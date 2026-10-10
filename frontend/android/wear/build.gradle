@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace 'ch.duartesantos.opengym'
+    namespace 'com.fredc.opengym'
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId 'ch.duartesantos.opengym'
+        applicationId 'com.fredc.opengym'
         minSdkVersion 30
         targetSdkVersion 35
         versionCode 1

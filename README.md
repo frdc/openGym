@@ -1,6 +1,31 @@
-# openGym offline / Firebase adaptation
+# OpenGym
 
-A React training app for web/PWA and Android through Capacitor. Log workouts, plan routines, track progress and use local Android reminders offline. This adaptation retains the original training helpers, exercise catalogue, QR sharing and AGPL attribution.
+Aplicativo pessoal para registrar treinos, organizar rotinas e acompanhar a evolução. Disponível na web/PWA, Android e em um app acompanhante para Wear OS. Funciona com armazenamento local offline e oferece sincronização de dados de treino por Firebase quando configurado.
+
+## Funcionalidades
+
+- Registro e edição de treinos, exercícios, séries, cargas, repetições e esforço (RPE/RIR).
+- Rotinas, planejamento e rotação de treinos, com progressão de cargas e histórico.
+- Séries de aquecimento, supersets, exercícios unilaterais, dropsets, rest-pause e exercícios por tempo.
+- Temporizadores de trabalho e descanso, com notificações e alarmes locais no Android.
+- Catálogo de exercícios, filtros por músculos/equipamentos e exercícios personalizados.
+- Acompanhamento de peso corporal, medidas e fotos de progresso.
+- Fotos e vídeos associados aos treinos, armazenados localmente.
+- Importação/exportação de backups, compartilhamento por QR e exportação de planos para impressão/PDF.
+- Conta por e-mail/senha e sincronização Firestore, com dados locais separados por conta e recuperação de gravações.
+- Temas, unidades configuráveis e suporte a múltiplos idiomas, incluindo português brasileiro.
+
+## Wear OS
+
+O app acompanhante mostra a série atual, permite editar carga/repetições, concluir séries e controlar o descanso. A coleta opcional de frequência cardíaca registra resumos e gráficos de esforço e recuperação nas séries.
+
+O celular continua responsável por salvar e finalizar o treino. Os controles dependem da conexão e do estado do app Android; não há fila de conclusões offline. Séries especiais podem exigir o celular. A versão web não controla o relógio. Veja os registros de validação e limitações em [docs/dev](docs/dev/WEAR_HEART_RATE_VERIFICATION.md).
+
+## Identidade do aplicativo
+
+Android e Wear OS usam `com.fredc.opengym`; builds debug usam `com.fredc.opengym.test`. Os dois APKs precisam usar o mesmo identificador e certificado para comunicação.
+
+A mudança do identificador cria uma instalação separada da versão anterior. Transfira seus treinos por backup ou sincronização antes de deixar de usar a instalação antiga.
 
 ## Data and accounts
 
@@ -43,4 +68,4 @@ The old Node account/pairing API, passkeys, server Web Push, AI Coach, secret va
 - [Native regression mapping](docs/NATIVE_REGRESSION_MAPPING.md), [retired source mapping](docs/RETIRED_ARTIFACTS.md)
 - [Approved architecture](docs/superpowers/specs/2026-10-07-react-offline-firestore-design.md)
 
-Adapted from [Duarte Santos's openGym](https://github.com/DuarteSantos8/openGym). Upstream websites, screenshots, changelog and release links are historical attribution, not a download/update channel for this adaptation. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md), including body-map, QR and catalogue credits. Catalogue metadata/instructions and Gym visual media have their own terms; the app's AGPL does not relicense that media.
+Este repositório mantém uma versão pessoal do OpenGym. A origem do código e os créditos de terceiros estão em [NOTICE.md](NOTICE.md); a licença está em [LICENSE](LICENSE). Dados e mídia do catálogo têm termos próprios. Os registros de verificação históricos podem mencionar identificadores e versões anteriores.
