@@ -96,7 +96,9 @@ describe('blocked import isolation through the actual port and native envelope b
     expect(status.cloud).toBe('blocked')
     expect(h.rows.get(`${root}/bodyweight/2026-10-08`)?.payload.w).toBe(83.2)
     await bridge.unbindAuth()
-  })
+  // The near-limit source is repeatedly encoded and persisted through recovery slots.
+  // Allow slower CI runners to finish without relaxing any of the isolation assertions.
+  }, kind === 'document-too-large' ? 30000 : 5000)
   for (const code of ['invalid-document', 'invalid-control', 'invalid-job', 'permission-denied', 'unavailable', 'generation-mismatch', 'unit-job-active']) it(`does not isolate an unattributed ${code} from remote job processing`, async () => {
     const h = harness(), storage = createFsStorage(fakeFilesystem())
     let status
