@@ -4,6 +4,7 @@
 // Stored as a flat id list in synced state (S.favEx) — catalogue or custom ids alike. It is
 // personal, so it stays out of shared plan bundles (lib/plan-share.js) on purpose. Profiles
 // written before the field existed simply have no list, hence every reader tolerates undefined.
+import { prioritizeExerciseAliases } from './exercises.js'
 
 export const favIds = S => (Array.isArray(S?.favEx) ? S.favEx : [])
 
@@ -20,10 +21,11 @@ export function toggleFav(s, id) {
 /**
  * Favourites first, everything else after — both halves keep the order they came in, so a
  * list that is already sorted by name (or by usage) stays that way within each half.
+ * An exact equipment alias in the active query takes priority over unrelated favourites.
  */
-export function sortFavouritesFirst(list, S) {
+export function sortFavouritesFirst(list, S, query = '') {
   const fav = favIds(S)
-  if (!fav.length) return list
+  if (!fav.length) return prioritizeExerciseAliases(list, query)
   const set = new Set(fav)
-  return [...list.filter(e => set.has(e.id)), ...list.filter(e => !set.has(e.id))]
+  return prioritizeExerciseAliases([...list.filter(e => set.has(e.id)), ...list.filter(e => !set.has(e.id))], query)
 }

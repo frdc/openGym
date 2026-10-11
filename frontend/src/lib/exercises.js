@@ -1,16 +1,19 @@
 import { EXDB } from './exercises-data.js'
 import { USER_EXERCISE_MUSCLE_OVERRIDES, exerciseMuscleMetadataFor } from './exercise-muscle-batch-1.js'
+import { EXERCISE_MACHINE_ALIASES } from './exercise-machine-aliases.js'
 import { t, getVersion, exerciseNameSearchText } from './i18n-core.js'
 
 export { EXDB }
 
 // The generated dataset remains the compatibility/raw export. The runtime catalogue applies
-// owner-approved muscle metadata as a narrow overlay, so imports and historical tests that rely
+// owner-approved muscle metadata and equipment aliases as a narrow overlay, so imports that rely
 // on the upstream shape keep working while EXIDX and pickers see the corrected model.
 const catalogueExercise = ex => {
   const metadata = exerciseMuscleMetadataFor(ex?.id)
-  if (!Object.keys(metadata).length) return ex
+  const machineAliases = EXERCISE_MACHINE_ALIASES[ex?.id] || []
+  if (!Object.keys(metadata).length && !machineAliases.length) return ex
   const out = { ...ex, ...metadata }
+  if (machineAliases.length) out.aliases = [...new Set([...(Array.isArray(ex.aliases) ? ex.aliases : []), ...machineAliases])]
   const user = USER_EXERCISE_MUSCLE_OVERRIDES[ex?.id] || {}
   // A future dataset row may carry explicit arrays of its own; preserve those over generated
   // defaults unless the owner has deliberately supplied a correction for the same field.
@@ -121,7 +124,7 @@ export function searchScore(exercise, query) {
   const needle = searchableText(query).toLowerCase().trim()
   if (!needle) return 1
   const source = exercise && typeof exercise === 'object' ? exercise : {}
-  const fields = [['n', 100], ['tg', 40], ['eq', 40], ['sm', 30], ['muscleGroups', 30], ['primaries', 30], ['secondaries', 30], ['desc', 10], ['cues', 10]]
+  const fields = [['n', 100], ['aliases', 100], ['tg', 40], ['eq', 40], ['sm', 30], ['muscleGroups', 30], ['primaries', 30], ['secondaries', 30], ['desc', 10], ['cues', 10]]
   // Token-level matching: every query word must match somewhere (any order), so
   // "press bench" finds "Bench Press". The score sums each token's best hit.
   const tokens = needle.split(/[^a-z0-9]+/).filter(Boolean)
@@ -235,7 +238,7 @@ export const normalizeStr = s => (s || '')
 
 // Multi-token, accent-insensitive and multilingual exercise search.
 // Matches when all whitespace-separated words in the query appear anywhere in the exercise's
-// name, equipment, target muscle, body part (both in English and translated to active language),
+// name, aliases, equipment, target muscle, body part (both in English and translated to active language),
 // secondary muscles or description.
 //
 // The haystack is built once per exercise and cached: NFD-normalising ~1300 catalogue entries
@@ -254,8 +257,10 @@ function corpusOf(e) {
   if (hit && hit.v === v) return hit
   const sm = Array.isArray(e?.sm) ? e.sm : []
   const name = normalizeStr(exerciseNameSearchText(e))
+  const aliases = Array.isArray(e?.aliases) ? e.aliases.filter(alias => typeof alias === 'string').map(normalizeStr).filter(Boolean) : []
+  const names = [name, ...aliases]
   const s = normalizeStr([
-    name,
+    ...names,
     e?.tg || '', t(e?.tg || ''),
     e?.eq || '', t(e?.eq || ''),
     e?.bp || '', t(e?.bp || ''),
@@ -263,9 +268,9 @@ function corpusOf(e) {
     e?.desc || ''
   ].join(' '))
   // The name run together, so "benchpress" or "bench-press" finds "bench press" the way "pullup"
-  // already found the names that spell it that way (QA 1.3.9). Name only: joined across fields,
-  // a body part and an equipment word would start matching as one.
-  const entry = { v, s, joined: joinWords(name), nameWords: name.split(/\s+/).filter(Boolean) }
+  // already found the names that spell it that way (QA 1.3.9). Keep aliases separate so the end
+  // of one label and the start of another cannot match as a single word.
+  const entry = { v, s, joined: names.map(joinWords), aliasJoined: aliases.map(joinWords), nameWords: names.join(' ').split(/\s+/).filter(Boolean) }
   corpusCache.set(e, entry)
   return entry
 }
@@ -294,7 +299,7 @@ const queryTokens = query => normalizeStr(query || '').split(/\s+/).filter(Boole
 const joinWords = str => str.replace(/[\s\-‐-―]+/g, '')
 
 // A token appears in the corpus as typed, or in the name with its spaces and hyphens left out.
-const hits = (entry, tok) => entry.s.includes(tok) || (tok.length >= 4 && entry.joined.includes(joinWords(tok)))
+const hits = (entry, tok) => entry.s.includes(tok) || (tok.length >= 4 && entry.joined.some(name => name.includes(joinWords(tok))))
 
 // Every token has to appear in the corpus; a token listed in `fuzzy` may instead be one edit
 // away from a name word.
@@ -322,5 +327,19 @@ export function searchExercises(list, query) {
   const tokens = queryTokens(query)
   if (!tokens.length) return list
   const fuzzy = new Set(tokens.filter(tok => !list.some(e => hits(corpusOf(e), tok))))
-  return list.filter(e => matchTokens(e, tokens, fuzzy))
+  return prioritizeExerciseAliases(list.filter(e => matchTokens(e, tokens, fuzzy)), query)
+}
+
+// Also applied after favourites/usage ordering so an exact apparatus name stays visible.
+export function prioritizeExerciseAliases(list, query) {
+  const joinedQuery = joinWords(queryTokens(query).join(' '))
+  if (!joinedQuery) return list
+  const exactAliases = [], otherMatches = []
+  for (const e of list) {
+    // Exact equipment labels would otherwise be buried behind shared muscle/press terms.
+    // Preserve relative order within both groups, including favourites and chosen usage.
+    const group = corpusOf(e).aliasJoined.includes(joinedQuery) ? exactAliases : otherMatches
+    group.push(e)
+  }
+  return exactAliases.length ? [...exactAliases, ...otherMatches] : list
 }

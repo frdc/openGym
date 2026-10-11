@@ -30,4 +30,16 @@ describe('favourites', () => {
     const list = ['a', 'b'].map(ex)
     expect(sortFavouritesFirst(list, {})).toBe(list)
   })
+
+  it('keeps exact equipment aliases ahead of other favourites, with favourites inside each group', () => {
+    const unrelatedFavourite = ex('a')
+    const exact = { ...ex('b'), aliases: ['Triceps Press'] }
+    const exactFavourite = { ...ex('c'), aliases: ['Triceps Press'] }
+    const unrelated = ex('d')
+    const list = [unrelatedFavourite, exact, exactFavourite, unrelated]
+    expect(sortFavouritesFirst(list, { favEx: ['a', 'c'] }, 'Triceps Press')).toEqual([
+      exactFavourite, exact, unrelatedFavourite, unrelated,
+    ])
+    expect(list).toEqual([unrelatedFavourite, exact, exactFavourite, unrelated])
+  })
 })

@@ -33,7 +33,7 @@ export default function Library() {
   // Drop the equipment filter if the search narrowed it away, so you never hit a dead end.
   const eqOn = eqOpts.includes(eq) ? eq : ''
   // Favourites float to the top of whatever the filters left (issue #6), the rest keeps its order.
-  const f = sortFavouritesFirst(eqOn ? eqFiltered.filter(e => e.eq === eqOn) : eqFiltered, S)
+  const f = sortFavouritesFirst(eqOn ? eqFiltered.filter(e => e.eq === eqOn) : eqFiltered, S, q)
   useRevealActiveChip(bpStrip, bp)
   useRevealActiveChip(eqStrip, eqOn)
   // A live count at the end of the search field while a search or filter narrows the list
