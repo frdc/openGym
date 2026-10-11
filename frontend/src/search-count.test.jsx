@@ -10,7 +10,7 @@ import { DEF, useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { exercisePicker } from './sheets.jsx'
 import Library from './views/Library.jsx'
-import { EXDB, searchExercises } from './lib/exercises.js'
+import { CATALOGUE, searchExercises } from './lib/exercises.js'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const mounted = []
@@ -41,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { act(() => { mounted.splice(0).forEach(root => root.unmount()) }) })
 
 // The screens run the same search over the same catalogue, so the expected numbers come from it.
-const matches = q => searchExercises(EXDB, q).length
+const matches = q => searchExercises(CATALOGUE, q).length
 
 describe('exercise search result count', () => {
   for (const [where, open] of [
@@ -71,13 +71,41 @@ describe('exercise search result count', () => {
     it(`${where}: counts a body-part filter too, and reads "1 exercise" for one`, () => {
       const host = open()
       act(() => chip(host, 'neck').click())
-      const neck = EXDB.filter(e => e.bp === 'neck').length
+      const neck = CATALOGUE.filter(e => e.bp === 'neck').length
       expect(Number(count(host).textContent)).toBe(neck)
-      const one = EXDB.find(e => searchExercises(EXDB, e.n).length === 1)
+      const one = CATALOGUE.find(e => searchExercises(CATALOGUE, e.n).length === 1)
       act(() => chip(host, 'All').click())
       act(() => type(host.querySelector('.search input'), one.n))
       expect(count(host).textContent).toBe('1')
       expect(count(host).getAttribute('aria-label')).toBe('1 exercise')
     })
+
+    it(`${where}: shows the existing seated dip when searching its equipment label`, () => {
+      const host = open()
+      act(() => type(host.querySelector('.search input'), 'Triceps Press'))
+      const titles = [...host.querySelectorAll('.list .item .tt')].map(el => el.textContent)
+      expect(titles.slice(1, 3)).toContain('lever seated dip')
+      expect(Number(count(host).textContent)).toBe(matches('Triceps Press'))
+    })
+
+    it(`${where}: keeps the exact equipment result visible with many other favourites`, () => {
+      const favEx = searchExercises(CATALOGUE, 'Triceps Press').filter(ex => !['0591', '1451'].includes(ex.id)).slice(0, 55).map(ex => ex.id)
+      useStore.setState({ S: { ...structuredClone(DEF), favEx } })
+      const host = open()
+      act(() => type(host.querySelector('.search input'), 'Triceps Press'))
+      const titles = [...host.querySelectorAll('.list .item .tt')].map(el => el.textContent)
+      expect(titles.slice(1, 3)).toContain('lever seated dip')
+    })
   }
+
+  it('picking the Triceps Press result retains exercise ID 1451', () => {
+    const onPick = vi.fn()
+    exercisePicker(onPick)
+    const host = renderTopSheet()
+    act(() => type(host.querySelector('.search input'), 'Triceps Press'))
+    const item = [...host.querySelectorAll('.list .item')].find(el => el.querySelector('.tt')?.textContent === 'lever seated dip')
+    expect(item).toBeTruthy()
+    act(() => item.querySelector('button[aria-label]').click())
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: '1451', n: 'lever seated dip' }), true)
+  })
 })
