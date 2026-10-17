@@ -10,7 +10,27 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class WearEditorUiTest {
- @Test public void screenStaysAwakeOnlyDuringForegroundEffort() throws Exception {
+ @Test public void machineProfileControlsUseOriginAndRejectAChangedGrid() throws Exception {
+  var instrumentation=InstrumentationRegistry.getInstrumentation();
+  WearActivity activity=(WearActivity)instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(),WearActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+  try { instrumentation.runOnMainSync(()-> { try {
+   JSONObject current=new JSONObject().put("name","Movement").put("setLabel","1/3").put("entryIdx",0).put("setIdx",0)
+    .put("canComplete",true).put("canEdit",true).put("loadValue",0).put("repsValue",10).put("loadUnit","kg").put("loadStep",6.8).put("loadStart",11.8);
+   JSONObject snapshot=new JSONObject().put("active",true).put("contextToken","machine-fixture").put("revision",1).put("current",current);
+   var state=WearActivity.class.getDeclaredField("state"); state.setAccessible(true);state.set(activity,snapshot);
+   var phone=WearActivity.class.getDeclaredField("phone");phone.setAccessible(true);phone.set(activity,"fixture-phone");
+   var confirmed=WearActivity.class.getDeclaredField("confirmedAt");confirmed.setAccessible(true);confirmed.set(activity,android.os.SystemClock.elapsedRealtime());
+   render(activity); View root=activity.getWindow().getDecorView();find(root,"edit-load").performClick();
+   find(root,"increase").performClick();
+   assertEquals(decimal(activity,"11","8"),((android.widget.TextView)find(root,"draft-value")).getText().toString());
+   find(root,"increase").performClick();
+   assertEquals(decimal(activity,"18","6"),((android.widget.TextView)find(root,"draft-value")).getText().toString());
+   current.put("loadStep",5.3).put("loadStart",0);snapshot.put("revision",2);render(activity);
+   assertNull("A different weight profile invalidates an open load draft",find(root,"draft-value"));
+  }catch(Exception e){throw new RuntimeException(e);} }); }
+  finally {instrumentation.runOnMainSync(activity::finish);}
+ }
+ @Test public void workoutKeepsScreenAwakeDimsAndRestoresOnlyWhileForeground() throws Exception {
   var instrumentation=InstrumentationRegistry.getInstrumentation();
   WearActivity activity=(WearActivity)instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(),WearActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
   try { instrumentation.runOnMainSync(()-> { try {
@@ -20,7 +40,21 @@ public class WearEditorUiTest {
    state.set(activity,snapshot);render.invoke(activity);
    assertTrue((activity.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)!=0);
    snapshot.getJSONObject("heartCapture").put("phase","recovery");render.invoke(activity);
+   assertTrue((activity.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)!=0);
+   var dim=WearActivity.class.getDeclaredMethod("dimWorkoutScreen");dim.setAccessible(true);dim.invoke(activity);
+   assertEquals(0.03f,activity.getWindow().getAttributes().screenBrightness,0.001f);
+   render.invoke(activity);
+   assertEquals("Sync renders do not brighten the idle screen",0.03f,activity.getWindow().getAttributes().screenBrightness,0.001f);
+   activity.onUserInteraction();
+   assertEquals(-1f,activity.getWindow().getAttributes().screenBrightness,0f);
+   dim.invoke(activity);snapshot.put("active",false);render.invoke(activity);
    assertEquals(0,activity.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+   assertEquals(-1f,activity.getWindow().getAttributes().screenBrightness,0f);
+   snapshot.put("active",true);render.invoke(activity);dim.invoke(activity);
+   var foreground=WearActivity.class.getDeclaredField("foreground");foreground.setAccessible(true);foreground.set(activity,false);
+   var update=WearActivity.class.getDeclaredMethod("updateWorkoutScreen");update.setAccessible(true);update.invoke(activity);
+   assertEquals(0,activity.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+   assertEquals(-1f,activity.getWindow().getAttributes().screenBrightness,0f);
   } catch(Exception e){throw new RuntimeException(e);} }); }
   finally {instrumentation.runOnMainSync(activity::finish);}
  }

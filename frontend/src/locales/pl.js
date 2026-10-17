@@ -1,5 +1,17 @@
 // Polish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Typ obciążenia",
+  "Manual increment": "Przyrost ręczny",
+  "Saved weight profiles": "Zapisane profile obciążenia",
+  "New weight profile": "Nowy profil obciążenia",
+  "Edit weight profile": "Edytuj profil obciążenia",
+  "Profile name": "Nazwa profilu",
+  "Weight units": "Jednostka masy",
+  "Initial load ({0})": "Obciążenie początkowe ({0})",
+  "Load increment ({0})": "Przyrost obciążenia ({0})",
+  "Delete weight profile": "Usuń profil obciążenia",
+  "Profile limit reached.": "Osiągnięto limit profili.",
+  "Enter a name and a positive load increment.": "Podaj nazwę i dodatni przyrost obciążenia.",
   "Set heart rate": "Tętno serii",
   "Heart rate effort": "Wysiłek",
   "Heart rate recovery": "Regeneracja",

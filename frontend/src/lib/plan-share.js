@@ -16,6 +16,7 @@ import { isPyramid, normalizePyramid, normalizePyramidRest } from './pyramid.js'
 import { uid, todayISO, DAYN, weekOrder, weekStartOf, exCount } from './format.js'
 import { t, exerciseNameFor, exerciseNameClass, getLang, RTL_LANGS } from './i18n-core.js'
 import { convertWeight } from './units.js'
+import { normalizeWeightProfile, convertProfileWeight } from './weight-profiles.js'
 import { fmtSpeed, speedUnitOf } from './speed.js'
 import { MUSCLES, inMuscleOrder } from './muscles.js'
 
@@ -43,7 +44,7 @@ function declaredPlanUnit(data) {
 function convertedExercise(e, sourceUnit, destinationUnit) {
   if (!sourceUnit || sourceUnit === destinationUnit) return e
   const out = { ...e }
-  if (out.weight != null) out.weight = convertWeight(out.weight, sourceUnit, destinationUnit)
+  if (out.weight != null) out.weight = convertProfileWeight(out.weight, e, sourceUnit, destinationUnit) ?? convertWeight(out.weight, sourceUnit, destinationUnit)
   // A timed increment is seconds, not a load. Rep-mode increments are load overrides.
   if (modeOf(out) === 'reps' && out.inc > 0) out.inc = convertWeight(out.inc, sourceUnit, destinationUnit)
   return out
@@ -94,6 +95,7 @@ function cleanEx(e) {
   // without its rule is just a list of weights.
   if (e.prog) o.prog = e.prog
   if (e.inc > 0) o.inc = e.inc
+  if (mode === 'reps' && normalizeWeightProfile(e.weightProfile)) o.weightProfile = normalizeWeightProfile(e.weightProfile)
   // Epley deload factor is a per-occurrence progression setting. Omit the default so older
   // exports remain compact and importing them preserves the default 90% behaviour.
   if (e.deloadFactor != null && Number(e.deloadFactor) !== 0.9) o.deloadFactor = e.deloadFactor

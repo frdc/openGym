@@ -1,0 +1,340 @@
+{
+  "version": 1,
+  "theme": {
+    "primary": "#d3b1ff",
+    "ink": "#f7efff",
+    "muted": "#c9b7e0",
+    "surface": "#2a154b",
+    "surfaceOpacity": 0.63,
+    "outline": "#6a39b3",
+    "heart": "#ff3b4f"
+  },
+  "button": {
+    "x": 112,
+    "width": 140.5,
+    "height": 36,
+    "bottom": 4,
+    "font": 16,
+    "icon": 20,
+    "gap": 8,
+    "corner": 8,
+    "bowl": 0.22
+  },
+  "sample": {
+    "name": "Supino Reto",
+    "series": "Série 2/4",
+    "reps": "10",
+    "load": "333",
+    "unit": "kg",
+    "timer": "00:00",
+    "rest": "01:30"
+  },
+  "screens": {
+    "workout": [
+      {
+        "id": "title",
+        "label": "Nome do exercício",
+        "kind": "arc",
+        "x": 112.5,
+        "y": 7.5,
+        "font": 18.5,
+        "radius": 101.25,
+        "weight": 700
+      },
+      {
+        "id": "series",
+        "label": "Série",
+        "kind": "text",
+        "x": 112.5,
+        "y": 57,
+        "font": 12,
+        "weight": 600,
+        "muted": true
+      },
+      {
+        "id": "timer",
+        "label": "Tempo",
+        "kind": "text",
+        "x": 111,
+        "y": 105.5,
+        "font": 40,
+        "weight": 700
+      },
+      {
+        "id": "heart",
+        "label": "Ícone de batimentos",
+        "kind": "heart",
+        "x": 112,
+        "y": 40,
+        "width": 12,
+        "height": 12
+      },
+      {
+        "id": "reps",
+        "label": "Repetições",
+        "kind": "metric",
+        "x": 71.75,
+        "y": 150,
+        "width": 79.5,
+        "height": 32,
+        "font": 16,
+        "unitFont": 12,
+        "corner": 20
+      },
+      {
+        "id": "load",
+        "label": "Carga",
+        "kind": "metric",
+        "x": 153.25,
+        "y": 150,
+        "width": 79.5,
+        "height": 32,
+        "font": 16,
+        "unitFont": 12,
+        "corner": 20
+      },
+      {
+        "id": "dots",
+        "label": "Indicador de páginas",
+        "kind": "dots",
+        "x": 112.5,
+        "y": 173,
+        "width": 20,
+        "height": 8,
+        "radius": 2
+      },
+      {
+        "id": "primary",
+        "label": "Botão Iniciar",
+        "kind": "primary"
+      }
+    ],
+    "rest": [
+      {
+        "id": "title",
+        "label": "Nome do exercício",
+        "kind": "arc",
+        "x": 112.5,
+        "y": 7.5,
+        "font": 18.5,
+        "radius": 101.25,
+        "weight": 700
+      },
+      {
+        "id": "series",
+        "label": "Série",
+        "kind": "text",
+        "x": 112.5,
+        "y": 57,
+        "font": 12,
+        "weight": 600,
+        "muted": true
+      },
+      {
+        "id": "timer",
+        "label": "Tempo de descanso",
+        "kind": "text",
+        "x": 111,
+        "y": 98.5,
+        "font": 40,
+        "weight": 700
+      },
+      {
+        "id": "heart",
+        "label": "Ícone de batimentos",
+        "kind": "heart",
+        "x": 112,
+        "y": 40,
+        "width": 12,
+        "height": 12
+      },
+      {
+        "id": "summary",
+        "label": "Repetições × carga",
+        "kind": "text",
+        "x": 112.5,
+        "y": 118,
+        "font": 12,
+        "weight": 500
+      },
+      {
+        "id": "plus",
+        "label": "Adicionar 15 segundos",
+        "kind": "pill",
+        "text": "+15 s",
+        "x": 71.75,
+        "y": 150,
+        "width": 79.5,
+        "height": 40,
+        "font": 16,
+        "corner": 24
+      },
+      {
+        "id": "skip",
+        "label": "Pular descanso",
+        "kind": "pill",
+        "text": "Pular",
+        "x": 153.25,
+        "y": 150,
+        "width": 79.5,
+        "height": 40,
+        "font": 16,
+        "corner": 24
+      },
+      {
+        "id": "dots",
+        "label": "Indicador de páginas",
+        "kind": "dots",
+        "x": 112.5,
+        "y": 173,
+        "width": 20,
+        "height": 8,
+        "radius": 2
+      },
+      {
+        "id": "primary",
+        "label": "Botão Pausar",
+        "kind": "primary"
+      }
+    ],
+    "options": [
+      {
+        "id": "heading",
+        "label": "Título da tela",
+        "kind": "text",
+        "text": "Opções",
+        "x": 112.5,
+        "y": 28,
+        "font": 20,
+        "weight": 700
+      },
+      {
+        "id": "heart-option",
+        "label": "Batimentos",
+        "kind": "option",
+        "text": "Batimentos",
+        "icon": "heart",
+        "x": 112.5,
+        "y": 76.5,
+        "width": 165,
+        "height": 42,
+        "font": 14,
+        "corner": 24
+      },
+      {
+        "id": "alerts",
+        "label": "Alertas",
+        "kind": "option",
+        "text": "Alertas",
+        "icon": "bell",
+        "x": 112.5,
+        "y": 125.5,
+        "width": 165,
+        "height": 42,
+        "font": 14,
+        "corner": 24
+      },
+      {
+        "id": "reconnect",
+        "label": "Reconectar",
+        "kind": "option",
+        "text": "Reconectar",
+        "icon": "refresh",
+        "x": 112.5,
+        "y": 174.5,
+        "width": 165,
+        "height": 42,
+        "font": 14,
+        "corner": 24
+      },
+      {
+        "id": "dots",
+        "label": "Indicador de páginas",
+        "kind": "dots",
+        "x": 112.5,
+        "y": 215,
+        "width": 20,
+        "height": 8,
+        "radius": 2
+      }
+    ],
+    "load": [
+      {
+        "id": "back",
+        "label": "Voltar",
+        "kind": "back",
+        "x": 54,
+        "y": 36,
+        "width": 18,
+        "height": 18
+      },
+      {
+        "id": "heading",
+        "label": "Título da tela",
+        "kind": "text",
+        "text": "Carga",
+        "x": 112.5,
+        "y": 36,
+        "font": 16,
+        "weight": 600
+      },
+      {
+        "id": "exercise",
+        "label": "Nome do exercício",
+        "kind": "text",
+        "x": 112.5,
+        "y": 68,
+        "font": 12,
+        "weight": 500
+      },
+      {
+        "id": "minus",
+        "label": "Diminuir carga",
+        "kind": "adjust",
+        "text": "−",
+        "x": 38,
+        "y": 98,
+        "width": 48,
+        "height": 48,
+        "font": 28
+      },
+      {
+        "id": "value",
+        "label": "Valor da carga",
+        "kind": "text",
+        "x": 112.5,
+        "y": 100,
+        "font": 28,
+        "weight": 700
+      },
+      {
+        "id": "plus",
+        "label": "Aumentar carga",
+        "kind": "adjust",
+        "text": "+",
+        "x": 185.5,
+        "y": 98,
+        "width": 48,
+        "height": 48,
+        "font": 28
+      },
+      {
+        "id": "cancel",
+        "label": "Botão Cancelar",
+        "kind": "pill",
+        "text": "Cancelar",
+        "x": 112.5,
+        "y": 148,
+        "width": 100,
+        "height": 32,
+        "font": 14,
+        "corner": 20
+      },
+      {
+        "id": "primary",
+        "label": "Botão Confirmar",
+        "kind": "primary"
+      }
+    ]
+  }
+}

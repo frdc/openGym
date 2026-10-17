@@ -1,5 +1,7 @@
 import { useDurableSave } from './lib/use-durable-save.js'
 import { SetHeartRateSummaries } from './components/HeartRateSummary.jsx'
+import { WeightProfileFields } from './components/WeightProfileFields.jsx'
+import { normalizeWeightProfile, weightProfileGrid } from './lib/weight-profiles.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -1264,7 +1266,7 @@ function ExercisePicker({ onPick, title, close }) {
       <button className={'chip nocap' + (!eqOn ? ' on' : '')} onClick={() => { setEq(''); setShown(50) }}>{t('Any equipment')}</button>
       {eqOpts.map(x => <button key={x} className={'chip' + (eqOn === x ? ' on' : '')} onClick={() => { setEq(x); setShown(50) }}>{t(x)}</button>)}
     </div>}
-    <div className="list">
+    <div className="list exercise-picker-list">
       {!special && <div className="item" {...tappable(() => customExSheet(null, ex => onPick(ex), q.trim()))}>
         <div className="thumb thumb-x"><Icon name="plusCircle" /></div>
         <div className="grow"><div className="tt">{t('Create your own exercise')}</div><div className="ss">{t('name + body part, and a photo or video if you like')}</div></div><Icon name="plus" className="chev" />
@@ -1415,7 +1417,7 @@ export const equipmentProfileSheet = profile => ui().openSheet(close => <Equipme
 // "how does this lift go up" belongs next to sets and reps, not in a separate screen. Left
 // on "follow the routine" it inherits, so most people never touch it.
 const progressionStepOf = (c, mode, ex, unit) =>
-  c.inc >= 0 ? c.inc : (mode === 'time' ? 5 : defaultIncrement(ex.id, unit))
+  mode === 'reps' && weightProfileGrid(c, unit) ? weightIncrement(c, unit) : c.inc >= 0 ? c.inc : (mode === 'time' ? 5 : defaultIncrement(ex.id, unit))
 const progressionStepIsValid = (step, policy) =>
   policy === 'off' || (Number.isFinite(step) && step > 0)
 
@@ -1448,10 +1450,10 @@ function ProgressionFields({ ex, mode, c, setC, routine, unit, perSide }) {
     <div className="small dim" style={{ marginBottom: active === 'off' ? 18 : 10 }}>{t(POLICY_DESC[active])}</div>
     {/* Double progression on a weighted exercise fills this row with four steppers; `cfgrow-4`
         lets it wrap into two pairs on phones, where four abreast left the inputs a few px wide. */}
-    {active !== 'off' && <div className={'row cfgrow' + (active === 'double' && epleyEligible ? ' cfgrow-4' : '')} style={{ marginBottom: 18 }}>
+    {(active !== 'off' || mode === 'reps') && <div className={'row cfgrow' + (active === 'double' && epleyEligible ? ' cfgrow-4' : '')} style={{ marginBottom: 18 }}>
       <Stepper label={mode === 'time' ? t('Step (seconds)') : t('Step ({0})', unit)} value={inc}
         step={mode === 'time' ? 5 : 1.25} decimal={mode !== 'time'} invalid={invalid} className={invalid ? 'invalid' : ''}
-        onChange={v => setC(x => ({ ...x, inc: v }))} />
+        onChange={v => setC(x => { const next = { ...x, inc: v }; if (mode === 'reps') delete next.weightProfile; return next })} />
       {active === 'double' && <>
         {/* The draft stays as typed: normalising on every keystroke turned "12" into 92 (the
             "1" was pulled above the lower bound first). Save and the engine normalise anyway. */}
@@ -1518,6 +1520,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
     const prog = {}
     if (c.prog) prog.prog = c.prog
     if (c.inc > 0) prog.inc = c.inc
+    if (mode === 'reps' && normalizeWeightProfile(c.weightProfile)) prog.weightProfile = normalizeWeightProfile(c.weightProfile)
     // Epley deloading is configurable per occurrence, but the default stays omitted so older
     // plans retain their compact shape and keep the existing 90% behaviour.
     if (mode === 'reps' && !bw && (activePolicy === 'linear' || activePolicy === 'double')) {
@@ -1577,6 +1580,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
   }
   return <>
     <h3 className={exerciseNameClass(ex)}>{exerciseNameFor(ex)}</h3>
+    {!existing && <Button variant="primary" icon="plus" disabled={progressionStepInvalid} style={{ marginBottom: 14 }} onClick={save}>{saveLabel || t('Add to routine')}</Button>}
     <Media ex={ex} />
     {/* The same tags the exercise detail sheet shows, secondaries included: choosing what goes
         into a plan is exactly when "what else does this hit" matters, and until now that was
@@ -1594,6 +1598,7 @@ function ExConfig({ ex, existing, onSave, onDelete, onReplace, close, routine, i
       <Segmented className="seg-range" value={mode} onChange={setMode}
         options={[{ value: 'reps', label: t('Reps') }, { value: 'time', label: t('Time') }]} />
     </div>}
+    {mode === 'reps' && (!bw || c.weight > 0) && <WeightProfileFields cfg={c} onChange={next => setC(next)} />}
     <div className="row cfgrow" style={{ marginBottom: mode === 'time' ? 8 : 18 }}>
       {cardio ? <>
         <Stepper label={t('Intervals')} value={c.sets} step={1} decimal={false} onChange={v => setC(x => ({ ...x, sets: v }))} />

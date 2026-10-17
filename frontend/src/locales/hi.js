@@ -1,5 +1,17 @@
 // Hindi UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "वज़न का प्रकार",
+  "Manual increment": "मैन्युअल वृद्धि",
+  "Saved weight profiles": "सहेजे गए भार प्रोफ़ाइल",
+  "New weight profile": "नया भार प्रोफ़ाइल",
+  "Edit weight profile": "भार प्रोफ़ाइल संपादित करें",
+  "Profile name": "प्रोफ़ाइल का नाम",
+  "Weight units": "वज़न की इकाई",
+  "Initial load ({0})": "शुरुआती भार ({0})",
+  "Load increment ({0})": "भार वृद्धि ({0})",
+  "Delete weight profile": "भार प्रोफ़ाइल हटाएँ",
+  "Profile limit reached.": "प्रोफ़ाइल सीमा पूरी हो गई।",
+  "Enter a name and a positive load increment.": "एक नाम और शून्य से अधिक भार वृद्धि दर्ज करें।",
   "Set heart rate": "सेट की हृदय गति",
   "Heart rate effort": "प्रयास",
   "Heart rate recovery": "रिकवरी",

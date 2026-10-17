@@ -58,12 +58,12 @@ public class WearHeartService extends Service implements ExerciseUpdateCallback 
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) { stopSelf(); return START_NOT_STICKY; }
-        if ("stop".equals(intent.getAction())) { stopCollection("disabled"); return START_NOT_STICKY; }
+        if ("stop".equals(intent.getAction())) { getSharedPreferences("heart-session",MODE_PRIVATE).edit().remove("context").apply(); stopCollection("disabled"); return START_NOT_STICKY; }
         if (ending || stopping) return START_NOT_STICKY;
         if (running) return START_NOT_STICKY;
         var state = WearStateService.cached(this);
-        if (!state.optBoolean("active") || checkSelfPermission(Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) { status = R.string.heart_unavailable; stopSelf(); return START_NOT_STICKY; }
-        contextToken = state.optString("contextToken");
+        contextToken=intent.getStringExtra("contextToken");
+        if (!sessionCurrent()) { status=R.string.heart_unavailable; stopSelf(); return START_NOT_STICKY; }
         try {
             NotificationManager manager = getSystemService(NotificationManager.class);
             manager.createNotificationChannel(new NotificationChannel("heart-workout", getString(R.string.heart_title), NotificationManager.IMPORTANCE_LOW));
@@ -89,7 +89,7 @@ public class WearHeartService extends Service implements ExerciseUpdateCallback 
                         start.addListener(() -> {
                             try {
                                 start.get(); owned = true;
-                                if (ending || stopping) client.endExerciseAsync(); else handler.post(pulse);
+                                if (ending || stopping) client.endExerciseAsync(); else if (!sessionCurrent()) stopCollection("interrupted"); else handler.post(pulse);
                             } catch (Exception e) { if (!ending) fail(R.string.heart_unavailable); }
                         }, executor);
                     });
@@ -98,8 +98,13 @@ public class WearHeartService extends Service implements ExerciseUpdateCallback 
         } catch (Exception e) { fail(R.string.heart_unavailable); }
         return START_NOT_STICKY;
     }
+    private boolean sessionCurrent() {
+        var state=WearStateService.cached(this);
+        return WearHeartResume.allowed(contextToken,state.optString("contextToken"),state.optBoolean("active"),checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,true)
+            && contextToken.equals(getSharedPreferences("heart-session",MODE_PRIVATE).getString("context",""));
+    }
     private <T> void result(ListenableFuture<T> future, Consumer<T> success) {
-        future.addListener(() -> { try { if (!ending && !stopping) success.accept(future.get()); } catch (Exception e) { fail(R.string.heart_unavailable); } }, executor);
+        future.addListener(() -> { try { if (!ending && !stopping) { if (!sessionCurrent()) { stopCollection("interrupted"); return; } success.accept(future.get()); } } catch (Exception e) { fail(R.string.heart_unavailable); } }, executor);
     }
     private void reconnectOwnedExercise() {
         // Health Services can retain our exercise when an APK update kills the process.

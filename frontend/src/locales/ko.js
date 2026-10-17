@@ -1,5 +1,17 @@
 // Korean UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "중량 유형",
+  "Manual increment": "수동 증가량",
+  "Saved weight profiles": "저장된 중량 프로필",
+  "New weight profile": "새 중량 프로필",
+  "Edit weight profile": "중량 프로필 편집",
+  "Profile name": "프로필 이름",
+  "Weight units": "중량 단위",
+  "Initial load ({0})": "시작 중량 ({0})",
+  "Load increment ({0})": "중량 증가량 ({0})",
+  "Delete weight profile": "중량 프로필 삭제",
+  "Profile limit reached.": "프로필 수 한도에 도달했습니다.",
+  "Enter a name and a positive load increment.": "이름과 양수인 중량 증가량을 입력하세요.",
   "Set heart rate": "세트 심박수",
   "Heart rate effort": "운동",
   "Heart rate recovery": "회복",

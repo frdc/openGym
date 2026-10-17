@@ -17,6 +17,7 @@ const workRowsForMode = (entry = {}, mode = 'reps') => {
 // for the hook — and it re-exports this very `t` from core, so nothing changes here except what
 // gets dragged along behind it.
 import { t } from './i18n-core.js'
+import { weightProfileGrid, floorProfileWeight } from './weight-profiles.js'
 import { queueNext, pinState, queueLiveOn } from './queue.js'
 import { isPyramid, pyramidLabel, pyramidTargetAt, PYRAMID_MAX } from './pyramid.js'
 
@@ -486,7 +487,7 @@ export function buildSets(S, cfg, options = {}) {
   if (!warm) return rows
   const mode = modeOf(cfg)
   let out = rows
-  for (let i = 0; i < warm; i++) out = insertWarmupRow(out, mode, cfg, options.step)
+  for (let i = 0; i < warm; i++) out = insertWarmupRow(out, mode, cfg, options.step, S.unit)
   return out
 }
 
@@ -871,7 +872,13 @@ export function cascadeWeight(rows, from, value, side) {
  * happened, and rewriting performed work is data loss. Entries with nothing to ramp toward
  * — cardio, bodyweight, an unloaded hold — are returned untouched.
  */
-export function rerampWarmups(rows, step = 2.5) {
+function rampLoad(to, from, step, cfg, unit) {
+  const ideal = from + (to - from) / 2
+  const grid = weightProfileGrid(cfg, unit)
+  if (grid) return Math.max(0, Math.min(to, Math.max(grid.start, floorProfileWeight(ideal, cfg, unit))))
+  return Math.max(0, Math.min(to, Math.floor(ideal / step) * step))
+}
+export function rerampWarmups(rows, step = 2.5, cfg, unit) {
   const firstWork = rows.findIndex(x => !isWarmupRow(x))
   if (firstWork <= 0) return rows
   const target = rows[firstWork].w || 0
@@ -881,7 +888,7 @@ export function rerampWarmups(rows, step = 2.5) {
   for (let i = 0; i < firstWork; i++) {
     if (out[i].done) { from = out[i].w || 0; continue }
     const w = target > from
-      ? Math.max(0, Math.min(target, Math.floor((from + (target - from) / 2) / step) * step))
+      ? rampLoad(target, from, step, cfg, unit)
       : target
     out[i] = { ...out[i], w }
     from = w
@@ -889,7 +896,7 @@ export function rerampWarmups(rows, step = 2.5) {
   return out
 }
 
-export function insertWarmupRow(rows, mode, target, step = 2.5) {
+export function insertWarmupRow(rows, mode, target, step = 2.5, unit) {
   const firstWork = rows.findIndex(x => !isWarmupRow(x))
   const at = firstWork === -1 ? rows.length : firstWork
   const prev = at > 0 ? rows[at - 1] : null            // the warm-up this one ramps from
@@ -904,7 +911,7 @@ export function insertWarmupRow(rows, mode, target, step = 2.5) {
     if (to <= from) return to
     // Rounded DOWN to the step: a warm-up that lands a notch light costs nothing, one that
     // lands a notch heavy is a set you have to strip plates off before you can use it.
-    return Math.max(0, Math.min(to, Math.floor((from + (to - from) / 2) / step) * step))
+    return rampLoad(to, from, step, mode === 'reps' ? target : null, unit)
   }
   const warm = mode === 'cardio'
     ? {

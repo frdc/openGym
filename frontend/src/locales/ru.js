@@ -1,5 +1,17 @@
 // Russian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Тип веса",
+  "Manual increment": "Ручной шаг",
+  "Saved weight profiles": "Сохранённые профили нагрузки",
+  "New weight profile": "Новый профиль нагрузки",
+  "Edit weight profile": "Изменить профиль нагрузки",
+  "Profile name": "Название профиля",
+  "Weight units": "Единица веса",
+  "Initial load ({0})": "Начальная нагрузка ({0})",
+  "Load increment ({0})": "Шаг нагрузки ({0})",
+  "Delete weight profile": "Удалить профиль нагрузки",
+  "Profile limit reached.": "Достигнут лимит профилей.",
+  "Enter a name and a positive load increment.": "Введите название и положительный шаг нагрузки.",
   "Set heart rate": "Пульс в подходе",
   "Heart rate effort": "Нагрузка",
   "Heart rate recovery": "Восстановление",

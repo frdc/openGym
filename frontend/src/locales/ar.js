@@ -1,5 +1,17 @@
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "نوع الوزن",
+  "Manual increment": "زيادة يدوية",
+  "Saved weight profiles": "ملفات الأوزان المحفوظة",
+  "New weight profile": "ملف أوزان جديد",
+  "Edit weight profile": "تعديل ملف الأوزان",
+  "Profile name": "اسم الملف",
+  "Weight units": "وحدة الوزن",
+  "Initial load ({0})": "الوزن الأولي ({0})",
+  "Load increment ({0})": "زيادة الوزن ({0})",
+  "Delete weight profile": "حذف ملف الأوزان",
+  "Profile limit reached.": "تم الوصول إلى الحد الأقصى للملفات.",
+  "Enter a name and a positive load increment.": "أدخل اسمًا وزيادة وزن أكبر من الصفر.",
   "Set heart rate": "نبض المجموعة",
   "Heart rate effort": "الجهد",
   "Heart rate recovery": "التعافي",

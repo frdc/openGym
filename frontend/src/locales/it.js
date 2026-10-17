@@ -1,5 +1,17 @@
 // Italian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Tipo di peso",
+  "Manual increment": "Incremento manuale",
+  "Saved weight profiles": "Profili di carico salvati",
+  "New weight profile": "Nuovo profilo di carico",
+  "Edit weight profile": "Modifica profilo di carico",
+  "Profile name": "Nome del profilo",
+  "Weight units": "Unità di peso",
+  "Initial load ({0})": "Carico iniziale ({0})",
+  "Load increment ({0})": "Incremento di carico ({0})",
+  "Delete weight profile": "Elimina profilo di carico",
+  "Profile limit reached.": "Limite dei profili raggiunto.",
+  "Enter a name and a positive load increment.": "Inserisci un nome e un incremento di carico positivo.",
   "Set heart rate": "Frequenza cardiaca della serie",
   "Heart rate effort": "Sforzo",
   "Heart rate recovery": "Recupero",

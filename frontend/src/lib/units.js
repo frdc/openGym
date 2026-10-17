@@ -6,6 +6,7 @@ import { isSideSet, syncSideAggregate } from './workout-model.js'
 import { workoutVolume } from './history.js'
 import { EXIDX } from './exercises.js'
 import { defaultBarWeight } from './bar.js'
+import { convertProfileWeight } from './weight-profiles.js'
 
 const LB_PER_KG = 2.2046226218
 
@@ -25,20 +26,21 @@ export function convertBodyWeight(value, from, to) {
   return Math.round((to === 'lb' ? v * LB_PER_KG : v / LB_PER_KG) * 10) / 10
 }
 
-const convSet = (set, from, to) => {
+const convSet = (set, from, to, cfg) => {
   if (!set || typeof set !== 'object') return set
   const out = { ...set }
   if (isSideSet(set)) return syncSideAggregate({ ...set, sides: {
-    L: convSet(set.sides.L, from, to), R: convSet(set.sides.R, from, to),
+    L: convSet(set.sides.L, from, to, cfg), R: convSet(set.sides.R, from, to, cfg),
   } })
-  if (out.w != null) out.w = convertWeight(out.w, from, to)
-  if (Array.isArray(out.drops)) out.drops = out.drops.map(d => ({ ...d, w: convertWeight(d.w, from, to) }))
+  const convert = value => convertProfileWeight(value, cfg, from, to) ?? convertWeight(value, from, to)
+  if (out.w != null) out.w = convert(out.w)
+  if (Array.isArray(out.drops)) out.drops = out.drops.map(d => ({ ...d, w: convert(d.w) }))
   return out
 }
 const convTarget = (cfg, from, to) => {
   if (!cfg || typeof cfg !== 'object') return cfg
   const out = { ...cfg }
-  if (out.weight != null) out.weight = convertWeight(out.weight, from, to)
+  if (out.weight != null) out.weight = convertProfileWeight(out.weight, cfg, from, to) ?? convertWeight(out.weight, from, to)
   // A per-exercise increment is a load too — 2.5 kg is 5 lb, not 2.5 lb.
   if (out.inc > 0 && (out.mode == null || out.mode === 'reps')) out.inc = convertWeight(out.inc, from, to)
   if (Array.isArray(out.warmup)) out.warmup = out.warmup.map(w => (w && w.weight != null ? { ...w, weight: convertWeight(w.weight, from, to) } : w))
@@ -66,11 +68,11 @@ const convEntry = (e, from, to) => {
   if (!e || typeof e !== 'object') return e
   return {
     ...e,
-    ...(e.topW != null ? { topW: convertWeight(e.topW, from, to) } : {}),
+    ...(e.topW != null ? { topW: convertProfileWeight(e.topW, e.target, from, to) ?? convertWeight(e.topW, from, to) } : {}),
     ...(e.target ? { target: convTarget(e.target, from, to) } : {}),
     // The plan the entry was built from (lib/session-start.js) carries the routine's weight too.
     ...(e.planned ? { planned: convTarget(e.planned, from, to) } : {}),
-    ...(Array.isArray(e.sets) ? { sets: e.sets.map(s => convSet(s, from, to)) } : {}),
+    ...(Array.isArray(e.sets) ? { sets: e.sets.map(s => convSet(s, from, to, e.target)) } : {}),
   }
 }
 

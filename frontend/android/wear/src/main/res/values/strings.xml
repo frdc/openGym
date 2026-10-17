@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="complete_without_heart">Complete without heart rate</string>
+    <string name="cancel_edit">Cancel</string>
+    <string name="sending_short">Sending…</string>
+    <string name="skip_short">Skip</string>
+    <string name="heart_settings">Heart rate</string>
+    <string name="alert_settings">Alerts</string>
+    <string name="precise_alerts">Precise alarms</string>
+    <string name="rest_notifications">Rest notifications</string>
     <string name="app_name">OpenGym Watch Test</string>
     <string-array name="android_wear_capabilities"><item>opengym_watch_v1</item></string-array>
     <string name="connecting">Connecting…</string>
+    <string name="phone_unresponsive">Phone is not responding</string>
     <string name="connected">Connected to phone</string>
     <string name="workout_active">Workout in progress</string>
     <string name="open_workout">Open workout</string>
@@ -27,6 +36,9 @@
     <string name="heart_enable">Enable heart rate</string>
     <string name="heart_disable">Disable heart rate</string>
     <string name="heart_start_set">Start set</string>
+    <string name="heart_wait_short">Reading sensor…</string>
+    <string name="heart_start_short">Start</string>
+    <string name="complete_short">Complete</string>
     <string name="phase_effort">In set</string>
     <string name="phase_rest">Rest</string>
     <string name="phase_paused">Rest paused</string>
@@ -49,4 +61,10 @@
     <string name="heart_receiving">Receiving heart rate readings</string>
     <string name="increase">Increase</string>
     <string name="decrease">Decrease</string>
+    <string name="ambient_rest_until">Until %1$s</string>
+    <string name="offline_saved">Saved on watch · waiting to sync</string>
+    <string name="offline_conflict">Pending action conflicts with phone</string>
+    <string name="offline_review">Review pending action</string>
+    <string name="offline_discard">Discard pending action</string>
+    <string name="offline_explanation">This action is kept on the watch. Reconnect to sync. If the workout changed, check it on your phone before discarding this copy. The next set needs a confirmed sync.</string>
 </resources>

@@ -13,6 +13,7 @@ import { EXIDX } from './exercises.js'
 import { usesBar, defaultBarWeight } from './bar.js'
 import { isBw } from './history.js'
 import { weightIncrement } from './progression.js'
+import { weightProfileGrid, floorProfileWeight } from './weight-profiles.js'
 
 /** The plate sizes the inventory editor lists, heaviest first, per unit. */
 export const PLATE_SIZES = {
@@ -241,6 +242,7 @@ export const sameLoad = (a, b) =>
  * rounded to .5 read 48.5 kg on a bar that loads in 2.5s (QA 1.3.9).
  */
 export function dropGrid(S, cfg) {
+  if (weightProfileGrid(cfg, S?.unit)) return weight => floorProfileWeight(weight, cfg, S?.unit)
   const kind = loadKindFor(S, cfg)
   if (ownsPlates(S) && (kind === 'pairs' || kind === 'single')) {
     const base = baseWeightFor(S, cfg?.id)

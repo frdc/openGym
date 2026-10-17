@@ -1,7 +1,9 @@
 package com.fredc.opengym;
 
 import android.Manifest;
-import android.app.Activity;
+import androidx.activity.ComponentActivity;
+import androidx.wear.ambient.AmbientLifecycleObserver;
+import androidx.wear.ambient.AmbientLifecycleObserverKt;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -21,6 +23,8 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.FrameLayout;
+import android.view.View;
 import com.google.android.gms.wearable.CapabilityClient;
 import com.google.android.gms.wearable.MessageClient;
 import com.google.android.gms.wearable.MessageEvent;
@@ -29,17 +33,42 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
-public class WearActivity extends Activity implements MessageClient.OnMessageReceivedListener {
+public class WearActivity extends ComponentActivity implements MessageClient.OnMessageReceivedListener {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private JSONObject state = new JSONObject();
     private String phone = "", syncId = "", pending = "";
     private long confirmedAt, pendingAt, lastSync;
     private boolean foreground, options, pendingEdit;
+    private String optionsPage = "";
+    private String heartRestoreAttempt = "";
+    private boolean showingRest, showingHeartRunning;
+    private boolean ambient, lowBitAmbient;
+    private boolean workoutScreen, screenDimmed, wristListening;
+    private android.hardware.SensorManager screenSensors;
+    private static final long SCREEN_DIM_DELAY_MS = 15_000;
+    private final Runnable dimScreen = this::dimWorkoutScreen;
+    private final android.hardware.SensorEventListener wristListener = new android.hardware.SensorEventListener() {
+        @Override public void onSensorChanged(android.hardware.SensorEvent event) { brightenWorkoutScreen(); }
+        @Override public void onAccuracyChanged(android.hardware.Sensor sensor, int accuracy) { }
+    };
+    private ScrollView scroll;
+    private final WearBackdrop backdrop = new WearBackdrop();
+    private AmbientLifecycleObserver ambientObserver;
+    private final AmbientLifecycleObserver.AmbientLifecycleCallback ambientCallbacks = new AmbientLifecycleObserver.AmbientLifecycleCallback() {
+        @Override public void onEnterAmbient(AmbientLifecycleObserver.AmbientDetails details) {
+            lowBitAmbient = details.getDeviceHasLowBitAmbient(); enterAmbient();
+        }
+        @Override public void onExitAmbient() { exitAmbient(); }
+        @Override public void onUpdateAmbient() {
+            state = WearStateService.cached(WearActivity.this); refreshAmbient();
+        }
+    };
     private WearEditor draft;
     private android.animation.ObjectAnimator heartPulse;
     private int feedback;
     private LinearLayout content;
-    private TextView rest, heartReading, connection;
+    private TextView rest, heartReading, heartBpm;
+    private View connectionIndicator;
     private TextView phaseLabel;
     private android.content.res.Resources workoutResources;
     private String workoutLanguage = "";
@@ -53,7 +82,7 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         configuration.setLocale(java.util.Locale.forLanguageTag(language));
         workoutResources = getBaseContext().createConfigurationContext(configuration).getResources();
     }
-    private Button complete, pause, plus, skip, cancelHeart, enableHeart;
+    private Button complete, startSet, pause, plus, skip, cancelHeart, enableHeart, reconnect, manualComplete;
     private Button repsChip, loadChip, confirmEdit, decrease, increase, cancelEdit;
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -66,30 +95,45 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
     };
     private final Runnable tick = new Runnable() {
         @Override public void run() {
-            if (!foreground) return;
+            if (!foreground || ambient) return;
             long now = SystemClock.elapsedRealtime();
             if (!pending.isEmpty() && now - pendingAt >= 8000) { failedCommand(); sync(); }
             if (now - lastSync >= 5000) sync();
+            if (!options && draft == null && (showingRest != isResting() || showingHeartRunning != WearHeartService.running)) render();
             updateTimer(); updateControls(); updateHeart(); handler.postDelayed(this, 500);
         }
     };
     @Override public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+        super.onCreate(savedInstanceState); backdrop.texture(getResources());
         setTurnScreenOn(getIntent().getBooleanExtra("remoteOpen", false));
         state = WearStateService.cached(this);
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(Color.BLACK); scroll.setVerticalScrollBarEnabled(false);
+        scroll = new WearPagerScroll(this, new WearPagerScroll.Pages() {
+            public boolean available() { return foreground && !ambient && draft == null && optionsPage.isEmpty(); }
+            public boolean settings() { return options; }
+            public void show(boolean settings) { options = settings; optionsPage = ""; render(); }
+        }); scroll.setFillViewport(true); scroll.setBackgroundColor(WearStyle.BACKGROUND); scroll.setVerticalScrollBarEnabled(false);
         content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER_HORIZONTAL);
         content.setPadding(dp(30), dp(12), dp(30), dp(8));
         content.setOnApplyWindowInsetsListener((view, insets) -> {
             view.setPadding(dp(30) + insets.getSystemWindowInsetLeft(), dp(12) + insets.getSystemWindowInsetTop(), dp(30) + insets.getSystemWindowInsetRight(), dp(8) + insets.getSystemWindowInsetBottom()); return insets;
         }); scroll.addView(content); setContentView(scroll); render();
+        getOnBackPressedDispatcher().addCallback(this,new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (draft != null) { if (pending.isEmpty()) { draft=null; render(); } return; }
+                if (options) { if (!optionsPage.isEmpty()) optionsPage=""; else options=false; render(); return; }
+                finish();
+            }
+        });
+        ambientObserver = AmbientLifecycleObserverKt.AmbientLifecycleObserver(this, ambientCallbacks);
+        getLifecycle().addObserver(ambientObserver);
     }
+    int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent); setIntent(intent); setTurnScreenOn(intent.getBooleanExtra("remoteOpen", false));
     }
     @Override public void onResume() {
-        super.onResume(); foreground = true; confirmedAt = 0;
+        super.onResume(); foreground = true; confirmedAt = 0; heartRestoreAttempt = "";
         getSystemService(android.app.NotificationManager.class).cancel(WearRemoteOpen.ID);
         Wearable.getMessageClient(this).addListener(this);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, new IntentFilter("com.fredc.opengym.WEAR_STATE"), Context.RECEIVER_NOT_EXPORTED);
@@ -97,10 +141,54 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         state = WearStateService.cached(this); WearOngoing.update(this, state); render(); sync(); handler.post(tick);
     }
     @Override public void onPause() {
-        foreground = false; getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); stopHeartPulse(); if(heartReading!=null)heartReading.setTextColor(Color.GRAY); confirmedAt = 0; handler.removeCallbacks(tick); Wearable.getMessageClient(this).removeListener(this); unregisterReceiver(receiver); super.onPause();
+        foreground = false; backdrop.motion(false); updateWorkoutScreen(); stopHeartPulse(); if(heartReading!=null)heartReading.setTextColor(Color.GRAY); confirmedAt = 0; handler.removeCallbacks(tick); Wearable.getMessageClient(this).removeListener(this); unregisterReceiver(receiver); super.onPause();
+    }
+    @Override public void onDestroy() { backdrop.motion(false); super.onDestroy(); }
+    @Override public void onUserInteraction() { super.onUserInteraction(); brightenWorkoutScreen(); }
+    private void setScreenBrightness(float brightness) {
+        var attributes = getWindow().getAttributes();
+        if (attributes.screenBrightness == brightness) return;
+        attributes.screenBrightness = brightness; getWindow().setAttributes(attributes);
+    }
+    private void stopWristListener() {
+        if (wristListening && screenSensors != null) screenSensors.unregisterListener(wristListener);
+        wristListening = false;
+    }
+    private void brightenWorkoutScreen() {
+        if (!workoutScreen) return;
+        screenDimmed = false; stopWristListener();
+        setScreenBrightness(android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE);
+        handler.removeCallbacks(dimScreen); handler.postDelayed(dimScreen, SCREEN_DIM_DELAY_MS);
+    }
+    private void dimWorkoutScreen() {
+        if (!workoutScreen || !foreground || ambient || !state.optBoolean("active") || screenDimmed) return;
+        screenDimmed = true; setScreenBrightness(0.03f);
+        // The wrist sensor is optional and may be hidden/restricted by the manufacturer.
+        // Discover its public string type rather than referencing a hidden SDK constant.
+        if (screenSensors == null) screenSensors = getSystemService(android.hardware.SensorManager.class);
+        if (screenSensors == null) return;
+        try {
+            for (var sensor : screenSensors.getSensorList(android.hardware.Sensor.TYPE_ALL)) {
+                if (!"android.sensor.wrist_tilt_gesture".equals(sensor.getStringType())) continue;
+                wristListening = screenSensors.registerListener(wristListener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL, handler);
+                android.util.Log.d("OpenGymScreen", "Wrist gesture registered: " + wristListening);
+                break;
+            }
+        } catch (SecurityException ignored) { wristListening = false; }
+    }
+    private void updateWorkoutScreen() {
+        boolean active = foreground && !ambient && state.optBoolean("active");
+        if (active) {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            if (!workoutScreen) { workoutScreen = true; brightenWorkoutScreen(); }
+        } else {
+            workoutScreen = false; screenDimmed = false; handler.removeCallbacks(dimScreen); stopWristListener();
+            getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            setScreenBrightness(android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE);
+        }
     }
     private void sync() {
-        if (!foreground) return;
+        if (!foreground || ambient) return;
         lastSync = SystemClock.elapsedRealtime();
         Wearable.getCapabilityClient(this).getCapability("opengym_phone_v1", CapabilityClient.FILTER_REACHABLE).addOnSuccessListener(capability -> {
             if (!foreground) return;
@@ -125,11 +213,16 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
                 if (!syncId.equals(packet.optString("syncId"))) return;
                 JSONObject incoming = packet.getJSONObject("state");
                 if (!WearStateService.receive(this, incoming, packet.optLong("sentAt", System.currentTimeMillis()))) return;
-                state = incoming; confirmedAt = SystemClock.elapsedRealtime(); render();
+                state = incoming; confirmedAt = SystemClock.elapsedRealtime(); restoreHeartSession(); render(); drainOutbox();
                 WearHeartStore.get(this).snapshot(incoming, phone);
             } else if ("/opengym/v1/reply".equals(event.getPath())) {
                 if (packet.optInt("v") != 1) return;
                 if (pending.equals(packet.optString("requestId")) && !pending.isEmpty()) {
+                    JSONObject queued=WearOutbox.read(this);
+                    if(queued!=null && pending.equals(queued.optString("requestId"))) {
+                        if("ok".equals(packet.optString("status"))) WearOutbox.clear(this);
+                        else WearOutbox.conflict(this);
+                    }
                     if (!pendingEdit && !"ok".equals(packet.optString("status"))) WearHeartStore.get(this).rejected();
                     pending = ""; pendingEdit = false; draft = null; confirmedAt = 0;
                     feedback = "ok".equals(packet.optString("status")) ? R.string.saved : R.string.unconfirmed;
@@ -138,13 +231,39 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
             }
         } catch (Exception ignored) { }
     }
-    private boolean enabled() { return WearProtocol.canControl(!phone.isEmpty(), confirmedAt, SystemClock.elapsedRealtime(), !pending.isEmpty()); }
+    private boolean enabled() { return !ambient && WearProtocol.canControl(!phone.isEmpty(), confirmedAt, SystemClock.elapsedRealtime(), !pending.isEmpty()); }
+    private boolean localEditing() { return !ambient && state.optBoolean("active") && !state.optString("contextToken").isEmpty() && pending.isEmpty() && WearOutbox.read(this)==null; }
+    private void drainOutbox() {
+        JSONObject command=WearOutbox.read(this);
+        if(command==null || WearOutbox.conflicted(this) || !enabled()) return;
+        if(!command.optBoolean("sent")) {
+            JSONObject cur=state.optJSONObject("current"), base=command.optJSONObject("baseline");
+            if(cur!=null && !("edit-set".equals(command.optString("action"))?cur.optBoolean("canEdit"):cur.optBoolean("canComplete"))) return;
+            if(!state.optString("contextToken").equals(command.optString("contextToken")) || cur==null || base==null ||
+                !targetIdentity(cur).equals(targetIdentity(base)) || !cur.optString("loadUnit").equals(base.optString("loadUnit")) ||
+                !String.valueOf(cur.opt("loadValue")).equals(String.valueOf(base.opt("loadValue"))) ||
+                !String.valueOf(cur.opt("repsValue")).equals(String.valueOf(base.opt("repsValue"))) ||
+                !String.valueOf(cur.opt("loadStep")).equals(String.valueOf(base.opt("loadStep"))) ||
+                !String.valueOf(cur.opt("loadStart")).equals(String.valueOf(base.opt("loadStart")))) {
+                WearOutbox.conflict(this); render(); return;
+            }
+            try { command.put("revision",state.getLong("revision")); command.put("sent",true); }
+            catch(Exception e) { return; }
+            if(!WearOutbox.save(this,command)) return;
+        }
+        pending=command.optString("requestId"); pendingEdit="edit-set".equals(command.optString("action")); pendingAt=SystemClock.elapsedRealtime();
+        Wearable.getMessageClient(this).sendMessage(phone,"/opengym/v1/command",command.toString().getBytes(StandardCharsets.UTF_8))
+            .addOnFailureListener(e -> { if(command.optString("requestId").equals(pending)) failedCommand(); });
+        updateControls();
+    }
     private void failedCommand() {
         if (!pendingEdit) WearHeartStore.get(this).rejected();
-        pending = ""; pendingEdit = false; draft = null; confirmedAt = 0; feedback = R.string.unconfirmed; render();
+        pending = ""; pendingEdit = false; draft = null; confirmedAt = 0; feedback = WearOutbox.read(this)!=null ? R.string.offline_saved : R.string.unconfirmed; render();
     }
     private void send(String action) {
-        if (!enabled()) return;
+        boolean durable="edit-set".equals(action) || "complete".equals(action);
+        boolean connected=enabled();
+        if ((!connected && !(durable && localEditing())) || WearOutbox.read(this)!=null) return;
         try {
             JSONObject target = new JSONObject(), current = state.optJSONObject("current"), timer = state.optJSONObject("timer");
             boolean edit = "edit-set".equals(action);
@@ -173,38 +292,122 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
                 }
             }
             if (capture != null && "heart-cancel".equals(action)) command.put("heartCapture", capture.optString("token"));
+            if(durable) { command.put("baseline",new JSONObject(current.toString())); command.put("sent",connected); }
+            if(durable && !WearOutbox.save(this,command)) { pending=""; if(draft!=null)draft.pending=false; feedback=R.string.unconfirmed; render(); return; }
+            if(!connected) { pending=""; pendingEdit=false; draft=null; feedback=R.string.offline_saved; render(); return; }
             feedback = R.string.waiting; render();
             String requestId = pending;
             Wearable.getMessageClient(this).sendMessage(phone, "/opengym/v1/command", command.toString().getBytes(StandardCharsets.UTF_8)).addOnFailureListener(e -> { if(requestId.equals(pending)) failedCommand(); });
         } catch (Exception ignored) { failedCommand(); }
     }
     private TextView text(String value, int size) {
-        TextView view = new TextView(this); view.setText(value); view.setTextSize(size); view.setGravity(Gravity.CENTER); view.setTextColor(Color.WHITE); view.setPadding(0, dp(4), 0, dp(4)); content.addView(view); return view;
+        TextView view = new TextView(this); WearStyle.typography(view, size >= 30 ? 400 : 500, true); view.setText(value); view.setTextSize(size); view.setGravity(Gravity.CENTER); view.setTextColor(Color.WHITE); view.setPadding(0, dp(4), 0, dp(4)); content.addView(view); return view;
     }
     private Button button(int label, Runnable action) {
-        Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setMinHeight(dp(48)); content.addView(b, new LinearLayout.LayoutParams(-1, -2)); b.setOnClickListener(v -> action.run()); return b;
+        Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setMinHeight(dp(48)); rounded(b, false); content.addView(b, new LinearLayout.LayoutParams(-1, -2)); b.setOnClickListener(v -> action.run()); return b;
     }
     private String targetIdentity(JSONObject current) {
         return current == null ? "" : current.optInt("entryIdx") + ":" + current.optInt("setIdx") + ":" + current.optString("side") + ":" + current.optString("name") + ":" + current.optString("setLabel");
     }
     private boolean validDraft(JSONObject current) {
-        return current != null && current.optBoolean("canEdit") && state.optBoolean("active") && draft != null && draft.matches(state.optString("contextToken"), targetIdentity(current), current.optString("loadUnit"), current.optDouble("r".equals(draft.field) ? "repsValue" : "loadValue", Double.NaN));
+        return current != null && current.optBoolean("canEdit") && state.optBoolean("active") && draft != null && draft.matches(state.optString("contextToken"), targetIdentity(current), current.optString("loadUnit"), current.optDouble("r".equals(draft.field) ? "repsValue" : "loadValue", Double.NaN), current.optDouble("loadStep", 1), current.optDouble("loadStart", Double.NaN));
     }
     private void openEditor(String field) {
         JSONObject current = state.optJSONObject("current");
-        if (!enabled() || current == null || !current.optBoolean("canEdit")) return;
+        if (!(enabled() || localEditing()) || current == null || !current.optBoolean("canEdit")) return;
         double value = current.optDouble("r".equals(field) ? "repsValue" : "loadValue", Double.NaN);
         if (!Double.isNaN(value) && (!Double.isFinite(value) || value < 0 || value > 10000 || ("r".equals(field) && value != Math.rint(value)))) return;
-        draft = new WearEditor(state.optString("contextToken"), targetIdentity(current), field, current.optString("loadUnit"), value, current.optDouble("loadStep", 1)); options = false; render();
+        draft = new WearEditor(state.optString("contextToken"), targetIdentity(current), field, current.optString("loadUnit"), value, current.optDouble("loadStep", 1), current.optDouble("loadStart", Double.NaN)); options = false; render();
     }
     private String displayNumber(double value) {
         char separator = java.text.DecimalFormatSymbols.getInstance(getResources().getConfiguration().getLocales().get(0)).getDecimalSeparator();
         return WearEditor.number(value).replace('.', separator);
     }
     private void rounded(Button b, boolean yellow) {
-        android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
-        shape.setColor(yellow ? Color.rgb(255, 196, 0) : Color.rgb(31, 33, 29)); shape.setCornerRadius(dp(28));
-        b.setBackground(shape); b.setTextColor(yellow ? Color.BLACK : Color.WHITE); b.setPadding(dp(6), 0, dp(6), 0);
+        palette(b, yellow ? WearStyle.PRIMARY : WearStyle.SURFACE, yellow ? WearStyle.ON_PRIMARY : WearStyle.INK);
+    }
+    private void palette(Button b, int fill, int ink) {
+        WearStyle.surface(b, fill, ink, false);
+    }
+    private void action(Button b, int label, String icon, boolean green) {
+        if (b == null) return;
+        boolean waiting = !pending.isEmpty() && (b == complete || b == confirmEdit);
+        b.setText(getString(waiting ? R.string.sending_short : label));
+        WearStyle.icon(b, waiting ? null : symbol(icon));
+        b.setContentDescription(getString(waiting ? R.string.waiting : label));
+        palette(b, WearStyle.PRIMARY, WearStyle.ON_PRIMARY);
+    }
+    private String symbol(String icon) {
+        return switch (icon) {
+            case "▶" -> "play";
+            case "Ⅱ" -> "pause";
+            case "✓" -> "check";
+            case "♥" -> "heart";
+            case "◷" -> "clock";
+            case "🔔" -> "bell";
+            case "↻" -> "refresh";
+            case "×" -> "close";
+            default -> null;
+        };
+    }
+    private int connectionStatus() {
+        if (phone.isEmpty()) return R.string.disconnected;
+        if (!WearProtocol.canControl(true, confirmedAt, SystemClock.elapsedRealtime(), false)) return R.string.phone_unresponsive;
+        return state.optBoolean("active") ? R.string.connected : R.string.open_phone;
+    }
+    private boolean isResting() {
+        JSONObject capture = state.optJSONObject("heartCapture"), timer = state.optJSONObject("timer");
+        if (capture != null && "effort".equals(capture.optString("phase"))) return false;
+        return state.optBoolean("active") && timer != null && !timer.optBoolean("ready") &&
+            (timer.optBoolean("paused") ? timer.optLong("leftMs") > 0 : timer.optLong("endsAt") > System.currentTimeMillis());
+    }
+    private void indicator(FrameLayout host) {
+        connectionIndicator = new View(this); connectionIndicator.setTag("connection-indicator");
+        android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
+        dot.setShape(android.graphics.drawable.GradientDrawable.OVAL); dot.setColor(Color.rgb(255, 59, 79));
+        connectionIndicator.setBackground(dot);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(8), dp(8), Gravity.TOP | Gravity.START);
+        params.leftMargin = dp(6); params.topMargin = dp(7); host.addView(connectionIndicator, params);
+    }
+    private void menuButton(LinearLayout header) {
+        FrameLayout host = new FrameLayout(this); header.addView(host, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        Button menu = new Button(this); menu.setText(""); menu.setTag("options-menu"); menu.setTextColor(WearStyle.INK); menu.setTextSize(16);
+        menu.setContentDescription(getString(R.string.options)); menu.setBackgroundColor(Color.TRANSPARENT); menu.setPadding(0,0,0,0); menu.setMinWidth(0); menu.setMinimumWidth(0);
+        host.addView(menu, new FrameLayout.LayoutParams(-1,-1));
+        WearStyle.icon(menu, "menu"); menu.setPadding(dp(15),0,dp(15),0);
+        menu.setOnClickListener(v -> { options = true; optionsPage = ""; render(); }); indicator(host);
+    }
+    private void pageHeader(String title, Runnable back) {
+        LinearLayout header = row();
+        Button button = rowButton(header, "", "back", back);
+        button.setContentDescription(getString(R.string.back)); button.setTextSize(28); button.setBackgroundColor(Color.TRANSPARENT);
+        button.setLayoutParams(new LinearLayout.LayoutParams(dp(48), dp(48)));
+        WearStyle.icon(button, "back"); button.setPadding(dp(15),0,dp(15),0);
+        TextView label = new TextView(this); WearStyle.typography(label,600,false); label.setText(title); label.setTextColor(Color.WHITE); label.setTextSize(16); label.setGravity(Gravity.CENTER);
+        header.addView(label, new LinearLayout.LayoutParams(0, dp(48), 1));
+        FrameLayout corner = new FrameLayout(this); header.addView(corner, new LinearLayout.LayoutParams(dp(48), dp(48))); indicator(corner);
+    }
+    private void editorHeader(String title) {
+        FrameLayout header = new FrameLayout(this); content.addView(header, new LinearLayout.LayoutParams(-1, dp(48)));
+        TextView label = new TextView(this); WearStyle.typography(label, 600, false); label.setText(title); label.setTextColor(Color.WHITE); label.setGravity(Gravity.CENTER); label.setMaxLines(1);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END); label.setAutoSizeTextTypeUniformWithConfiguration(11,16,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(-1,-1); labelParams.leftMargin = dp(18); labelParams.rightMargin = dp(18);
+        header.addView(label, labelParams);
+        FrameLayout corner = new FrameLayout(this); header.addView(corner, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END)); indicator(corner);
+        Button back = new Button(this); back.setTag("back"); back.setContentDescription(getString(R.string.back)); back.setTextColor(WearStyle.PRIMARY); back.setBackgroundColor(Color.TRANSPARENT);
+        WearStyle.icon(back,"back"); back.setPadding(dp(14),0,dp(14),0);
+        header.addView(back,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.START));
+        back.setOnClickListener(v -> { if (pending.isEmpty()) { draft=null; render(); } });
+    }
+    private Button option(int label, String icon, String tag, Runnable action) {
+        Button button = compactButton(getString(label), tag, action, false);
+        WearStyle.icon(button, "alerts-settings".equals(tag) ? "bell" : symbol(icon));
+        ((LinearLayout.LayoutParams)button.getLayoutParams()).topMargin = dp(1);
+        button.setContentDescription(getString(label));
+        if ("heart-settings".equals(tag) || "alerts-settings".equals(tag) || "reconnect".equals(tag)) {
+            button.setAutoSizeTextTypeUniformWithConfiguration(12,14,1,android.util.TypedValue.COMPLEX_UNIT_SP); WearStyle.chevron(button);
+        }
+        return button;
     }
     private Button compactButton(String label, String description, Runnable action, boolean yellow) {
         Button b = button(R.string.complete, action); b.setText(label); b.setTag(description); b.setContentDescription(label); b.setTextSize(16); rounded(b, yellow);
@@ -218,7 +421,7 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         TextView icon = new TextView(this) {
             private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
             @Override protected void onDraw(android.graphics.Canvas canvas) {
-                float size = dp(20), x = (getWidth()-size)/2f, y = (getHeight()-size)/2f;
+                float size = Math.min(dp(20), Math.min(getWidth(), getHeight())), x = (getWidth()-size)/2f, y = (getHeight()-size)/2f;
                 android.graphics.Path heart = new android.graphics.Path();
                 heart.moveTo(x+size*0.5f, y+size*0.9f);
                 heart.cubicTo(x+size*0.43f,y+size*0.83f,x+size*0.06f,y+size*0.57f,x+size*0.06f,y+size*0.3f);
@@ -230,86 +433,337 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         };
         icon.setTextColor(Color.GRAY); return icon;
     }
+    private void heartHeader(LinearLayout header) {
+        LinearLayout readings = new LinearLayout(this); readings.setOrientation(LinearLayout.VERTICAL); readings.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL); readings.setPadding(dp(8),0,0,0);
+        header.addView(readings, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        heartReading = heartIcon(); readings.addView(heartReading, new LinearLayout.LayoutParams(dp(24), dp(20)));
+        if (showingRest && !options && draft == null) heartReading.setTranslationY(dp(8));
+        heartBpm = new TextView(this); WearStyle.typography(heartBpm, 600, true); heartBpm.setTag("heart-bpm"); heartBpm.setTextSize(12); heartBpm.setGravity(Gravity.CENTER); heartBpm.setTextColor(WearStyle.INK);
+        readings.addView(heartBpm, new LinearLayout.LayoutParams(-1, dp(20)));
+    }
+    private void workoutHeader(JSONObject current) {
+        FrameLayout header = new FrameLayout(this); header.setTag("workout-header");
+        LinearLayout.LayoutParams headerParams = new LinearLayout.LayoutParams(-1, dp(showingRest ? 44 : 48));
+        headerParams.leftMargin = -dp(30); headerParams.rightMargin = -dp(30);
+        content.addView(header, headerParams);
+        TextView name = new WearArcTitle(this); WearStyle.typography(name, 700, false);
+        name.setTag("workout-title"); name.setText(current.optString("name")); name.setTextColor(WearStyle.INK);
+        name.setTextSize(18.5f); name.setIncludeFontPadding(false);
+        header.addView(name, new FrameLayout.LayoutParams(-1, dp(36)));
+        FrameLayout info = new FrameLayout(this);
+        FrameLayout.LayoutParams infoParams = new FrameLayout.LayoutParams(-1, dp(20)); infoParams.topMargin = dp(32); header.addView(info, infoParams);
+        phaseLabel = new TextView(this); WearStyle.typography(phaseLabel, 600, true); phaseLabel.setTextSize(12);
+        phaseLabel.setGravity(Gravity.CENTER);
+        phaseLabel.setTextColor(WearStyle.MUTED); phaseLabel.setMaxLines(1); phaseLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        FrameLayout.LayoutParams seriesParams = new FrameLayout.LayoutParams(-1,-1); seriesParams.leftMargin = dp(30); seriesParams.rightMargin = dp(30);
+        info.addView(phaseLabel,seriesParams);
+    }
+    private void workoutCounter() {
+        FrameLayout counter = new FrameLayout(this); counter.setTag("workout-counter");
+        LinearLayout.LayoutParams counterParams = new LinearLayout.LayoutParams(-1,dp(showingRest ? 48 : 56));
+        counterParams.leftMargin = -dp(30); counterParams.rightMargin = -dp(30);
+        content.addView(counter,counterParams);
+        rest = new TextView(this); rest.setText("00:00"); rest.setTextColor(WearStyle.INK);
+        rest.setIncludeFontPadding(false); rest.setGravity(Gravity.CENTER); WearStyle.typography(rest,700,true);
+        rest.setMaxLines(1);
+        if (showingRest) rest.setTextSize(40);
+        else rest.setAutoSizeTextTypeUniformWithConfiguration(36,46,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        FrameLayout.LayoutParams timerParams = new FrameLayout.LayoutParams(-1,showingRest ? dp(40) : -1); timerParams.leftMargin = dp(36); timerParams.rightMargin = dp(20);
+        counter.addView(rest,timerParams); if (showingRest) rest.setTranslationY(-dp(8));
+        FrameLayout host = new FrameLayout(this); counter.addView(host,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER_VERTICAL | Gravity.START));
+        heartReading = heartIcon(); heartReading.setTag("heart-status");
+        host.addView(heartReading,new FrameLayout.LayoutParams(dp(12),dp(12),Gravity.CENTER)); indicator(host);
+    }
+    private void pageDots() {
+        View dots = new View(this) {
+            private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(android.graphics.Canvas canvas) {
+                for (int i=0;i<2;i++) {
+                    paint.setColor((i == 1) == options ? WearStyle.PRIMARY : WearStyle.MUTED);
+                    paint.setAlpha((i == 1) == options ? 255 : 90);
+                    canvas.drawCircle(getWidth()/2f + dp(i == 0 ? -5 : 5),getHeight()/2f,dp(2),paint);
+                }
+            }
+        };
+        dots.setTag("page-indicator"); dots.setContentDescription(getString(R.string.options) + (options ? " 2/2" : " 1/2"));
+        content.addView(dots,new LinearLayout.LayoutParams(-1,dp(12)));
+    }
+    private void footerSpace() { content.addView(new View(this),new LinearLayout.LayoutParams(1,0,1)); }
+    private Button primaryButton(Runnable action) {
+        footerSpace();
+        if (draft == null) pageDots();
+        Button button = new WearStyle.EdgeButton(this); button.setTag("main-action"); button.setAllCaps(false); button.setTextSize(18);
+        button.setMaxLines(1); button.setIncludeFontPadding(false);
+        button.setAutoSizeTextTypeUniformWithConfiguration(18,20,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        button.setMinHeight(dp(48)); button.setMinWidth(0); button.setMinimumWidth(0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(164),dp(56));
+        content.addView(button,params); button.setTranslationX(-dp(.5f)); rounded(button,true); button.setOnClickListener(v -> action.run()); return button;
+    }
+    private boolean freshHeart() {
+        return WearEditor.heartFresh(WearHeartService.running, WearHeartService.latestBpm, WearHeartService.latestElapsed, SystemClock.elapsedRealtime());
+    }
+    private void startSet() {
+        if (!enabled()) return;
+        if (!WearHeartService.running) { toggleHeart(); return; }
+        if (freshHeart()) send("heart-start");
+    }
     private LinearLayout row() { LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER); content.addView(row, new LinearLayout.LayoutParams(-1, dp(48))); return row; }
+    private void enterAmbient() {
+        ambient = true; confirmedAt = 0; handler.removeCallbacks(tick); stopHeartPulse();
+        updateWorkoutScreen();
+        render();
+    }
+    private void exitAmbient() {
+        ambient = false; confirmedAt = 0; render();
+        if (foreground) { sync(); handler.removeCallbacks(tick); handler.post(tick); }
+    }
+    private void refreshAmbient() { if (ambient) render(); }
+    private TextView ambientText(String value, int size, String tag) {
+        TextView label = text(value, size); label.setTag(tag);
+        label.setTextColor(lowBitAmbient ? Color.WHITE : Color.rgb(170,170,170));
+        label.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL));
+        if (lowBitAmbient) label.setPaintFlags(label.getPaintFlags() & ~android.graphics.Paint.ANTI_ALIAS_FLAG);
+        return label;
+    }
+    private String clockTime(long time) {
+        return android.text.format.DateFormat.getTimeFormat(this).format(new java.util.Date(time));
+    }
+    private void renderAmbient() {
+        content.setTag("ambient-screen");
+        ambientText(clockTime(System.currentTimeMillis()), 17, "ambient-clock").setPadding(0,dp(10),0,dp(10));
+        JSONObject current = state.optJSONObject("current"), timer = state.optJSONObject("timer"), capture = state.optJSONObject("heartCapture");
+        if (!state.optBoolean("active") || current == null) {
+            ambientText("OpenGym",14,"ambient-name");
+            ambientText(getString(state.optBoolean("active") ? R.string.sets_finished : R.string.open_phone),13,"ambient-phase");
+            return;
+        }
+        TextView name = ambientText(current.optString("name"),16,"ambient-name"); name.setMaxLines(1); name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        ambientText(current.optString("setLabel"),12,"ambient-set");
+        boolean effort = capture != null && "effort".equals(capture.optString("phase"));
+        boolean paused = timer != null && timer.optBoolean("paused") && timer.optLong("leftMs") > 0;
+        boolean resting = !effort && timer != null && !timer.optBoolean("ready") && (paused || timer.optLong("endsAt") > System.currentTimeMillis());
+        ambientText(getString(effort ? R.string.phase_effort : resting ? (paused ? R.string.phase_paused : R.string.phase_rest) : R.string.phase_ready),16,"ambient-phase");
+        String detail = resting && !paused ? getString(R.string.ambient_rest_until, clockTime(timer.optLong("endsAt"))) : "";
+        ambientText(detail,13,"ambient-detail");
+        // No seconds/BPM or solid buttons: the system refreshes this display infrequently.
+        // Existing side padding keeps all text clear of system burn-in shifts.
+    }
     private void render() {
         if (content == null) return;
+        updateWorkoutScreen();
         applyWorkoutLanguage(); phaseLabel = null;
-        stopHeartPulse(); content.removeAllViews(); complete = pause = plus = skip = cancelHeart = enableHeart = null; heartReading = rest = connection = null;
+        stopHeartPulse(); content.removeAllViews(); complete = startSet = pause = plus = skip = cancelHeart = enableHeart = reconnect = manualComplete = null; heartReading = heartBpm = rest = null; connectionIndicator = null;
         repsChip = loadChip = confirmEdit = decrease = increase = cancelEdit = null;
+        content.setTag(null);
+        backdrop.motion(foreground && !ambient && android.animation.ValueAnimator.areAnimatorsEnabled());
+        if (ambient) scroll.setBackgroundColor(Color.BLACK); else scroll.setBackground(backdrop);
+        if (ambient) { renderAmbient(); return; }
         JSONObject current = state.optJSONObject("current");
         if (draft != null && !validDraft(current)) { draft = null; feedback = R.string.edit_changed; }
+        showingRest = !options && draft == null && isResting();
+        content.setClipToPadding(false); content.setClipChildren(false);
+        content.setPadding(dp(30), dp(4), dp(30), dp(4));
+        showingHeartRunning = WearHeartService.running;
         if (options) { renderOptions(); updateControls(); updateHeart(); return; }
         if (draft != null) {
-            TextView title = text(getString("r".equals(draft.field) ? R.string.edit_reps : R.string.edit_load), 16); title.setPadding(0,0,0,0);
-            TextView exercise = text(current.optString("name"), 14); exercise.setPadding(0,0,0,0); exercise.setMaxLines(1); exercise.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            TextView value = text(displayNumber(draft.value) + (draft.field.equals("w") ? " " + draft.unit : ""), 30); value.setPadding(0,dp(2),0,dp(2)); value.setTag("draft-value");
-            LinearLayout adjust = row(); decrease = rowButton(adjust, "−", "decrease", () -> { draft.adjust(-1); render(); }); increase = rowButton(adjust, "+", "increase", () -> { draft.adjust(1); render(); });
-            adjust.getLayoutParams().height = dp(56);
-            for (Button control : new Button[] {decrease, increase}) {
-                control.getLayoutParams().height = dp(56);
-                control.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE);
-                control.setTextSize(28);
-                android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
-                background.setColor(Color.rgb(43, 46, 42)); background.setCornerRadius(dp(28));
-                background.setStroke(dp(1), Color.rgb(74, 78, 72)); control.setBackground(background);
-            }
-            LinearLayout actions = row();
-            ((LinearLayout.LayoutParams)actions.getLayoutParams()).topMargin = dp(8);
-            confirmEdit = rowButton(actions, getString(R.string.confirm_edit), "confirm-edit", () -> send("edit-set")); rounded(confirmEdit,true); confirmEdit.setContentDescription(getString(R.string.confirm_edit));
-            cancelEdit = rowButton(actions, getString(android.R.string.cancel), "cancel-edit", () -> { draft = null; render(); }); cancelEdit.setContentDescription(getString(android.R.string.cancel));
+            editorHeader(getString("r".equals(draft.field) ? R.string.edit_reps : R.string.edit_load));
+            TextView subtitle = text(current.optString("name"),12); subtitle.setPadding(0,0,0,0); subtitle.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(16)));
+            LinearLayout adjust = row();
+            decrease = rowButton(adjust, "−", "decrease", () -> { draft.adjust(-1); render(); });
+            decrease.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));
+            TextView value = new TextView(this); WearStyle.typography(value,700,true);
+            value.setText(displayNumber(draft.value) + (draft.field.equals("w") ? " " + draft.unit : ""));
+            value.setTextColor(WearStyle.INK); value.setGravity(Gravity.CENTER); value.setTag("draft-value");
+            value.setMaxLines(1); value.setAutoSizeTextTypeUniformWithConfiguration(14,28,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+            adjust.addView(value,new LinearLayout.LayoutParams(0,dp(48),1));
+            increase = rowButton(adjust, "+", "increase", () -> { draft.adjust(1); render(); });
+            increase.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));
+            for (Button control : new Button[] {decrease,increase}) { rounded(control,true); control.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE); control.setTextSize(28); }
+            if ("w".equals(draft.field)) arrangeLoadEditor(adjust,value);
+            cancelEdit = compactButton(getString(R.string.cancel_edit),"cancel-edit", () -> { draft = null; render(); },false);
+            cancelEdit.setLayoutParams(new LinearLayout.LayoutParams(dp(100),dp(48))); cancelEdit.setAutoSizeTextTypeUniformWithConfiguration(12,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+            confirmEdit = primaryButton(() -> send("edit-set")); confirmEdit.setTag("confirm-edit");
         } else {
             if (state.optBoolean("active") && current != null) {
-                LinearLayout header = row();
-                heartReading = heartIcon(); header.addView(heartReading, new LinearLayout.LayoutParams(dp(32), dp(48)));
-                LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL); labels.setGravity(Gravity.CENTER);
-                header.addView(labels, new LinearLayout.LayoutParams(0,dp(48),1));
-                TextView name = new TextView(this); name.setText(current.optString("name")); name.setTextSize(16); name.setTextColor(Color.WHITE); name.setGravity(Gravity.CENTER); name.setMaxLines(1); name.setEllipsize(android.text.TextUtils.TruncateAt.END); labels.addView(name,new LinearLayout.LayoutParams(-1,-2));
-                phaseLabel = new TextView(this); phaseLabel.setTextSize(11); phaseLabel.setTextColor(Color.LTGRAY); phaseLabel.setGravity(Gravity.CENTER); phaseLabel.setMaxLines(1); phaseLabel.setAutoSizeTextTypeUniformWithConfiguration(9,11,1,android.util.TypedValue.COMPLEX_UNIT_SP); labels.addView(phaseLabel,new LinearLayout.LayoutParams(-1,-2));
-                Button menu = new Button(this); menu.setText("•••"); menu.setTextColor(Color.WHITE); menu.setTextSize(16); menu.setContentDescription(getString(R.string.options)); menu.setBackgroundColor(Color.TRANSPARENT); menu.setPadding(0,0,0,0); menu.setMinWidth(0); menu.setMinimumWidth(0); header.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));menu.setOnClickListener(v -> { options=true;render(); });
-                rest = text("00:00", 32); rest.setPadding(0, 0, 0, 0); rest.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
-                LinearLayout chips = row();
+                workoutHeader(current);
+                workoutCounter();
+                LinearLayout chips = row(); chips.setTag("workout-metrics");
+                ((LinearLayout.LayoutParams)chips.getLayoutParams()).topMargin = dp(4);
                 double reps = current.optDouble("repsValue", Double.NaN), load = current.optDouble("loadValue", Double.NaN);
                 repsChip = rowButton(chips, Double.isFinite(reps) ? displayNumber(reps) + " " + getString(R.string.reps_short) : "— " + getString(R.string.reps_short), "edit-reps", () -> openEditor("r"));
                 loadChip = rowButton(chips, Double.isFinite(load) ? displayNumber(load) + " " + current.optString("loadUnit") : "— " + current.optString("loadUnit"), "edit-load", () -> openEditor("w"));
-                if (current.optBoolean("canComplete")) complete = compactButton(getString(R.string.complete), "main-action", () -> {
-                    JSONObject mark = state.optJSONObject("heartCapture"); send(WearHeartService.running && (mark == null || !"effort".equals(mark.optString("phase"))) ? "heart-start" : "complete");
-                }, true); else text(getString(R.string.use_phone), 12);
-                if(complete!=null)((LinearLayout.LayoutParams)complete.getLayoutParams()).width=dp(148);
-            } else text(getString(state.optBoolean("active") ? R.string.sets_finished : R.string.open_phone), 17);
-            if(heartReading == null) { LinearLayout footer = row();
-            heartReading = heartIcon(); footer.addView(heartReading, new LinearLayout.LayoutParams(dp(48), dp(48)));
-            rowButton(footer, "•••", getString(R.string.options), () -> { options = true; render(); }); }
+                metricText(repsChip); metricText(loadChip);
+                if (showingRest) {
+                    content.removeView(chips);
+                    FrameLayout counter = content.findViewWithTag("workout-counter");
+                    counter.addView(chips,new FrameLayout.LayoutParams(-1,dp(48),Gravity.BOTTOM));
+                    for (Button chip : new Button[] {repsChip,loadChip}) {
+                        chip.setBackgroundColor(Color.TRANSPARENT); chip.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+                        chip.setPadding(0,0,0,0); chip.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE); chip.setTextSize(16); chip.setIncludeFontPadding(false);
+                    }
+                    TextView times = new TextView(this); times.setText("×"); times.setTextColor(WearStyle.INK); times.setTextSize(12); times.setGravity(Gravity.CENTER); times.setIncludeFontPadding(false);
+                    counter.addView(times,new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
+                    LinearLayout actions = row(); actions.setTag("rest-actions"); ((LinearLayout.LayoutParams)actions.getLayoutParams()).topMargin = dp(0);
+                    plus = rowButton(actions, "+15 s", "rest-plus", () -> send("plus15"));
+                    skip = rowButton(actions, "» " + getString(R.string.skip_short), "rest-skip", () -> send("skip"));
+                    pause = primaryButton(() -> { JSONObject timer = state.optJSONObject("timer"); if (timer != null) send(timer.optBoolean("paused") ? "resume" : "pause"); });
+                    pause.setTag("rest-pause");
+                } else if (current.optBoolean("canComplete")) {
+                    complete = primaryButton(() -> {
+                        JSONObject mark = state.optJSONObject("heartCapture");
+                        if (mark == null || !"effort".equals(mark.optString("phase"))) startSet(); else send("complete");
+                    });
+                } else text(getString(R.string.use_phone), 12);
+            } else {
+                LinearLayout header = row(); heartHeader(header);
+                TextView title = new TextView(this); WearStyle.typography(title, 600, false); title.setText("OpenGym"); title.setTextColor(Color.WHITE); title.setTextSize(16); title.setGravity(Gravity.CENTER);
+                header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1)); menuButton(header);
+                TextView message = text(getString(state.optBoolean("active") ? R.string.sets_finished : R.string.open_phone), 17);
+                message.setPadding(dp(16), dp(16), dp(16), dp(8));
+            }
+            if (state.optBoolean("active") && current != null && (complete != null || pause != null)) arrangeWorkout();
             if (feedback == R.string.unconfirmed || feedback == R.string.edit_changed) text(getString(feedback), 11);
+        }
+        if(WearOutbox.read(this)!=null && phaseLabel!=null) {
+            phaseLabel.setText(getString(WearOutbox.conflicted(this)?R.string.offline_conflict:R.string.offline_saved));
+            phaseLabel.setTextSize(10);
         }
         updateTimer(); updateControls(); updateHeart();
     }
+    private void arrangeLoadEditor(LinearLayout adjust,TextView value) {
+        int index=content.indexOfChild(adjust);
+        adjust.removeAllViews(); content.removeView(adjust);
+        FrameLayout panel=new FrameLayout(this) {
+            @Override protected void onMeasure(int widthSpec,int heightSpec) {
+                int width=View.MeasureSpec.getSize(widthSpec);
+                // The approved editor spreads the controls to expose a wider central value.
+                boolean compact=width<dp(160);
+                float left=compact ? 24 : 8, right=compact ? width/getResources().getDisplayMetrics().density-24 : 155.5f;
+                FrameLayout.LayoutParams minus=new FrameLayout.LayoutParams(dp(48),dp(48)); minus.leftMargin=dp(left-24); decrease.setLayoutParams(minus);
+                FrameLayout.LayoutParams plus=new FrameLayout.LayoutParams(dp(48),dp(48)); plus.leftMargin=dp(right-24); increase.setLayoutParams(plus);
+                int gapLeft=dp(left+24),gapRight=dp(right-24);
+                FrameLayout.LayoutParams label=new FrameLayout.LayoutParams(Math.max(dp(36),gapRight-gapLeft),dp(48)); label.leftMargin=compact ? gapLeft : dp(82.5f)-label.width/2; value.setLayoutParams(label);
+                decrease.setTranslationY(compact ? 0 : -dp(2)); increase.setTranslationY(compact ? 0 : -dp(2));
+                super.onMeasure(widthSpec,heightSpec);
+            }
+        };
+        panel.setClipChildren(false); panel.setClipToPadding(false);
+        for(View view:new View[] {decrease,value,increase}) panel.addView(view);
+        content.addView(panel,index,new LinearLayout.LayoutParams(-1,dp(48)));
+    }
+    private void metricText(Button button) {
+        String label = button.getText().toString(); int split = label.indexOf(' ');
+        if (split < 0) return;
+        android.text.SpannableString styled = new android.text.SpannableString(label);
+        button.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE);
+        button.setTextSize(18);
+        styled.setSpan(new android.text.style.AbsoluteSizeSpan(11,true),split,label.length(),0);
+        styled.setSpan(new android.text.style.TypefaceSpan(android.graphics.Typeface.create(getResources().getFont(R.font.nunito),500,false)),split,label.length(),0);
+        button.setText(styled);
+    }
+    private void arrangeWorkout() {
+        View header = content.findViewWithTag("workout-header"), counter = content.findViewWithTag("workout-counter");
+        View metrics = showingRest ? content.findViewWithTag("rest-actions") : content.findViewWithTag("workout-metrics");
+        View dots = content.findViewWithTag("page-indicator"), primary = showingRest ? pause : complete;
+        ((android.view.ViewGroup)rest.getParent()).removeView(rest);
+        ((android.view.ViewGroup)heartReading.getParent()).removeView(heartReading);
+        ((android.view.ViewGroup)phaseLabel.getParent()).removeView(phaseLabel);
+        FrameLayout panel = new FrameLayout(this) {
+            @Override protected void onMeasure(int widthSpec,int heightSpec) {
+                int w = View.MeasureSpec.getSize(widthSpec), h = View.MeasureSpec.getSize(heightSpec);
+                boolean compact = h < dp(200);
+                position(header,-dp(30),compact ? 0 : dp(3.5f),w+dp(60),compact ? dp(44) : dp(52));
+                position(phaseLabel,-dp(30),compact ? dp(32) : dp(43),w+dp(60),dp(20));
+                int footer = h-dp(56), metricsTop = footer-dp(48), counterTop = compact ? dp(44) : Math.round(h*.34f);
+                int counterHeight = showingRest ? metricsTop-counterTop : Math.min(dp(56),metricsTop+dp(8)-counterTop);
+                position(counter,-dp(30),counterTop,w+dp(60),counterHeight);
+                rest.setAutoSizeTextTypeUniformWithConfiguration(24,compact ? 32 : 40,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+                rest.setTranslationY(0);
+                if (compact) {
+                    int clockHeight=showingRest ? counterHeight-dp(12) : counterHeight;
+                    position(rest,-dp(30),counterTop,w+dp(60),clockHeight);
+                    position(heartReading,-dp(12),counterTop+dp(18),dp(12),dp(12));
+                } else {
+                    // Coordinates match the user's 225 dp preview export.
+                    position(rest,-dp(19.5f),dp((showingRest ? 98.5f : 105.5f)-4-28),dp(201),dp(56));
+                    position(heartReading,dp(76),dp(30),dp(12),dp(12));
+                }
+                position(metrics,0,metricsTop,w,dp(48));
+                position(dots,0,footer-dp(6),w,dp(12));
+                int primaryWidth=Math.min(dp(164),w+dp(12));
+                position(primary,(w-primaryWidth)/2,footer,primaryWidth,dp(56));
+                super.onMeasure(widthSpec,heightSpec);
+            }
+            private void position(View view,int left,int top,int width,int height) {
+                FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width,Math.max(0,height)); params.leftMargin=left; params.topMargin=top; view.setLayoutParams(params);
+            }
+        };
+        panel.setTag("workout-panel"); panel.setClipChildren(false); panel.setClipToPadding(false);
+        for (View view : new View[] {header,counter,metrics,dots,primary,phaseLabel,rest,heartReading}) { content.removeView(view); panel.addView(view); }
+        content.removeAllViews(); content.addView(panel,new LinearLayout.LayoutParams(-1,0,1));
+    }
     private void renderOptions() {
-        compactButton(getString(R.string.back), "back", () -> { options = false; render(); }, false);
-        connection = text("", 13);
-        heartReading = text("", 14);
-        enableHeart = button(WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, this::toggleHeart);
-        JSONObject capture = state.optJSONObject("heartCapture");
-        if (capture != null && "effort".equals(capture.optString("phase"))) cancelHeart = button(R.string.heart_cancel_set, () -> send("heart-cancel"));
-        JSONObject timer = state.optJSONObject("timer");
-        if (timer != null && !timer.optBoolean("ready")) {
-            rest = text("", 19);
-            pause = button(timer.optBoolean("paused") ? R.string.resume : R.string.pause, () -> send(timer.optBoolean("paused") ? "resume" : "pause"));
-            plus = button(R.string.rest, () -> send("plus15")); plus.setText("+15 s"); skip = button(R.string.skip, () -> send("skip"));
+        pageHeader(getString("heart".equals(optionsPage) ? R.string.heart_settings : "alerts".equals(optionsPage) ? R.string.alert_settings : R.string.options), () -> {
+            if (optionsPage.isEmpty()) options = false; else optionsPage = "";
+            render();
+        });
+        if ("heart".equals(optionsPage)) {
+            heartReading = text("", 14);
+            enableHeart = option(WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", "toggle-heart", this::toggleHeart);
+            JSONObject current = state.optJSONObject("current");
+            JSONObject mark = state.optJSONObject("heartCapture");
+            if (state.optBoolean("active") && current != null && current.optBoolean("canComplete") && (mark == null || !"effort".equals(mark.optString("phase")))) {
+                manualComplete = option(R.string.complete_without_heart, "✓", "complete-no-heart", () -> send("complete"));
+            }
+            JSONObject capture = state.optJSONObject("heartCapture");
+            if (capture != null && "effort".equals(capture.optString("phase"))) cancelHeart = option(R.string.heart_cancel_set, "×", "cancel-heart", () -> send("heart-cancel"));
+        } else if ("alerts".equals(optionsPage)) {
+            if (WearTimer.canSchedule(this)) text("✓ " + getString(R.string.precise_alerts), 14);
+            else option(R.string.precise_alerts, "◷", "alarm-permission", () -> { try { startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { } });
+            if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) text("✓ " + getString(R.string.rest_notifications), 14);
+            else option(R.string.rest_notifications, "🔔", "notification-permission", () -> requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 1));
+        } else {
+            option(R.string.heart_settings, "♥", "heart-settings", () -> { optionsPage = "heart"; render(); });
+            if(WearOutbox.read(this)!=null) option(R.string.offline_review,"◷","offline-review",() -> {
+                JSONObject queued=WearOutbox.read(this);
+                JSONObject base=queued==null?null:queued.optJSONObject("baseline");
+                String detail=base==null?"":base.optString("name")+" · "+base.optString("setLabel");
+                if(queued!=null) detail+="\n"+("edit-set".equals(queued.optString("action")) ? displayNumber(queued.optDouble("value",0))+" "+("w".equals(queued.optString("field"))?queued.optString("unit"):getString(R.string.reps_short)) : getString(R.string.complete));
+                new AlertDialog.Builder(this).setTitle(WearOutbox.conflicted(this)?R.string.offline_conflict:R.string.offline_saved)
+                    .setMessage(getString(R.string.offline_explanation)+"\n"+detail)
+                    .setPositiveButton(android.R.string.ok,null)
+                    .setNeutralButton(R.string.offline_discard,(dialog,which)->new AlertDialog.Builder(this).setMessage(R.string.offline_discard)
+                        .setNegativeButton(android.R.string.cancel,null).setPositiveButton(android.R.string.ok,(d,w)->{WearOutbox.clear(this);render();sync();}).show()).show();
+            });
+            option(R.string.alert_settings, "◷", "alerts-settings", () -> { optionsPage = "alerts"; render(); });
+            reconnect = option(R.string.refresh, "↻", "reconnect", this::sync);
+            footerSpace(); pageDots();
         }
-        if (!WearTimer.canSchedule(this)) button(R.string.alarm_permission, () -> { try { startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { } });
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) button(R.string.notification_permission, () -> requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 1));
-        button(R.string.refresh, this::sync); updateTimer();
     }
     private void updateControls() {
-        JSONObject capture = state.optJSONObject("heartCapture");
-        boolean effort = foreground && state.optBoolean("active") && capture != null && "effort".equals(capture.optString("phase"));
-        if (effort) getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        boolean enabled = enabled() && state.optBoolean("active");
-        if(connection != null) connection.setText(feedback != 0 ? feedback : enabled ? R.string.connected : R.string.disconnected);
-        if (complete != null) complete.setEnabled(enabled);
+        updateWorkoutScreen();
+        if (ambient) return;
+        boolean enabled = enabled() && state.optBoolean("active") && WearOutbox.read(this)==null;
+        if(connectionIndicator != null) {
+            int status = connectionStatus();
+            connectionIndicator.setVisibility(status == R.string.disconnected || status == R.string.phone_unresponsive ? View.VISIBLE : View.INVISIBLE);
+            connectionIndicator.setContentDescription(getString(status));
+        }
+        if (reconnect != null) {
+            int status = connectionStatus();
+            reconnect.setVisibility(View.VISIBLE);
+        }
+        JSONObject captureForAction=state.optJSONObject("heartCapture");
+        if (complete != null) complete.setEnabled(enabled || (localEditing() && captureForAction!=null && "effort".equals(captureForAction.optString("phase"))));
+        if (startSet != null) {
+            action(startSet, R.string.heart_start_set, "▶", true);
+            startSet.setText(showingRest ? "" : getString(R.string.heart_start_short));
+            if (!showingRest) startSet.setPadding(dp(4),0,dp(4),0);
+            startSet.setEnabled(enabled && (!WearHeartService.running || freshHeart()));
+        }
         JSONObject current = state.optJSONObject("current");
-        boolean editable = enabled && current != null && current.optBoolean("canEdit");
+        if (manualComplete != null) manualComplete.setEnabled((enabled || localEditing()) && current != null && current.optBoolean("canComplete"));
+        boolean editable = (enabled || localEditing()) && current != null && current.optBoolean("canEdit");
         if (repsChip != null) repsChip.setEnabled(editable);
         if (loadChip != null) loadChip.setEnabled(editable);
         if (confirmEdit != null) confirmEdit.setEnabled(editable && validDraft(current) && !draft.pending);
@@ -321,23 +775,46 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         if (skip != null) skip.setEnabled(enabled);
         if (cancelHeart != null) cancelHeart.setEnabled(enabled);
         if (enableHeart != null) enableHeart.setEnabled(WearHeartService.running || enabled);
+        JSONObject timer = state.optJSONObject("timer");
+        boolean paused = timer != null && timer.optBoolean("paused");
+        if (pause == rest && pause != null) { palette(pause, paused ? WearStyle.PRIMARY : WearStyle.REST, WearStyle.ON_PRIMARY); WearStyle.typography(pause, 400, true); WearStyle.icon(pause, pending.isEmpty() ? (paused ? "play" : "pause") : null); pause.setContentDescription(getString(!pending.isEmpty() ? R.string.waiting : paused ? R.string.resume : R.string.pause)); }
+        else action(pause, paused ? R.string.resume : R.string.pause, paused ? "▶" : "Ⅱ", true);
+        if (plus != null) { plus.setText("+15 s"); palette(plus, WearStyle.SURFACE, WearStyle.INK); WearStyle.icon(plus, "clock"); }
+        if (skip != null) { skip.setText(getString(R.string.skip_short)); WearStyle.icon(skip, "skip"); skip.setContentDescription(getString(R.string.skip)); }
+        if (showingRest && startSet != null) {
+            plus.setText("+15 s"); WearStyle.icon(plus, null);
+            skip.setText("");
+        }
+        action(confirmEdit, R.string.confirm_edit, "✓", true);
+        if (cancelHeart != null) { cancelHeart.setText(getString(R.string.heart_cancel_set)); WearStyle.icon(cancelHeart, "close"); palette(cancelHeart, Color.rgb(74, 42, 36), WearStyle.INK); }
     }
     private void toggleHeart() {
         if (WearHeartService.running) {
+            heartPreference().edit().remove("context").apply();
             JSONObject capture = state.optJSONObject("heartCapture");
             if (enabled() && capture != null && "effort".equals(capture.optString("phase"))) send("heart-cancel");
             startService(new Intent(this, WearHeartService.class).setAction("stop")); render(); return;
         }
         if (!enabled()) return;
+        if (WearHeartResume.allowed(heartPreference().getString("context",""),state.optString("contextToken"),state.optBoolean("active"),checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,enabled())) { startHeart(); return; }
         new AlertDialog.Builder(this).setTitle(R.string.heart_title).setMessage(R.string.heart_consent)
             .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.heart_enable, (dialog, which) -> {
                 if (checkSelfPermission(Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[] { Manifest.permission.BODY_SENSORS }, 42);
                 else startHeart();
             }).show();
     }
+    private android.content.SharedPreferences heartPreference() { return getSharedPreferences("heart-session",MODE_PRIVATE); }
+    private void restoreHeartSession() {
+        if (!state.optBoolean("active")) { heartPreference().edit().remove("context").apply(); return; }
+        String current=state.optString("contextToken");
+        if (!foreground || ambient || WearHeartService.running || current.equals(heartRestoreAttempt)) return;
+        if (!WearHeartResume.allowed(heartPreference().getString("context",""),current,true,checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,enabled())) return;
+        heartRestoreAttempt=current; startHeart();
+    }
     private void startHeart() {
         if (!foreground || !state.optBoolean("active") || !enabled()) return;
-        try { startForegroundService(new Intent(this, WearHeartService.class).setAction("start")); } catch (Exception e) { WearHeartService.status = R.string.heart_unavailable; }
+        heartPreference().edit().putString("context",state.optString("contextToken")).apply();
+        try { startForegroundService(new Intent(this, WearHeartService.class).setAction("start").putExtra("contextToken",state.optString("contextToken"))); } catch (Exception e) { WearHeartService.status = R.string.heart_unavailable; }
         render();
     }
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
@@ -352,28 +829,43 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         if (heartReading != null) heartReading.setAlpha(1f);
     }
     private void updateHeart() {
-        if (heartReading == null) return;
+        if (heartReading == null || ambient) return;
         boolean fresh = foreground && WearEditor.heartFresh(WearHeartService.running, WearHeartService.latestBpm, WearHeartService.latestElapsed, SystemClock.elapsedRealtime());
+        if (heartBpm != null) {
+            heartBpm.setText(fresh ? Long.toString(Math.round(WearHeartService.latestBpm)) : "—");
+            heartBpm.setContentDescription(fresh ? Math.round(WearHeartService.latestBpm) + " bpm" : getString(WearHeartService.status));
+        }
         int status = WearHeartStore.get(this).storageFailed || !WearHeartStore.get(this).canStart() ? R.string.heart_queue_full : (fresh ? R.string.heart_receiving : WearHeartService.status);
         heartReading.setContentDescription(getString(status));
-        if (options) heartReading.setText(status);
+        if (options) heartReading.setText(fresh ? Math.round(WearHeartService.latestBpm) + " bpm" : getString(status));
         else {
             heartReading.setTextColor(fresh ? Color.rgb(255, 59, 79) : Color.GRAY);
             if (fresh && heartPulse == null) { heartPulse = android.animation.ObjectAnimator.ofFloat(heartReading, "alpha", 1f, 0.35f, 1f); heartPulse.setDuration(1200); heartPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE); heartPulse.start(); }
             if (!fresh) stopHeartPulse();
         }
-        if (enableHeart != null) { enableHeart.setText(WearHeartService.running ? R.string.heart_disable : R.string.heart_enable); enableHeart.setEnabled(WearHeartService.running || enabled()); }
+        if (enableHeart != null) { action(enableHeart, WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", !WearHeartService.running); enableHeart.setEnabled(WearHeartService.running || enabled()); }
         JSONObject mark = state.optJSONObject("heartCapture");
-        if (complete != null) complete.setText(WearHeartService.running && (mark == null || !"effort".equals(mark.optString("phase"))) ? R.string.heart_start_set : R.string.complete);
+        boolean start = mark == null || !"effort".equals(mark.optString("phase"));
+        action(complete, start ? R.string.heart_start_set : R.string.complete, start ? "▶" : "✓", start);
+        if (complete != null && start && pending.isEmpty()) complete.setText(getString(R.string.heart_start_short));
+        if (complete != null && startSet != null && !showingRest) {
+            complete.setText(getString(R.string.complete_short)); complete.setPadding(dp(4),0,dp(4),0);
+        }
+        if (complete != null && start && WearHeartService.running && !fresh) {
+            complete.setText(getString(R.string.heart_wait_short));
+            complete.setContentDescription(getString(WearHeartService.status));
+            complete.setEnabled(false);
+        }
     }
     private void updateTimer() {
-        if (rest == null) return;
+        if (rest == null || ambient) return;
         JSONObject timer = state.optJSONObject("timer"), capture = state.optJSONObject("heartCapture");
         if (phaseLabel != null) {
             boolean effort = capture != null && "effort".equals(capture.optString("phase"));
             boolean resting = timer != null && !timer.optBoolean("ready") && (timer.optBoolean("paused") ? timer.optLong("leftMs") > 0 : timer.optLong("endsAt") > System.currentTimeMillis());
             int label = effort ? R.string.phase_effort : resting ? (timer.optBoolean("paused") ? R.string.phase_paused : R.string.phase_rest) : R.string.phase_ready;
-            phaseLabel.setText(getString(label) + " · " + state.optJSONObject("current").optString("setLabel"));
+            phaseLabel.setText(WearOutbox.read(this)!=null ? getString(WearOutbox.conflicted(this)?R.string.offline_conflict:R.string.offline_saved) : state.optJSONObject("current").optString("setLabel"));
+            phaseLabel.setContentDescription(getString(label) + " · " + state.optJSONObject("current").optString("setLabel"));
         }
         if (!options && capture != null && "effort".equals(capture.optString("phase"))) {
             WearHeartCapture local = WearHeartStore.get(this).current();
@@ -385,6 +877,7 @@ public class WearActivity extends Activity implements MessageClient.OnMessageRec
         long left = timer.optBoolean("paused") ? timer.optLong("leftMs") : WearTimer.prefs(this).getLong("endsAt", 0) - System.currentTimeMillis();
         long seconds = Math.max(0, (left + 999) / 1000);
         String label = timer.optBoolean("ready") || seconds == 0 ? getString(R.string.ready) : String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
+        if (rest == pause && !pending.isEmpty()) label = getString(R.string.sending_short);
         if (options && !enabled() && pending.isEmpty()) label += "\n" + getString(R.string.last_timer);
         if (options && !timer.optBoolean("paused") && !timer.optBoolean("ready") && !WearTimer.prefs(this).getBoolean("armed", false) && seconds > 0) label += "\n" + getString(R.string.alarm_unavailable);
         rest.setText(label);

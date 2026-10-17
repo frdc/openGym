@@ -4,6 +4,7 @@ import { modeOf, setLabel } from './history.js'
 import { exerciseNameText, fmtNum } from './format.js'
 import { modeForSet, setType } from './workout-model.js'
 import { weightIncrement } from './progression.js'
+import { weightProfileGrid } from './weight-profiles.js'
 
 export function projectWearState({ S = {}, timer, contextToken, revision = 0, ready = false, editingReady = false, now = Date.now() } = {}) {
   const active = !!(ready && contextToken && S.active && !S.active.editingWorkoutId)
@@ -22,6 +23,7 @@ export function projectWearState({ S = {}, timer, contextToken, revision = 0, re
       loadValue: Number.isFinite(set.w) ? set.w : null,
       loadUnit: S.unit === 'lb' ? 'lb' : 'kg',
       loadStep: weightIncrement({ ...entry.target, id: entry.id }, S.unit === 'lb' ? 'lb' : 'kg'),
+      ...(weightProfileGrid(entry.target, S.unit)?.start != null ? { loadStart: weightProfileGrid(entry.target, S.unit).start } : {}),
       repsStep: 1,
       canComplete: modeOf({ ...entry.target, id: entry.id }) === 'reps' && modeForSet(row, entry.target) === 'reps' && modeForSet(set, entry.target) === 'reps' && setType(row) === 'straight' && setType(set) === 'straight' && !row.drops?.length && !row.clusters?.length && !set.drops?.length && !set.clusters?.length,
     }

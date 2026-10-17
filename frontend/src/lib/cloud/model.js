@@ -29,7 +29,7 @@ const policies = {
   legacy: 'unitSet resetAt resetIds',
   removed: 'coach _rev _wid _wids _unstamped _prior',
 }
-export const FIELD_POLICY = Object.freeze(Object.fromEntries(Object.entries(policies).flatMap(([policy, fields]) => fields.split(' ').map(field => [field, policy]))))
+export const FIELD_POLICY = Object.freeze({ ...Object.fromEntries(Object.entries(policies).flatMap(([policy, fields]) => fields.split(' ').map(field => [field, policy]))), weightProfiles: 'sync' })
 
 export function makeOwner(projectId, uid = null) {
   if (typeof projectId !== 'string' || !projectId || (uid !== null && (typeof uid !== 'string' || !uid || uid.includes('/')))) throw new Error('invalid-owner')

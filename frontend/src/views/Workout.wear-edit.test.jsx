@@ -94,6 +94,13 @@ it('revalidates the current target, unit and modal readiness before changing the
   expect(() => edit('r', 9)).toThrow('unsupported-set')
   expect(active().entries[0].sets[0].r).toBe(5)
 })
+it('preserves Movement decimal loads on watch edits and cascades', async () => {
+  await renderWorkout([entry('0025', [false, false])])
+  for (const value of [25.4, 32.2, 39, 45.8]) {
+    await act(async () => { edit('w', value); await uiRuntime.fixture.flush() })
+    expect(active().entries[0].sets.map(s => s.w)).toEqual([value, value])
+  }
+})
 it('edits the current unilateral side and cascades only that side', async () => {
   await renderWorkout([entry('0025', [false, false], { sets: [makeSideSet({ r: 10, w: 20 }), makeSideSet({ r: 10, w: 20 })] })])
   const target = { entryIdx: 0, setIdx: 0, side: 'L' }

@@ -1,5 +1,17 @@
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "ประเภทน้ำหนัก",
+  "Manual increment": "เพิ่มด้วยตนเอง",
+  "Saved weight profiles": "โปรไฟล์น้ำหนักที่บันทึกไว้",
+  "New weight profile": "โปรไฟล์น้ำหนักใหม่",
+  "Edit weight profile": "แก้ไขโปรไฟล์น้ำหนัก",
+  "Profile name": "ชื่อโปรไฟล์",
+  "Weight units": "หน่วยน้ำหนัก",
+  "Initial load ({0})": "น้ำหนักเริ่มต้น ({0})",
+  "Load increment ({0})": "น้ำหนักที่เพิ่ม ({0})",
+  "Delete weight profile": "ลบโปรไฟล์น้ำหนัก",
+  "Profile limit reached.": "ถึงขีดจำกัดจำนวนโปรไฟล์แล้ว",
+  "Enter a name and a positive load increment.": "ป้อนชื่อและน้ำหนักที่เพิ่มมากกว่าศูนย์",
   "Set heart rate": "อัตราการเต้นหัวใจของเซ็ต",
   "Heart rate effort": "ออกแรง",
   "Heart rate recovery": "ฟื้นตัว",

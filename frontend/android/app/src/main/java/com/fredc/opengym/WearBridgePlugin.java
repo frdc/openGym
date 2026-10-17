@@ -33,12 +33,25 @@ public class WearBridgePlugin extends Plugin {
     }
     private static volatile WearBridgePlugin instance;
     @Override public void load() { instance = this; }
-    @Override protected void handleOnDestroy() { if (instance == this) instance = null; super.handleOnDestroy(); }
+    @Override protected void handleOnResume() {
+        JSObject state = latestState;
+        if (state != null) WearWorkoutService.update(getContext(), state.optBoolean("active"));
+    }
+    @Override protected void handleOnDestroy() {
+        if (instance == this) {
+            instance = null;
+            WearRequestLocks.clear();
+            WearWorkoutService.update(getContext(), false);
+        }
+        super.handleOnDestroy();
+    }
     static boolean deliver(String node, JSONObject command, String syncId) {
         WearBridgePlugin plugin = instance;
         if (plugin == null) return false;
+        String requestId = syncId == null ? command.optString("requestId") : syncId;
+        WearRequestLocks.hold(plugin.getContext(), node, requestId);
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (instance != plugin) return;
+            if (instance != plugin) { WearRequestLocks.finish(node, requestId); return; }
             JSObject event = new JSObject(); event.put("nodeId", node);
             if (syncId != null) event.put("syncId", syncId); else event.put("command", command);
             plugin.notifyListeners("command", event);
@@ -48,8 +61,10 @@ public class WearBridgePlugin extends Plugin {
     static boolean deliverHeart(String node, JSONObject packet) {
         WearBridgePlugin plugin = instance;
         if (plugin == null) return false;
+        String requestId = packet.optString("requestId");
+        WearRequestLocks.hold(plugin.getContext(), node, requestId);
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (instance != plugin) return;
+            if (instance != plugin) { WearRequestLocks.finish(node, requestId); return; }
             JSObject event = new JSObject(); event.put("nodeId", node); event.put("packet", packet);
             plugin.notifyListeners("heart", event);
         });
@@ -75,12 +90,14 @@ public class WearBridgePlugin extends Plugin {
         JSObject response = call.getObject("response"); String node = call.getString("nodeId");
         if (node == null || node.isEmpty() || response == null || response.optInt("v") != 1 || !WearHeartJournalGuard.validAck(response.optString("requestId"), response.optString("token"), response.optString("status"))) { call.reject("invalid acknowledgment"); return; }
         Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/heart-ack", response.toString().getBytes(StandardCharsets.UTF_8))
+            .addOnCompleteListener(task -> WearRequestLocks.finish(node, response.optString("requestId")))
             .addOnSuccessListener(id -> call.resolve()).addOnFailureListener(error -> call.reject("wear unavailable"));
     }
     @PluginMethod public void publish(PluginCall call) {
         JSObject state = call.getObject("state");
         if (state == null || state.toString().getBytes(StandardCharsets.UTF_8).length > 16384) { call.reject("invalid state"); return; }
         latestState = state;
+        WearWorkoutService.update(getContext(), state.optBoolean("active"));
         PutDataMapRequest request = PutDataMapRequest.create("/opengym/v1/state");
         request.getDataMap().putString("json", state.toString());
         request.getDataMap().putLong("sentAt", System.currentTimeMillis());
@@ -89,19 +106,26 @@ public class WearBridgePlugin extends Plugin {
                 String node = call.getString("nodeId"), syncId = call.getString("syncId");
                 JSObject packet = new JSObject(); packet.put("state", state); packet.put("syncId", syncId == null ? "" : syncId); packet.put("sentAt", System.currentTimeMillis());
                 byte[] bytes = packet.toString().getBytes(StandardCharsets.UTF_8);
-                if (node != null) Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/state", bytes);
+                if (node != null) Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/state", bytes)
+                    .addOnCompleteListener(task -> WearRequestLocks.finish(node, syncId));
                 call.resolve();
-            }).addOnFailureListener(error -> call.reject("wear unavailable"));
+            }).addOnFailureListener(error -> {
+                WearRequestLocks.finish(call.getString("nodeId"), call.getString("syncId"));
+                call.reject("wear unavailable");
+            });
     }
     @PluginMethod public void reply(PluginCall call) {
         JSObject response = call.getObject("response"); String node = call.getString("nodeId");
         if (response == null || node == null) { call.reject("invalid reply"); return; }
         Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/reply", response.toString().getBytes(StandardCharsets.UTF_8))
+            .addOnCompleteListener(task -> WearRequestLocks.finish(node, response.optString("requestId")))
             .addOnSuccessListener(id -> call.resolve()).addOnFailureListener(error -> call.reject("wear unavailable"));
     }
     @PluginMethod public void clear(PluginCall call) {
         JSObject state = new JSObject(); state.put("v", 1); state.put("active", false); state.put("contextToken", ""); state.put("revision", 0);
         latestState = state;
+        WearRequestLocks.clear();
+        WearWorkoutService.update(getContext(), false);
         PutDataMapRequest request = PutDataMapRequest.create("/opengym/v1/state"); request.getDataMap().putString("json", state.toString()); request.getDataMap().putLong("sentAt", System.currentTimeMillis());
         Wearable.getDataClient(getContext()).putDataItem(request.asPutDataRequest().setUrgent()).addOnCompleteListener(t -> call.resolve());
     }
