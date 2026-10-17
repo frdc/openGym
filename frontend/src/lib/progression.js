@@ -21,6 +21,7 @@ import { EXIDX, isAssisted, isLoadedEq } from './exercises.js'
 import { isWarmupRow, isSideSet, syncSideAggregate, makeSideSet } from './workout-model.js'
 import { normalizeRepRange } from './rep-range.js'
 import { isPyramid } from './pyramid.js'
+import { weightProfileGrid, stepProfileWeight, floorProfileWeight } from './weight-profiles.js'
 
 export const POLICIES = ['off', 'linear', 'greyskull', 'double', 'time']
 
@@ -90,6 +91,8 @@ export function defaultIncrement(exId, unit) {
 // Resolve the load step for reps-mode weight controls and progression. Timed exercises use
 // `inc` for seconds, so their optional weight column must not call this helper.
 export function weightIncrement(cfg, unit) {
+  const profile = weightProfileGrid(cfg, unit)
+  if (profile) return profile.step
   return cfg && cfg.inc > 0 ? cfg.inc : defaultIncrement(cfg?.id, unit)
 }
 export const DEFAULT_SEC_INCREMENT = 5
@@ -128,7 +131,9 @@ export function addStep(w, step, inc) {
   const next = v + step
   return Math.max(0, onGrid ? snapWeight(next, inc) : round1(next))
 }
-export function stepWeight(value, step, direction) {
+export function stepWeight(value, step, direction, cfg, unit) {
+  const profiled = stepProfileWeight(value, cfg, unit, direction)
+  if (profiled != null) return profiled
   const v = Number(value) || 0
   return addStep(v, direction * step, step)
 }
@@ -140,13 +145,14 @@ export function deloadTo(cur, step, factor = DELOAD_FACTOR) {
   return Math.max(step, next)
 }
 
-const positiveGridAround = (ideal, step, maxWeight, strictLower) => {
+const positiveGridAround = (ideal, step, maxWeight, strictLower, start = null) => {
   if (!(ideal > 0) || !(step > 0) || !(maxWeight > 0)) return []
-  const low = Math.floor(ideal / step) * step
-  const high = Math.ceil(ideal / step) * step
-  const values = [...new Set([low, high].map(v => snapWeight(v, step)))]
+  const origin = start ?? 0
+  const low = origin + Math.floor((ideal - origin) / step) * step
+  const high = origin + Math.ceil((ideal - origin) / step) * step
+  const values = [...new Set([low, high].map(v => start == null ? snapWeight(v, step) : Math.round(v * 100) / 100))]
   return values
-    .filter(v => v > 0 && v <= maxWeight + 1e-9 && (!strictLower || v < maxWeight - 1e-9))
+    .filter(v => v > 0 && v >= origin && v <= maxWeight + 1e-9 && (!strictLower || v < maxWeight - 1e-9))
     .sort((a, b) => a - b)
 }
 
@@ -155,7 +161,7 @@ const positiveGridAround = (ideal, step, maxWeight, strictLower) => {
  * hard constraints first, then closest estimated 1RM, fewer rep changes, and greater load. That
  * makes a grid tie predictable without hiding a product decision in arbitrary score weights.
  */
-export function selectDeloadCandidate({ currentWeight, targetWeight, targetReps, step, factor = DELOAD_FACTOR, reps, repsMin, perSide = false }) {
+export function selectDeloadCandidate({ currentWeight, targetWeight, targetReps, step, start = null, factor = DELOAD_FACTOR, reps, repsMin, perSide = false }) {
   const current = Number(currentWeight)
   const baseWeight = Number(targetWeight)
   const baseReps = Number(targetReps)
@@ -173,7 +179,7 @@ export function selectDeloadCandidate({ currentWeight, targetWeight, targetReps,
   repValues.forEach(candidateReps => {
     const ideal = target1RM / (1 + (perSide ? candidateReps / 2 : candidateReps) / 30)
     const allowCurrent = repsMin != null && candidateReps < upper
-    const grid = positiveGridAround(ideal, step, current, !allowCurrent)
+    const grid = positiveGridAround(ideal, step, current, !allowCurrent, start)
     if (allowCurrent && !grid.includes(current)) grid.push(current)
     grid.forEach(candidateWeight => {
       const epley = epley1RM(candidateWeight, perSide ? candidateReps / 2 : candidateReps)
@@ -396,8 +402,18 @@ export function nextPrescription(S, cfg, routine) {
   // reward for a clean session is less help, and a stall means taking more (issue #232). Only
   // the direction changes — the step, the grid and the stall counting are the same.
   const assisted = isAssisted(cfg)
-  const harder = (weight, step) => (assisted ? Math.max(0, addStep(weight, -step, inc)) : addStep(weight, step, inc))
-  const easier = weight => (assisted ? addStep(weight, inc, inc) : deloadTo(weight, inc))
+  const profileGrid = mode === 'reps' ? weightProfileGrid(cfg, unit) : null
+  const harder = (weight, step) => {
+    if (!profileGrid) return assisted ? Math.max(0, addStep(weight, -step, inc)) : addStep(weight, step, inc)
+    let next = weight
+    for (let n = 0; n < Math.max(1, Math.round(step / inc)); n++) next = stepProfileWeight(next, cfg, unit, assisted ? -1 : 1)
+    return next
+  }
+  const easier = weight => {
+    if (!profileGrid) return assisted ? addStep(weight, inc, inc) : deloadTo(weight, inc)
+    if (assisted) return stepProfileWeight(weight, cfg, unit, 1)
+    return Math.max(profileGrid.start, floorProfileWeight(weight * DELOAD_FACTOR, cfg, unit))
+  }
 
 
   // The routine's own sessions of this exercise, or the exercise's whole history when the
@@ -520,6 +536,7 @@ export function nextPrescription(S, cfg, routine) {
       targetWeight: target.weight,
       targetReps: target.reps,
       step: inc,
+      start: profileGrid?.start ?? null,
       factor: deloadFactorOf(cfg),
       reps: target.reps,
       repsMin: policy === 'double' ? target.repsMin : undefined,
@@ -606,7 +623,7 @@ export function nextPrescription(S, cfg, routine) {
  * Apply a prescription to freshly built sets. Only the fields the policy actually decided
  * are touched, and only on sets that have not been logged yet.
  */
-export function applyPrescription(sets, p, step = 2.5) {
+export function applyPrescription(sets, p, step = 2.5, cfg, unit) {
   if (!p || p.kind === 'off' || p.kind === 'first') return sets
   const out = sets.map(s => {
     // Never rewrite a logged set (a ticked warm-up falling through here would be the data-loss
@@ -642,7 +659,7 @@ export function applyPrescription(sets, p, step = 2.5) {
   if (p.sets > workRows.length) {
     // An all-warm-up entry has no work row to seed growth from - growing warm-up copies
     // would both invent work and never terminate the loop. Leave the entry untouched.
-    if (!workRows.length) return rerampWarmups(out, step)
+    if (!workRows.length) return rerampWarmups(out, step, cfg, unit)
     const seed = workRows[workRows.length - 1]
     // A freshly appended row hasn't been performed, so it never inherits a seed's already-
     // logged drops/clusters — that would invent extra work the row never actually did. Its
@@ -657,5 +674,5 @@ export function applyPrescription(sets, p, step = 2.5) {
   }
   // Last, because the work rows now carry their final weight: the warm-up block ramps toward
   // what you are actually about to lift, not toward what you lifted last time.
-  return rerampWarmups(out, step)
+  return rerampWarmups(out, step, cfg, unit)
 }

@@ -16,6 +16,10 @@
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/opengym/v1/" />
             </intent-filter>
         </service>
+        <service android:name=".WearWorkoutService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the active workout available for Wear OS set and rest controls while the phone screen is off." />
+        </service>
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
             android:name=".MainActivity"

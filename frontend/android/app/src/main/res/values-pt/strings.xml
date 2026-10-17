@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wear_workout_channel">Controles do treino</string>
+    <string name="wear_workout_title">Treino em andamento</string>
+    <string name="wear_workout_description">Mantém os controles do treino ativos com o celular bloqueado.</string>
+</resources>

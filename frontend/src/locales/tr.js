@@ -1,5 +1,17 @@
 // Turkish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Ağırlık türü",
+  "Manual increment": "Manuel artış",
+  "Saved weight profiles": "Kayıtlı yük profilleri",
+  "New weight profile": "Yeni yük profili",
+  "Edit weight profile": "Yük profilini düzenle",
+  "Profile name": "Profil adı",
+  "Weight units": "Ağırlık birimi",
+  "Initial load ({0})": "Başlangıç yükü ({0})",
+  "Load increment ({0})": "Yük artışı ({0})",
+  "Delete weight profile": "Yük profilini sil",
+  "Profile limit reached.": "Profil sınırına ulaşıldı.",
+  "Enter a name and a positive load increment.": "Bir ad ve pozitif yük artışı girin.",
   "Set heart rate": "Set nabzı",
   "Heart rate effort": "Efor",
   "Heart rate recovery": "Toparlanma",

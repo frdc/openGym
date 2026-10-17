@@ -1,5 +1,17 @@
 // Ukrainian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Тип ваги",
+  "Manual increment": "Ручний крок",
+  "Saved weight profiles": "Збережені профілі навантаження",
+  "New weight profile": "Новий профіль навантаження",
+  "Edit weight profile": "Редагувати профіль навантаження",
+  "Profile name": "Назва профілю",
+  "Weight units": "Одиниця ваги",
+  "Initial load ({0})": "Початкове навантаження ({0})",
+  "Load increment ({0})": "Крок навантаження ({0})",
+  "Delete weight profile": "Видалити профіль навантаження",
+  "Profile limit reached.": "Досягнуто ліміту профілів.",
+  "Enter a name and a positive load increment.": "Введіть назву та додатний крок навантаження.",
   "Set heart rate": "Пульс у підході",
   "Heart rate effort": "Навантаження",
   "Heart rate recovery": "Відновлення",

@@ -2,6 +2,23 @@ package com.fredc.opengym;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class WearEditorTest {
+ @Test public void movementSequenceNeverDropsItsDecimal() {
+  WearEditor load = new WearEditor("ctx","0:0:","w","kg",11.8,6.8,11.8);
+  for(double expected:new double[]{18.6,25.4,32.2,39.0,45.8,52.6}) {
+   load.adjust(1); assertEquals(expected,load.value,0);
+   assertEquals(java.math.BigDecimal.valueOf(expected).stripTrailingZeros().toPlainString(),WearEditor.number(load.value));
+  }
+ }
+ @Test public void machineOriginAndOffGridValuesUseItsActualStack() {
+  WearEditor load = new WearEditor("ctx", "0:0:", "w", "kg", 0, 6.8, 11.8);
+  load.adjust(1); assertEquals(11.8, load.value, 0);
+  load.adjust(1); assertEquals(18.6, load.value, 0);
+  load.adjust(-1); assertEquals(11.8, load.value, 0);
+  load.adjust(-1); assertEquals(0, load.value, 0);
+  WearEditor off = new WearEditor("ctx", "0:0:", "w", "kg", 27, 6.8, 11.8);
+  off.adjust(1); assertEquals(32.2, off.value, 0);
+  assertFalse(off.matches("ctx", "0:0:", "kg", 27, 5.3, 0));
+ }
  @Test public void decimalLoadStepAndIntegerReps() {
   WearEditor load = new WearEditor("ctx", "2:1:left", "w", "kg", 40, 2.5);
   load.adjust(1); assertEquals(42.5, load.value, 0); load.adjust(-1); assertEquals(40, load.value, 0);

@@ -1,0 +1,3 @@
+Built-in image_gen. Reference: approved four-screen mockup exec-1de7c6ce-6619-494c-8f7b-2d48f50e5968.png.
+Prompt: Generate only the abstract background texture inside the approved watch: dark black plum with luminous electric violet and blue satin aurora, broad curved fluid ribbons, organic folds and fine luminous edges; deep nearly black central space for white UI. Full square asset without circle mask, watch frame, text, digits, icons or buttons. Preserve the sophisticated high contrast reference appearance; avoid parallel stripes and uniform gradients.
+Saved asset: frontend/android/wear/src/main/res/drawable-nodpi/wear_violet_aurora.png

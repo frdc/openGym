@@ -1,18 +1,33 @@
 package com.fredc.opengym;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 /** Draft only; confirmation never mutates the received workout snapshot. */
 final class WearEditor {
- final String context, target, field, unit; final double baseline, step; double value; boolean pending;
+ final String context, target, field, unit; final double baseline, step, start; double value; boolean pending;
  WearEditor(String context, String target, String field, String unit, double value, double step) {
+  this(context, target, field, unit, value, step, Double.NaN);
+ }
+ WearEditor(String context, String target, String field, String unit, double value, double step, double start) {
   this.context=context; this.target=target; this.field=field; this.unit=unit; this.baseline=value; this.value=Double.isNaN(value) ? 0 : value;
   this.step="r".equals(field) ? 1 : (Double.isFinite(step) && step>0 ? step : 1);
+  this.start="w".equals(field) && Double.isFinite(start) && start>=0 ? start : Double.NaN;
  }
  void adjust(int direction) {
   if(pending)return;
+  if(Double.isFinite(start)) {
+   if(value<start-0.001) { value=direction>0 ? Math.min(10000,start) : 0; return; }
+   BigDecimal origin=BigDecimal.valueOf(start), stride=BigDecimal.valueOf(step);
+   BigDecimal index=BigDecimal.valueOf(value).subtract(origin).divide(stride,0,direction>0 ? RoundingMode.FLOOR : RoundingMode.CEILING);
+   BigDecimal next=origin.add(index.add(BigDecimal.valueOf(direction)).multiply(stride));
+   value=Math.max(0,Math.min(10000,next.doubleValue()<start ? 0 : next.doubleValue())); return;
+  }
   value=Math.max(0,Math.min(10000,BigDecimal.valueOf(value).add(BigDecimal.valueOf(step).multiply(BigDecimal.valueOf(direction))).doubleValue()));
  }
  boolean matches(String context, String target, String unit, double baseline) {
   return this.context.equals(context) && this.target.equals(target) && this.unit.equals(unit) && Double.compare(this.baseline,baseline)==0;
+ }
+ boolean matches(String context, String target, String unit, double baseline, double step, double start) {
+  return matches(context,target,unit,baseline) && ("r".equals(field) || (Double.compare(this.step,step)==0 && Double.compare(this.start,start)==0));
  }
  static boolean heartFresh(boolean running, double bpm, long readingAt, long now) {
   return running && Double.isFinite(bpm) && bpm>=25 && bpm<=250 && readingAt>0 && now>=readingAt && now-readingAt<=15000;

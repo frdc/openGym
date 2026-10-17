@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OpenGym · Editor do relógio</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header><div><small>OPENGYM / RELÓGIO</small><h1>Seu layout, do seu jeito.</h1></div><div class="toolbar"><button id="undo" title="Desfazer último ajuste">Desfazer</button><button id="import">Importar</button><button id="export" class="accent">Exportar ajustes</button><input type="file" id="file" accept="application/json,.json" hidden></div></header>
+  <main>
+    <section class="stage" aria-label="Prévia do relógio">
+      <nav id="screens" aria-label="Escolher tela"></nav>
+      <div class="watch-area"><div class="watch" id="watch"><canvas id="background" aria-hidden="true"></canvas><canvas id="layout" aria-label="Prévia editável. Selecione elementos pelo painel ou clique e arraste." tabindex="0"></canvas><canvas id="selection" aria-hidden="true"></canvas></div></div>
+      <div class="preview-options"><label><input id="animate" type="checkbox"> Animar ondas</label><label><input id="guides" type="checkbox" checked> Guias de edição</label><label>Tela <select id="device"><option value="225">225 dp</option><option value="192">192 dp</option></select></label><button id="png">Salvar imagem</button></div>
+      <p class="hint">Clique em um elemento e arraste. Use as setas do teclado para ajustes finos.</p>
+      <p id="status" role="status" aria-live="polite">Os ajustes ficam salvos neste navegador.</p>
+      <p class="note">Prévia visual com a fonte e o fundo do app. Exporte os ajustes para aplicarmos ao APK; a renderização final será conferida no relógio.</p>
+    </section>
+    <aside>
+      <section class="card"><div class="section-heading"><h2>Elemento selecionado</h2><button id="reset-element" class="quiet">Restaurar</button></div><label>Elemento<select id="element" aria-label="Elemento"></select></label><div id="controls"></div><p class="small">Medidas em dp. O botão principal usa o mesmo estilo em todas as telas.</p></section>
+      <section class="card"><h2>Aparência geral</h2><div id="theme"></div><div class="section-heading" id="primary-heading"><h3>Botão principal</h3><span class="small">Iniciar · Pausar · Confirmar</span></div><div id="button-controls"></div></section>
+      <section class="card"><h2>Conteúdo de exemplo</h2><div id="sample-controls"></div></section>
+      <button id="reset" class="reset">Restaurar todos os ajustes</button>
+    </aside>
+  </main>
+  <script type="module" src="./editor.js"></script>
+</body>
+</html>

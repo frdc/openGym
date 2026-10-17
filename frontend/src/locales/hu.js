@@ -1,5 +1,17 @@
 // Hungarian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Súlytípus",
+  "Manual increment": "Kézi lépésköz",
+  "Saved weight profiles": "Mentett terhelési profilok",
+  "New weight profile": "Új terhelési profil",
+  "Edit weight profile": "Terhelési profil szerkesztése",
+  "Profile name": "Profil neve",
+  "Weight units": "Súly mértékegysége",
+  "Initial load ({0})": "Kezdő terhelés ({0})",
+  "Load increment ({0})": "Terhelési lépés ({0})",
+  "Delete weight profile": "Terhelési profil törlése",
+  "Profile limit reached.": "Elérted a profilok számának korlátját.",
+  "Enter a name and a positive load increment.": "Adj meg egy nevet és pozitív terhelési lépést.",
   "Set heart rate": "Sorozat pulzusa",
   "Heart rate effort": "Terhelés",
   "Heart rate recovery": "Regenerálódás",

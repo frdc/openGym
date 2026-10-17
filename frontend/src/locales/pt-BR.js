@@ -4,6 +4,18 @@
 import pt from './pt.js'
 
 export const PT_BR_OVERRIDES = {
+  "Weight type": "Tipo de peso",
+  "Manual increment": "Incremento manual",
+  "Saved weight profiles": "Perfis de carga salvos",
+  "New weight profile": "Novo perfil de carga",
+  "Edit weight profile": "Editar perfil de carga",
+  "Profile name": "Nome do perfil",
+  "Weight units": "Unidade de peso",
+  "Initial load ({0})": "Carga inicial ({0})",
+  "Load increment ({0})": "Incremento de carga ({0})",
+  "Delete weight profile": "Excluir perfil de carga",
+  "Profile limit reached.": "Limite de perfis atingido.",
+  "Enter a name and a positive load increment.": "Informe um nome e um incremento de carga positivo.",
   "Set heart rate": "Batimentos da série",
   "Heart rate effort": "Esforço",
   "Heart rate recovery": "Recuperação",

@@ -1,5 +1,17 @@
 // German UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Gewichtstyp",
+  "Manual increment": "Manuelle Schrittweite",
+  "Saved weight profiles": "Gespeicherte Lastprofile",
+  "New weight profile": "Neues Lastprofil",
+  "Edit weight profile": "Lastprofil bearbeiten",
+  "Profile name": "Profilname",
+  "Weight units": "Gewichtseinheit",
+  "Initial load ({0})": "Anfangslast ({0})",
+  "Load increment ({0})": "Lastschritt ({0})",
+  "Delete weight profile": "Lastprofil löschen",
+  "Profile limit reached.": "Profillimit erreicht.",
+  "Enter a name and a positive load increment.": "Gib einen Namen und eine positive Lastschrittweite ein.",
   "Set heart rate": "Herzfrequenz des Satzes",
   "Heart rate effort": "Belastung",
   "Heart rate recovery": "Erholung",

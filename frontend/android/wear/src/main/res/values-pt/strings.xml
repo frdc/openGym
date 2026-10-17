@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="complete_without_heart">Concluir sem batimentos</string>
+    <string name="cancel_edit">Cancelar</string>
+    <string name="sending_short">Enviando…</string>
+    <string name="skip_short">Pular</string>
+    <string name="heart_settings">Batimentos</string>
+    <string name="alert_settings">Alertas</string>
+    <string name="precise_alerts">Alarmes precisos</string>
+    <string name="rest_notifications">Notificações</string>
     <string name="connecting">Conectando…</string>
+    <string name="phone_unresponsive">Celular sem responder</string>
     <string name="connected">Conectado ao celular</string>
     <string name="workout_active">Treino em andamento</string>
     <string name="open_workout">Abrir treino</string>
@@ -25,9 +34,12 @@
     <string name="heart_enable">Ativar batimentos</string>
     <string name="heart_disable">Desativar batimentos</string>
     <string name="heart_start_set">Iniciar série</string>
+    <string name="heart_wait_short">Lendo sensor…</string>
+    <string name="heart_start_short">Iniciar</string>
+    <string name="complete_short">Concluir</string>
     <string name="phase_effort">Em série</string>
     <string name="phase_rest">Descanso</string>
-    <string name="phase_paused">Descanso pausado</string>
+    <string name="phase_paused">Pausado</string>
     <string name="phase_ready">Pronto</string>
     <string name="sets_finished">Séries concluídas. Finalize o treino no celular.</string>
     <string name="heart_cancel_set">Cancelar marcação</string>
@@ -47,4 +59,10 @@
     <string name="heart_receiving">Recebendo leituras cardíacas</string>
     <string name="increase">Aumentar</string>
     <string name="decrease">Diminuir</string>
+    <string name="ambient_rest_until">Até %1$s</string>
+    <string name="offline_saved">Salvo no relógio · aguardando sincronização</string>
+    <string name="offline_conflict">Ação pendente em conflito com o celular</string>
+    <string name="offline_review">Ver ação pendente</string>
+    <string name="offline_discard">Descartar ação pendente</string>
+    <string name="offline_explanation">A ação está salva no relógio. Reconecte para sincronizar. Se o treino mudou, confira no celular antes de descartar esta cópia. A próxima série precisa de sincronização confirmada.</string>
 </resources>

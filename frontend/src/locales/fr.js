@@ -1,5 +1,17 @@
 // French UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "Type de charge",
+  "Manual increment": "Incrément manuel",
+  "Saved weight profiles": "Profils de charge enregistrés",
+  "New weight profile": "Nouveau profil de charge",
+  "Edit weight profile": "Modifier le profil de charge",
+  "Profile name": "Nom du profil",
+  "Weight units": "Unité de poids",
+  "Initial load ({0})": "Charge initiale ({0})",
+  "Load increment ({0})": "Incrément de charge ({0})",
+  "Delete weight profile": "Supprimer le profil de charge",
+  "Profile limit reached.": "Limite de profils atteinte.",
+  "Enter a name and a positive load increment.": "Saisissez un nom et un incrément de charge positif.",
   "Set heart rate": "Fréquence cardiaque de la série",
   "Heart rate effort": "Effort",
   "Heart rate recovery": "Récupération",

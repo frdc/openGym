@@ -3,6 +3,7 @@ import { FIELD_POLICY, MAX_DOCUMENT_BYTES, MAX_DOCUMENT_DEPTH } from './model.js
 import { mergeStates, highestStamp } from '../sync-merge.js'
 import { beatsWeight, isAssisted } from '../exercises.js'
 import { bestWeightForEntry } from '../history.js'
+import { convertProfileWeight } from '../weight-profiles.js'
 
 const copy = value => structuredClone(value)
 const own = (obj, key) => Object.hasOwn(obj || {}, key)
@@ -96,19 +97,19 @@ export function encodeState(state, options) {
 }
 
 const preciseWeight = (value, factor) => value == null || value === '' || !Number.isFinite(Number(value)) ? value : Number(value) * factor
-function convertTarget(target, factor) {
+function convertTarget(target, factor, from, to) {
   if (!target || typeof target !== 'object') return target
   const out = copy(target)
-  if (own(out, 'weight')) out.weight = preciseWeight(out.weight, factor)
+  if (own(out, 'weight')) out.weight = convertProfileWeight(out.weight, target, from, to) ?? preciseWeight(out.weight, factor)
   if (out.inc > 0 && (out.mode == null || out.mode === 'reps')) out.inc = preciseWeight(out.inc, factor)
-  if (Array.isArray(out.warmup)) out.warmup = out.warmup.map(x => convertTarget(x, factor))
+  if (Array.isArray(out.warmup)) out.warmup = out.warmup.map(x => convertTarget(x, factor, from, to))
   return out
 }
-function convertSet(set, factor) {
+function convertSet(set, factor, cfg, from, to) {
   const out = copy(set)
-  if (own(out, 'w')) out.w = preciseWeight(out.w, factor)
-  if (out.sides) for (const side of ['L', 'R']) if (out.sides[side]) out.sides[side] = convertSet(out.sides[side], factor)
-  if (Array.isArray(out.drops)) out.drops = out.drops.map(x => convertSet(x, factor))
+  if (own(out, 'w')) out.w = convertProfileWeight(out.w, cfg, from, to) ?? preciseWeight(out.w, factor)
+  if (out.sides) for (const side of ['L', 'R']) if (out.sides[side]) out.sides[side] = convertSet(out.sides[side], factor, cfg, from, to)
+  if (Array.isArray(out.drops)) out.drops = out.drops.map(x => convertSet(x, factor, cfg, from, to))
   return out
 }
 function convertedPayload(path, rec, displayUnit) {
@@ -122,14 +123,14 @@ function convertedPayload(path, rec, displayUnit) {
     else if (own(p, 'exWeights')) p.exWeights = preciseWeight(p.exWeights, factor)
     if (own(p, 'barWeights')) p.barWeights = preciseWeight(p.barWeights, factor)
   }
-  if (path.startsWith('routines/')) p.ex = (p.ex || []).map(x => convertTarget(x, factor))
+  if (path.startsWith('routines/')) p.ex = (p.ex || []).map(x => convertTarget(x, factor, rec.dataUnit, displayUnit))
   if (path.startsWith('workouts/')) {
     if (own(p, 'bw')) p.bw = preciseWeight(p.bw, factor)
     if (own(p, 'vol')) p.vol = preciseWeight(p.vol, factor)
     p.entries = (p.entries || []).map(e => ({ ...e,
-      ...(own(e, 'topW') ? { topW: preciseWeight(e.topW, factor) } : {}),
-      ...(e.target ? { target: convertTarget(e.target, factor) } : {}), ...(e.planned ? { planned: convertTarget(e.planned, factor) } : {}),
-      ...(e.sets ? { sets: e.sets.map(x => convertSet(x, factor)) } : {}),
+      ...(own(e, 'topW') ? { topW: convertProfileWeight(e.topW, e.target, rec.dataUnit, displayUnit) ?? preciseWeight(e.topW, factor) } : {}),
+      ...(e.target ? { target: convertTarget(e.target, factor, rec.dataUnit, displayUnit) } : {}), ...(e.planned ? { planned: convertTarget(e.planned, factor, rec.dataUnit, displayUnit) } : {}),
+      ...(e.sets ? { sets: e.sets.map(x => convertSet(x, factor, e.target, rec.dataUnit, displayUnit)) } : {}),
     }))
   }
   return p

@@ -1,5 +1,17 @@
 // Simplified Chinese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Weight type": "重量类型",
+  "Manual increment": "手动增量",
+  "Saved weight profiles": "已保存的负重配置",
+  "New weight profile": "新建负重配置",
+  "Edit weight profile": "编辑负重配置",
+  "Profile name": "配置名称",
+  "Weight units": "重量单位",
+  "Initial load ({0})": "初始负重 ({0})",
+  "Load increment ({0})": "负重增量 ({0})",
+  "Delete weight profile": "删除负重配置",
+  "Profile limit reached.": "已达到配置数量上限。",
+  "Enter a name and a positive load increment.": "请输入名称和大于零的负重增量。",
   "Set heart rate": "组心率",
   "Heart rate effort": "运动",
   "Heart rate recovery": "恢复",
