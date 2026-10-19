@@ -25,6 +25,7 @@ dependencies {
     implementation "androidx.core:core:$androidxCoreVersion"
     implementation 'com.google.android.gms:play-services-wearable:20.0.1'
     testImplementation "junit:junit:$junitVersion"
+    testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
 }

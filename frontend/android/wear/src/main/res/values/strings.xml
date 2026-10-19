@@ -67,4 +67,8 @@
     <string name="offline_review">Review pending action</string>
     <string name="offline_discard">Discard pending action</string>
     <string name="offline_explanation">This action is kept on the watch. Reconnect to sync. If the workout changed, check it on your phone before discarding this copy. The next set needs a confirmed sync.</string>
+    <string name="pause_effort">Pause set</string>
+    <string name="resume_effort">Resume set</string>
+    <string name="standalone_explanation">Your sets and rest timer are saved on this watch. Open the phone app to sync. If the phone workout changed, this copy is kept here for review.</string>
+    <string name="standalone_discard">Discard the workout changes still stored on this watch?</string>
 </resources>

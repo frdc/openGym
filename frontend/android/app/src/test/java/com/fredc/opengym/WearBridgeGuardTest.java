@@ -16,7 +16,8 @@ public class WearBridgeGuardTest {
         assertTrue(WearBridgeGuard.allowed("/opengym/v1/command", 100));
         assertTrue(WearBridgeGuard.allowed("/opengym/v1/sync", 100));
         assertFalse(WearBridgeGuard.allowed("/other", 100));
-        assertFalse(WearBridgeGuard.allowed("/opengym/v1/command", 16385));
+        assertTrue(WearBridgeGuard.allowed("/opengym/v1/command", 65536));
+        assertFalse(WearBridgeGuard.allowed("/opengym/v1/command", 65537));
         assertFalse(WearBridgeGuard.allowed("/opengym/v1/command", 0));
     }
     @Test public void onlyAnAcknowledgedOccurrenceSuppressesPhoneMirroring() {

@@ -8,6 +8,7 @@ final class WearBridgeGuard {
         return token != null && !token.isEmpty() && endsAt > 0 && (token + ":" + endsAt).equals(acknowledgedKey);
     }
     static boolean allowed(String path, int size) {
-        return size > 0 && size <= 16384 && ("/opengym/v1/command".equals(path) || "/opengym/v1/sync".equals(path) || "/opengym/v1/heart".equals(path));
+        int limit = "/opengym/v1/command".equals(path) ? 65536 : 16384;
+        return size > 0 && size <= limit && ("/opengym/v1/command".equals(path) || "/opengym/v1/sync".equals(path) || "/opengym/v1/heart".equals(path));
     }
 }

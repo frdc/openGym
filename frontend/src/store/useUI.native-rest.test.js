@@ -63,6 +63,39 @@ afterEach(() => {
 })
 
 describe('the rest the app starts, pauses and ends', () => {
+  it('clears rest for a first watch start with no completed set owner', () => {
+    useUI.getState().startRest(90)
+    useUI.getState().importWearRest(null, null)
+    expect(useUI.getState().timer).toBeNull()
+  })
+
+  it('imports watch rest using its absolute deadline instead of restarting the break', () => {
+    const endsAt = Date.now() + 45000
+    useUI.getState().importWearRest({ timerToken: 'watch-rest', endsAt, leftMs: 90000, paused: false, ready: false }, { entryIdx: 2, setIdx: 1 })
+    expect(useUI.getState().timer).toMatchObject({ timerToken: 'watch-rest', endsAt, left: 45, forIdx: 2, forSet: 1 })
+    expect(armRestAlert).toHaveBeenLastCalledWith(endsAt, expect.objectContaining({ timerToken: 'watch-rest' }))
+    vi.advanceTimersByTime(15000)
+    expect(useUI.getState().timer.left).toBe(30)
+  })
+
+  it('restores a paused watch rest without allowing its time to elapse', () => {
+    useUI.getState().importWearRest({ timerToken: 'watch-paused', endsAt: 0, leftMs: 32500, paused: true, ready: false })
+    expect(useUI.getState().timer).toMatchObject({ paused: true, left: 32.5 })
+    vi.advanceTimersByTime(60000)
+    expect(useUI.getState().timer.left).toBe(32.5)
+    useUI.getState().resumeRest()
+    expect(useUI.getState().timer.endsAt).toBe(Date.now() + 32500)
+  })
+
+  it('does not alert or reopen rest that expired while the phone was off', () => {
+    useUI.getState().startRest(90)
+    chime.mockClear(); armRestAlert.mockClear()
+    useUI.getState().importWearRest({ timerToken: 'old-watch-rest', endsAt: Date.now() - 10000, leftMs: 90000, paused: false, ready: false })
+    expect(useUI.getState().timer).toBeNull()
+    expect(chime).not.toHaveBeenCalled()
+    expect(armRestAlert).not.toHaveBeenCalled()
+  })
+
   it('arms when the rest starts and rearms when time is added, with the whole rest', () => {
     useUI.getState().startRest(90)
     const first = armRestAlert.mock.calls.at(-1)[0]

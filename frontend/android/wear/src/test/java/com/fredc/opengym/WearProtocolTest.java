@@ -16,6 +16,11 @@ public class WearProtocolTest {
         assertFalse(WearProtocol.acceptRevision("c", 2, "c", 1));
         assertTrue(WearProtocol.acceptRevision("c", 2, "new", 1));
     }
+    @Test public void restartedPhonePublisherCanResumeTheSameWorkout() {
+        assertTrue(WearProtocol.acceptSnapshot("same", 80, "old-process", "same", 1, "new-process"));
+        assertFalse(WearProtocol.acceptSnapshot("same", 80, "process", "same", 1, "process"));
+        assertFalse(WearProtocol.acceptSnapshot("same", 80, "process", "same", 1, ""));
+    }
     @Test public void controlsExpireAndNeverReusePendingCommands() {
         assertTrue(WearProtocol.canControl(true, 1000, 2000, false));
         assertFalse(WearProtocol.canControl(true, 1000, 14000, false));

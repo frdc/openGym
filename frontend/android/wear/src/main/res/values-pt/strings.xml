@@ -65,4 +65,8 @@
     <string name="offline_review">Ver ação pendente</string>
     <string name="offline_discard">Descartar ação pendente</string>
     <string name="offline_explanation">A ação está salva no relógio. Reconecte para sincronizar. Se o treino mudou, confira no celular antes de descartar esta cópia. A próxima série precisa de sincronização confirmada.</string>
+    <string name="pause_effort">Pausar série</string>
+    <string name="resume_effort">Retomar série</string>
+    <string name="standalone_explanation">As séries e o descanso estão salvos neste relógio. Abra o app no celular para sincronizar. Se o treino mudou no celular, esta cópia fica guardada aqui para revisão.</string>
+    <string name="standalone_discard">Descartar as alterações do treino ainda guardadas neste relógio?</string>
 </resources>

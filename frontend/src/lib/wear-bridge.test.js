@@ -8,7 +8,102 @@ vi.mock('../store/useStore.js', () => ({ useStore: { getState: () => f.store, su
 vi.mock('../store/useUI.js', () => ({ useUI: { getState: () => f.ui, subscribe: cb => { f.uiListeners.add(cb); return () => f.uiListeners.delete(cb) } } }))
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => f.plugin }))
 import { bindWearBridge, registerWearCompletion, registerWearEditing, openWearApp, requestWearWorkoutOpen } from './wear-bridge.js'
+const standaloneEvents = () => [{ seq: 1, id: '00000000-0000-4000-8000-000000000001', action: 'start', at: 1000, step: 0 }, { seq: 2, id: '00000000-0000-4000-8000-000000000002', action: 'complete', at: 2000, step: 0 }]
+const standaloneCommand = state => ({ v: 1, action: 'standalone-sync', requestId: standaloneEvents()[1].id, contextToken: state.contextToken, streamId: 'stream', baseline: state.standalone.baseline, events: standaloneEvents() })
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+it('preserves workout authorization across bridge restarts and changes publisher identity', async () => {
+  let stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const first = f.plugin.publish.mock.calls.at(-1)[0].state
+    stop(); stop = bindWearBridge(); await tick(); await tick()
+    const second = f.plugin.publish.mock.calls.at(-1)[0].state
+    expect(first.contextToken).toBe('s'); expect(second.contextToken).toBe('s')
+    expect(second.publisherId).not.toBe(first.publisherId)
+    expect(second.localReady).toBe(true)
+    expect(JSON.stringify(second)).not.toContain('private-owner')
+  } finally { stop() }
+})
+it('imports a standalone completion without a mounted Workout and acknowledges only after durable flush', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const state = f.plugin.publish.mock.calls.at(-1)[0].state, command = standaloneCommand(state)
+    let release; f.store.flushLocal.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    const pending = f.receive({ nodeId: 'watch', command }); await tick()
+    expect(f.store.S.active.entries[0].sets[0].done).toBe(true)
+    expect(f.plugin.reply).not.toHaveBeenCalled()
+    release(); await pending
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', streamId: 'stream', seq: 2 })
+    expect(f.plugin.publish.mock.calls.at(-1)[0].state.standalone.ack).toEqual({ streamId: 'stream', seq: 2 })
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.store.update).toHaveBeenCalledOnce()
+  } finally { stop() }
+})
+it('retries a failed local standalone write without publishing an unpersisted receipt or applying twice', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const state = f.plugin.publish.mock.calls.at(-1)[0].state, command = standaloneCommand(state)
+    f.store.flushLocal.mockRejectedValueOnce(new Error('disk-full'))
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response.status).toBe('error')
+    for (const cb of f.storeListeners) cb(); await tick()
+    expect(f.plugin.publish.mock.calls.at(-1)[0].state.standalone.ack).toBeNull()
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.store.update).toHaveBeenCalledOnce()
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 2 })
+  } finally { stop() }
+})
+it('refuses to acknowledge a standalone import when the active session changes during flush', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const command = standaloneCommand(f.plugin.publish.mock.calls.at(-1)[0].state)
+    f.store.flushLocal.mockImplementationOnce(async () => { f.store.activeSessionToken = 'replacement' })
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'error', code: 'stale-context' })
+  } finally { stop() }
+})
+it('keeps an unpersisted receipt hidden when the bridge is remounted', async () => {
+  heartFixture()
+  let stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const command = standaloneCommand(f.plugin.publish.mock.calls.at(-1)[0].state)
+    f.store.flushLocal.mockRejectedValueOnce(new Error('disk-full'))
+    await f.receive({ nodeId: 'watch', command })
+    stop(); stop = bindWearBridge(); await tick(); await tick()
+    expect(f.plugin.publish.mock.calls.at(-1)[0].state.standalone.ack).toBeNull()
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 2 })
+    expect(f.store.update).toHaveBeenCalledOnce()
+  } finally { stop() }
+})
+it('withholds a changed phone timer baseline until its seed is saved and retries the pending seed', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const before = f.plugin.publish.mock.calls.at(-1)[0].state
+    f.store.flushLocal.mockRejectedValue(new Error('disk-full'))
+    f.ui.timer = { timerToken: 'phone-new-rest', context: { ownerKey: f.store.ownerKey, activeSessionToken: 's' }, endsAt: Date.now() + 90000, left: 90, total: 90 }
+    for (const cb of f.uiListeners) cb()
+    await tick(); await tick()
+    expect(f.plugin.publish.mock.calls.at(-1)[0].state.standalone.baseline).toBe(before.standalone.baseline)
+    await f.receive({ nodeId: 'watch', command: standaloneCommand(before) })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response.status).toBe('error')
+    expect(f.store.S.active.entries[0].sets[0].done).toBe(false)
+    f.store.flushLocal.mockResolvedValue()
+    await f.receive({ nodeId: 'watch', syncId: 'retry-seed' })
+    const after = f.plugin.publish.mock.calls.at(-1)[0].state
+    expect(after.standalone.runtime.timer.timerToken).toBe('phone-new-rest')
+    expect(after.standalone.baseline).not.toBe(before.standalone.baseline)
+  } finally { stop() }
+})
 it('opens once for an explicit new workout, including a request before plugin initialization', async () => {
   requestWearWorkoutOpen()
   const stop = bindWearBridge()
@@ -53,6 +148,7 @@ beforeEach(() => {
   f.plugin.publish.mockReset().mockResolvedValue()
   delete f.plugin.getHeartBindings; delete f.plugin.saveHeartBindings
   f.store = { ownerKey: 'private-owner', activeSessionToken: 's', localReady: true, S: { unit: 'kg', active: { cur: 0, entries: [{ id: '0025', sets: [{ r: 10, w: 60, done: false }] }] } }, flushLocal: vi.fn().mockResolvedValue() }
+  f.store.update = vi.fn(producer => { const next = structuredClone(f.store.S); producer(next); f.store.S = next; for (const cb of f.storeListeners) cb() })
   f.ui = { sheets: [], work: null, timer: null, pauseRest: vi.fn(), resumeRest: vi.fn(), addRest: vi.fn(), stopRest: vi.fn() }
   f.plugin.addListener.mockImplementation(async (_, cb) => { f.receive = cb; return { remove: vi.fn() } })
 })
@@ -105,11 +201,12 @@ it.each(['running', 'paused', 'ready'])('cancels %s rest after the set start is 
   } finally { stop(); unregister() }
 })
 it('keeps rest when a heart start cannot be durably confirmed', async () => {
-  heartFixture(); f.store.flushLocal.mockRejectedValue(new Error('disk unavailable'))
+  heartFixture()
   f.ui.timer = { timerToken: 'old-rest', context: { ownerKey: f.store.ownerKey, activeSessionToken: 's' }, endsAt: Date.now() + 90000 }
   const unregister = registerWearCompletion(vi.fn()), stop = bindWearBridge()
   try {
     await tick(); await tick()
+    f.store.flushLocal.mockRejectedValue(new Error('disk unavailable'))
     await f.receive({ nodeId: 'watch', command: startCommand(f.plugin.publish.mock.calls.at(-1)[0].state) })
     expect(f.plugin.reply.mock.calls.at(-1)[0].response.status).toBe('error')
     expect(f.ui.stopRest).not.toHaveBeenCalled()
@@ -140,10 +237,10 @@ it('preserves a phone completion rest created while the watch start is saving', 
   heartFixture()
   f.ui.timer = { timerToken: 'old-rest', context: { ownerKey: f.store.ownerKey, activeSessionToken: 's' }, endsAt: Date.now() + 90000 }
   let release
-  f.store.flushLocal.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
   const unregister = registerWearCompletion(vi.fn()), stop = bindWearBridge()
   try {
     await tick(); await tick()
+    f.store.flushLocal.mockClear().mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
     const pending = f.receive({ nodeId: 'watch', command: startCommand(f.plugin.publish.mock.calls.at(-1)[0].state) })
     await vi.waitFor(() => expect(f.store.flushLocal).toHaveBeenCalledOnce())
     f.store.update(S => { S.active.entries[0].sets[0].done = true })
@@ -166,7 +263,7 @@ it('completes once, persists and publishes the resulting rest before acknowledgi
   const command = { v: 1, requestId: 'r', action: 'complete', contextToken: state.contextToken, revision: state.revision, target: { entryIdx: 0, setIdx: 0, side: null } }
   await f.receive({ nodeId: 'watch', command }); await f.receive({ nodeId: 'watch', command })
   expect(complete).toHaveBeenCalledTimes(1)
-  expect(f.store.flushLocal).toHaveBeenCalledTimes(1)
+  expect(f.store.flushLocal).toHaveBeenCalledTimes(2) // Completion, then its durable standalone timer seed.
   expect(f.plugin.publish.mock.calls.at(-1)[0].state.timer.timerToken).toBe('t')
   expect(f.plugin.reply.mock.calls.at(-1)[0].response.status).toBe('ok')
   expect(JSON.stringify(state)).not.toContain('private-owner')
@@ -179,7 +276,7 @@ it('keeps the timer while a sheet is open and invalidates old account commands',
   await tick(); await tick()
   const state = f.plugin.publish.mock.calls.at(-1)[0].state
   expect(state.current.canComplete).toBe(false); expect(state.timer.timerToken).toBe('t')
-  f.store.ownerKey = 'new-owner'; for (const cb of f.storeListeners) cb()
+  f.store.ownerKey = 'new-owner'; f.store.activeSessionToken = 'new-owner-session'; for (const cb of f.storeListeners) cb()
   await f.receive({ nodeId: 'watch', command: { v: 1, requestId: 'old', contextToken: state.contextToken, revision: state.revision, action: 'complete', target: { entryIdx: 0, setIdx: 0, side: null } } })
   expect(f.plugin.reply.mock.calls.at(-1)[0].response.code).toBe('stale-context')
   expect(f.plugin.publish.mock.calls.at(-1)[0].state.timer).toBeNull()

@@ -5,10 +5,15 @@ import { projectWearState } from './wear-protocol.js'
 import { createWearHeartSession } from './wear-heart-session.js'
 import { validateWearCommand } from './wear-protocol.js'
 import { createWearController } from './wear-session.js'
+import { applyStandalone, projectStandalone, reconcileStandaloneTimer, standaloneTimerSignature } from './wear-standalone.js'
 
 let completeHandler = null, editHandler = null, notifyReady = () => {}
 let openHandler = null
 let automaticOpen = null, requestedWorkout = null
+// A bridge remount is not a disk reload. Keep failed-write receipts hidden until
+// flushLocal confirms them, including across a route/root effect remount.
+const pendingStandaloneSessions = new Map()
+const observedPhoneTimers = new Map(), pendingTimerSeeds = new Set()
 export function requestWearWorkoutOpen() {
   const store = useStore.getState(), active = store.S.active
   if (!store.localReady || !store.activeSessionToken || !active || active.backfill || active.editingWorkoutId) return
@@ -38,6 +43,10 @@ export function bindWearBridge() {
   }
   let closed = false, plugin, listener, revision = 0, identity = '', contextToken = '', serialized = '', state
   let heart, heartListener
+  const publisherId = crypto.randomUUID()
+  let pendingStandalone = null
+  let preparingTimer = null
+  let preparedTimerSession = null
   let initialized = false
   let attemptedWorkout = ''
   const openNewWorkout = () => {
@@ -54,12 +63,54 @@ export function bindWearBridge() {
   automaticOpen = openNewWorkout
   let transport = Promise.resolve(), sending = false
   const controllers = new Map()
+  const phoneTimer = (store, ui = useUI.getState()) => {
+    const timer = ui.timer?.context?.ownerKey === store.ownerKey && ui.timer?.context?.activeSessionToken === store.activeSessionToken ? ui.timer : null
+    return timer ? { timerToken: timer.timerToken, endsAt: timer.endsAt || 0, leftMs: Math.max(0, Number(timer.left ?? timer.total ?? 0) * 1000), paused: !!timer.paused, ready: !!timer.ready } : null
+  }
+  function prepareStandaloneTimer() {
+    if (preparingTimer) return preparingTimer
+    preparingTimer = Promise.resolve().then(async () => {
+      const store = useStore.getState(), sessionId = store.activeSessionToken
+      if (!store.localReady || !sessionId || !store.S.active) return
+      const timer = phoneTimer(store), signature = standaloneTimerSignature(timer)
+      const observed = observedPhoneTimers.get(sessionId), seed = store.S.active._wearStandaloneTimer
+      const first = preparedTimerSession !== sessionId
+      preparedTimerSession = sessionId
+      observedPhoneTimers.set(sessionId, signature)
+      // A hydrated private seed outlives the UI restoration. Initial null is not
+      // evidence of a user skipping rest; a later observed timer change is.
+      if (first && !timer && seed?.sessionId === sessionId) {
+        if (seed.timer && !pendingStandaloneSessions.has(sessionId)) {
+          const checkpoint = store.S.active._wearStandalone
+          useUI.getState().importWearRest?.(seed.timer, checkpoint?.steps?.[checkpoint.cursor - 1] || null)
+          observedPhoneTimers.set(sessionId, standaloneTimerSignature(phoneTimer(store)))
+        }
+      } else if (observed !== signature) {
+        const next = reconcileStandaloneTimer(store.S, timer, sessionId)
+        if (next !== store.S) {
+          pendingTimerSeeds.add(sessionId)
+          store.update(S => { S.active._wearStandaloneTimer = next.active._wearStandaloneTimer })
+        }
+      }
+      if (pendingTimerSeeds.has(sessionId)) {
+        await useStore.getState().flushLocal()
+        if (!matches({ ownerKey: store.ownerKey, sessionToken: sessionId })) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
+        pendingTimerSeeds.delete(sessionId)
+      }
+    }).finally(() => { preparingTimer = null })
+    return preparingTimer
+  }
   function snapshot() {
     const store = useStore.getState(), ui = useUI.getState()
     const nextIdentity = `${store.ownerKey}:${store.activeSessionToken}:${store.localReady}`
-    if (nextIdentity !== identity) { identity = nextIdentity; contextToken = crypto.randomUUID(); serialized = '' }
+    if (nextIdentity !== identity) { identity = nextIdentity; contextToken = store.activeSessionToken || ''; serialized = ''; pendingStandalone = pendingStandaloneSessions.get(contextToken) || null }
+    if (!store.S.active?._wearStandalone) { pendingStandaloneSessions.delete(contextToken); pendingStandalone = null }
     const timer = ui.timer?.context?.ownerKey === store.ownerKey && ui.timer?.context?.activeSessionToken === store.activeSessionToken ? ui.timer : null
     const projection = projectWearState({ S: store.S, timer, contextToken, revision: 0, ready: store.localReady && !!store.activeSessionToken, editingReady: !!editHandler && !ui.sheets.length && !ui.work })
+    projection.publisherId = publisherId
+    projection.localReady = !!store.localReady
+    const standalone = projection.active ? projectStandalone(store.S, contextToken) : null
+    projection.standalone = pendingStandalone && standalone?.ack ? pendingStandalone.projection : standalone
     projection.heartCapture = heart?.projection() || null
     projection.heartAuthorizedTokens = heart?.authorizedTokens() || []
     if (projection.current && (!completeHandler || ui.sheets.length || ui.work)) projection.current.canComplete = false
@@ -71,13 +122,16 @@ export function bindWearBridge() {
   }
   function publish(sync = null) {
     if (closed || !plugin) return Promise.resolve()
-    const value = snapshot()
-    const run = transport.then(() => closed ? undefined : plugin.publish({ state: value, ...(sync || {}) }))
+    const run = transport.then(async () => {
+      if (closed) return
+      await prepareStandaloneTimer()
+      return plugin.publish({ state: snapshot(), ...(sync || {}) })
+    })
     transport = run.catch(() => {})
     return run
   }
   function changed() {
-    void heart?.reconcile().catch(() => {})
+    if (!pendingStandalone) void heart?.reconcile().catch(() => {})
     const old = revision; snapshot()
     if (old !== revision && !sending) void publish().catch(() => {})
     openNewWorkout()
@@ -122,7 +176,36 @@ export function bindWearBridge() {
       const run = commands.then(async () => {
         sending = true
         try {
-          if (['heart-start', 'heart-cancel'].includes(command?.action)) {
+          if (command?.action === 'standalone-sync') {
+            let response
+            const store = useStore.getState(), expected = { ownerKey: store.ownerKey, sessionToken: store.activeSessionToken }
+            try {
+              await prepareStandaloneTimer()
+              if (!matches(expected)) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
+              const currentStore = useStore.getState(), before = snapshot(), checkpoint = currentStore.S.active?._wearStandalone
+              if (checkpoint?.nodeId && checkpoint.nodeId !== nodeId) throw Object.assign(new Error('stream-conflict'), { code: 'stream-conflict' })
+              const next = applyStandalone(currentStore.S, command, store.activeSessionToken)
+              const importTimer = next !== currentStore.S || !!pendingStandalone
+              if (next !== currentStore.S) {
+                pendingStandalone = { projection: before.standalone }
+                pendingStandaloneSessions.set(store.activeSessionToken, pendingStandalone)
+                next.active._wearStandalone.nodeId = nodeId
+                store.update(S => { S.active = next.active })
+              }
+              await useStore.getState().flushLocal()
+              if (!matches(expected)) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
+              await heart.adoptStandalone()
+              if (!matches(expected)) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
+              const saved = useStore.getState().S.active._wearStandalone
+              if (importTimer) useUI.getState().importWearRest?.(saved.runtime.timer, saved.steps[saved.cursor - 1] || null)
+              observedPhoneTimers.set(expected.sessionToken, standaloneTimerSignature(phoneTimer(useStore.getState())))
+              pendingStandalone = null
+              pendingStandaloneSessions.delete(expected.sessionToken)
+              response = { status: 'ok', streamId: saved.streamId, seq: saved.events.length }
+            } catch (e) { response = { status: 'error', code: e.code || 'unavailable', streamId: command.streamId || '', seq: pendingStandalone?.projection?.ack?.seq || 0 } }
+            await plugin.reply({ nodeId, response: { v: 1, requestId: command.requestId || '', ...response } })
+            await publish()
+          } else if (['heart-start', 'heart-cancel'].includes(command?.action)) {
             const cached = heart.result(command, nodeId)
             const before = cached ? null : snapshot()
             const error = cached ? null : validateWearCommand(command, before)

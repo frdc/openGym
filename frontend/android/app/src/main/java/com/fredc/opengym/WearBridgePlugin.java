@@ -19,7 +19,7 @@ public class WearBridgePlugin extends Plugin {
     private volatile JSObject latestState;
     @PluginMethod public void open(PluginCall call) {
         JSObject state = call.getObject("state");
-        if (state == null || !state.optBoolean("active") || state.toString().getBytes(StandardCharsets.UTF_8).length > 15000) { call.reject("invalid state"); return; }
+        if (state == null || !state.optBoolean("active") || state.toString().getBytes(StandardCharsets.UTF_8).length > 131072) { call.reject("invalid state"); return; }
         final long sentAt = System.currentTimeMillis();
         Wearable.getCapabilityClient(getContext()).getCapability("opengym_watch_v1", CapabilityClient.FILTER_REACHABLE).addOnSuccessListener(capability -> {
             JSObject latest = latestState;
@@ -95,7 +95,7 @@ public class WearBridgePlugin extends Plugin {
     }
     @PluginMethod public void publish(PluginCall call) {
         JSObject state = call.getObject("state");
-        if (state == null || state.toString().getBytes(StandardCharsets.UTF_8).length > 16384) { call.reject("invalid state"); return; }
+        if (state == null || state.toString().getBytes(StandardCharsets.UTF_8).length > 131072) { call.reject("invalid state"); return; }
         latestState = state;
         WearWorkoutService.update(getContext(), state.optBoolean("active"));
         PutDataMapRequest request = PutDataMapRequest.create("/opengym/v1/state");

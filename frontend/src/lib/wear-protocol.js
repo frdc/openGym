@@ -9,11 +9,19 @@ import { weightProfileGrid } from './weight-profiles.js'
 export function projectWearState({ S = {}, timer, contextToken, revision = 0, ready = false, editingReady = false, now = Date.now() } = {}) {
   const active = !!(ready && contextToken && S.active && !S.active.editingWorkoutId)
   const next = active ? nextOpenSet(S.active.entries, S.active.cur) : null
-  let current = null
-  if (next) {
+  const current = next ? projectWearCurrent(S, next, editingReady) : null
+  return {
+    v: 1, contextToken: contextToken || '', revision, active, current,
+    vibrate: S.vibrate !== false,
+    lang: S.lang || 'en',
+    timer: active && timer ? { timerToken: timer.timerToken, endsAt: timer.endsAt || 0, leftMs: timer.paused ? Math.max(0, timer.left * 1000) : Math.max(0, (timer.endsAt || now) - now), paused: !!timer.paused, ready: !!timer.ready } : null,
+  }
+}
+
+export function projectWearCurrent(S, next, editingReady = false) {
     const entry = S.active.entries[next.idx], row = entry.sets[next.i]
     const set = next.side ? row.sides[next.side] : row
-    current = {
+    const current = {
       entryIdx: next.idx, setIdx: next.i, side: next.side || null,
       name: exerciseNameText(exOr(entry.id)),
       setLabel: `${next.i + 1}/${entry.sets.length}${next.side ? ' · ' + next.side : ''}`,
@@ -28,13 +36,7 @@ export function projectWearState({ S = {}, timer, contextToken, revision = 0, re
       canComplete: modeOf({ ...entry.target, id: entry.id }) === 'reps' && modeForSet(row, entry.target) === 'reps' && modeForSet(set, entry.target) === 'reps' && setType(row) === 'straight' && setType(set) === 'straight' && !row.drops?.length && !row.clusters?.length && !set.drops?.length && !set.clusters?.length,
     }
     current.canEdit = current.canComplete && editingReady
-  }
-  return {
-    v: 1, contextToken: contextToken || '', revision, active, current,
-    vibrate: S.vibrate !== false,
-    lang: S.lang || 'en',
-    timer: active && timer ? { timerToken: timer.timerToken, endsAt: timer.endsAt || 0, leftMs: timer.paused ? Math.max(0, timer.left * 1000) : Math.max(0, (timer.endsAt || now) - now), paused: !!timer.paused, ready: !!timer.ready } : null,
-  }
+    return current
 }
 
 export function validateWearCommand(command, state) {

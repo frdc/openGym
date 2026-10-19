@@ -87,9 +87,9 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             JSONObject incoming = WearStateService.cached(WearActivity.this);
-            if (incoming.optString("contextToken").equals(state.optString("contextToken")) && incoming.optLong("revision") == state.optLong("revision")) return;
+            if (incoming.toString().equals(state.toString())) return;
             state = incoming;
-            // A cache update may be newer, but only the round-trip sync enables controls.
+            // Online fallback controls still require a fresh round trip; local work is durable.
             confirmedAt = 0; render(); sync();
         }
     };
@@ -206,17 +206,21 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         }).addOnFailureListener(e -> { phone = ""; confirmedAt = 0; updateControls(); });
     }
     @Override public void onMessageReceived(MessageEvent event) {
-        if (!foreground || !event.getSourceNodeId().equals(phone) || event.getData().length > 16384) return;
+        if (!foreground || !event.getSourceNodeId().equals(phone) || event.getData().length > WearProtocol.STATE_MESSAGE_BYTES) return;
         try {
             JSONObject packet = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
             if ("/opengym/v1/state".equals(event.getPath())) {
                 if (!syncId.equals(packet.optString("syncId"))) return;
                 JSONObject incoming = packet.getJSONObject("state");
                 if (!WearStateService.receive(this, incoming, packet.optLong("sentAt", System.currentTimeMillis()))) return;
-                state = incoming; confirmedAt = SystemClock.elapsedRealtime(); restoreHeartSession(); render(); drainOutbox();
-                WearHeartStore.get(this).snapshot(incoming, phone);
+                state = WearStateService.cached(this); confirmedAt = SystemClock.elapsedRealtime(); restoreHeartSession(); render(); drainOutbox();
+                WearHeartStore.get(this).snapshot(state, phone);
+                WearStateService.replay(this, phone);
             } else if ("/opengym/v1/reply".equals(event.getPath())) {
                 if (packet.optInt("v") != 1) return;
+                if (WearStandalone.acknowledge(this, packet)) {
+                    WearStateService.refresh(this); state = WearStateService.cached(this); render(); WearStateService.replay(this, phone); return;
+                }
                 if (pending.equals(packet.optString("requestId")) && !pending.isEmpty()) {
                     JSONObject queued=WearOutbox.read(this);
                     if(queued!=null && pending.equals(queued.optString("requestId"))) {
@@ -232,7 +236,41 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         } catch (Exception ignored) { }
     }
     private boolean enabled() { return !ambient && WearProtocol.canControl(!phone.isEmpty(), confirmedAt, SystemClock.elapsedRealtime(), !pending.isEmpty()); }
-    private boolean localEditing() { return !ambient && state.optBoolean("active") && !state.optString("contextToken").isEmpty() && pending.isEmpty() && WearOutbox.read(this)==null; }
+    private boolean standaloneMode() { return state.optJSONObject("standalone") != null && WearOutbox.read(this) == null; }
+    private boolean standaloneEnabled() { return !ambient && standaloneMode() && WearStandalone.available(this); }
+    private boolean controlsAvailable() { return standaloneMode() ? standaloneEnabled() : enabled(); }
+    private JSONObject effort() {
+        if (standaloneMode()) return state.optJSONObject("effort");
+        JSONObject mark = state.optJSONObject("heartCapture");
+        return mark != null && "effort".equals(mark.optString("phase")) ? mark : null;
+    }
+    private boolean localEditing() { return standaloneMode() ? standaloneEnabled() : !ambient && state.optBoolean("active") && !state.optString("contextToken").isEmpty() && pending.isEmpty() && WearOutbox.read(this)==null; }
+    private void localAction(String action) {
+        if (!standaloneEnabled()) return;
+        try {
+            long wall = System.currentTimeMillis();
+            JSONObject event = new JSONObject().put("action", action).put("at", wall);
+            if ("edit-set".equals(action)) {
+                if (draft == null || !validDraft(state.optJSONObject("current"))) return;
+                event.put("field",draft.field).put("value",draft.value).put("unit",draft.unit);
+            }
+            boolean heart = "start".equals(action) && WearHeartService.running && WearHeartStore.get(this).canStart();
+            if ("start".equals(action)) {
+                event.put("heart", heart);
+                if (heart) WearHeartStore.get(this).startTap(wall,SystemClock.elapsedRealtime());
+            }
+            if ("complete".equals(action)) {
+                WearHeartCapture capture = WearHeartStore.get(this).current();
+                if (capture != null) WearHeartStore.get(this).completeTap(capture.token,SystemClock.elapsedRealtime());
+            }
+            if (!WearStandalone.perform(this,event)) {
+                WearHeartStore.get(this).rejected(); feedback=R.string.unconfirmed; render(); return;
+            }
+            draft=null; feedback=R.string.offline_saved;
+            WearStateService.refresh(this); state=WearStateService.cached(this); render();
+            WearStateService.replay(this,phone);
+        } catch (Exception e) { WearHeartStore.get(this).rejected(); feedback=R.string.unconfirmed; render(); }
+    }
     private void drainOutbox() {
         JSONObject command=WearOutbox.read(this);
         if(command==null || WearOutbox.conflicted(this) || !enabled()) return;
@@ -261,6 +299,10 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         pending = ""; pendingEdit = false; draft = null; confirmedAt = 0; feedback = WearOutbox.read(this)!=null ? R.string.offline_saved : R.string.unconfirmed; render();
     }
     private void send(String action) {
+        if (standaloneMode()) {
+            localAction("heart-start".equals(action) ? "start" : "heart-cancel".equals(action) ? "cancel-effort" : action);
+            return;
+        }
         boolean durable="edit-set".equals(action) || "complete".equals(action);
         boolean connected=enabled();
         if ((!connected && !(durable && localEditing())) || WearOutbox.read(this)!=null) return;
@@ -314,7 +356,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     }
     private void openEditor(String field) {
         JSONObject current = state.optJSONObject("current");
-        if (!(enabled() || localEditing()) || current == null || !current.optBoolean("canEdit")) return;
+        if (!(controlsAvailable() || localEditing()) || current == null || !current.optBoolean("canEdit")) return;
         double value = current.optDouble("r".equals(field) ? "repsValue" : "loadValue", Double.NaN);
         if (!Double.isNaN(value) && (!Double.isFinite(value) || value < 0 || value > 10000 || ("r".equals(field) && value != Math.rint(value)))) return;
         draft = new WearEditor(state.optString("contextToken"), targetIdentity(current), field, current.optString("loadUnit"), value, current.optDouble("loadStep", 1), current.optDouble("loadStart", Double.NaN)); options = false; render();
@@ -356,8 +398,8 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         return state.optBoolean("active") ? R.string.connected : R.string.open_phone;
     }
     private boolean isResting() {
-        JSONObject capture = state.optJSONObject("heartCapture"), timer = state.optJSONObject("timer");
-        if (capture != null && "effort".equals(capture.optString("phase"))) return false;
+        JSONObject timer = state.optJSONObject("timer");
+        if (effort() != null) return false;
         return state.optBoolean("active") && timer != null && !timer.optBoolean("ready") &&
             (timer.optBoolean("paused") ? timer.optLong("leftMs") > 0 : timer.optLong("endsAt") > System.currentTimeMillis());
     }
@@ -503,6 +545,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         return WearEditor.heartFresh(WearHeartService.running, WearHeartService.latestBpm, WearHeartService.latestElapsed, SystemClock.elapsedRealtime());
     }
     private void startSet() {
+        if (standaloneMode()) { localAction("start"); return; }
         if (!enabled()) return;
         if (!WearHeartService.running) { toggleHeart(); return; }
         if (freshHeart()) send("heart-start");
@@ -531,7 +574,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     private void renderAmbient() {
         content.setTag("ambient-screen");
         ambientText(clockTime(System.currentTimeMillis()), 17, "ambient-clock").setPadding(0,dp(10),0,dp(10));
-        JSONObject current = state.optJSONObject("current"), timer = state.optJSONObject("timer"), capture = state.optJSONObject("heartCapture");
+        JSONObject current = state.optJSONObject("current"), timer = state.optJSONObject("timer"), capture = effort();
         if (!state.optBoolean("active") || current == null) {
             ambientText("OpenGym",14,"ambient-name");
             ambientText(getString(state.optBoolean("active") ? R.string.sets_finished : R.string.open_phone),13,"ambient-phase");
@@ -539,7 +582,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         }
         TextView name = ambientText(current.optString("name"),16,"ambient-name"); name.setMaxLines(1); name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         ambientText(current.optString("setLabel"),12,"ambient-set");
-        boolean effort = capture != null && "effort".equals(capture.optString("phase"));
+        boolean effort = capture != null;
         boolean paused = timer != null && timer.optBoolean("paused") && timer.optLong("leftMs") > 0;
         boolean resting = !effort && timer != null && !timer.optBoolean("ready") && (paused || timer.optLong("endsAt") > System.currentTimeMillis());
         ambientText(getString(effort ? R.string.phase_effort : resting ? (paused ? R.string.phase_paused : R.string.phase_rest) : R.string.phase_ready),16,"ambient-phase");
@@ -610,8 +653,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
                     pause.setTag("rest-pause");
                 } else if (current.optBoolean("canComplete")) {
                     complete = primaryButton(() -> {
-                        JSONObject mark = state.optJSONObject("heartCapture");
-                        if (mark == null || !"effort".equals(mark.optString("phase"))) startSet(); else send("complete");
+                        if (effort() == null) startSet(); else send("complete");
                     });
                 } else text(getString(R.string.use_phone), 12);
             } else {
@@ -624,8 +666,8 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             if (state.optBoolean("active") && current != null && (complete != null || pause != null)) arrangeWorkout();
             if (feedback == R.string.unconfirmed || feedback == R.string.edit_changed) text(getString(feedback), 11);
         }
-        if(WearOutbox.read(this)!=null && phaseLabel!=null) {
-            phaseLabel.setText(getString(WearOutbox.conflicted(this)?R.string.offline_conflict:R.string.offline_saved));
+        if((WearOutbox.read(this)!=null || WearStandalone.pending(this)>0 || WearStandalone.conflicted(this)) && phaseLabel!=null) {
+            phaseLabel.setText(getString(WearOutbox.conflicted(this) || WearStandalone.conflicted(this)?R.string.offline_conflict:R.string.offline_saved));
             phaseLabel.setTextSize(10);
         }
         updateTimer(); updateControls(); updateHeart();
@@ -712,7 +754,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             enableHeart = option(WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", "toggle-heart", this::toggleHeart);
             JSONObject current = state.optJSONObject("current");
             JSONObject mark = state.optJSONObject("heartCapture");
-            if (state.optBoolean("active") && current != null && current.optBoolean("canComplete") && (mark == null || !"effort".equals(mark.optString("phase")))) {
+            if (!standaloneMode() && state.optBoolean("active") && current != null && current.optBoolean("canComplete") && (mark == null || !"effort".equals(mark.optString("phase")))) {
                 manualComplete = option(R.string.complete_without_heart, "✓", "complete-no-heart", () -> send("complete"));
             }
             JSONObject capture = state.optJSONObject("heartCapture");
@@ -723,7 +765,22 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) text("✓ " + getString(R.string.rest_notifications), 14);
             else option(R.string.rest_notifications, "🔔", "notification-permission", () -> requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 1));
         } else {
+            JSONObject exercise = effort();
+            if (standaloneMode() && exercise != null) {
+                option(exercise.optBoolean("paused") ? R.string.resume_effort : R.string.pause_effort, exercise.optBoolean("paused") ? "▶" : "Ⅱ", "effort-pause", () -> {
+                    JSONObject live = effort(); if (live != null) localAction(live.optBoolean("paused") ? "resume-effort" : "pause-effort");
+                }).setEnabled(standaloneEnabled());
+            }
             option(R.string.heart_settings, "♥", "heart-settings", () -> { optionsPage = "heart"; render(); });
+            if (WearStandalone.pending(this)>0 || WearStandalone.conflicted(this)) option(R.string.offline_review,"◷","standalone-review",() -> {
+                new AlertDialog.Builder(this).setTitle(WearStandalone.conflicted(this)?R.string.offline_conflict:R.string.offline_saved)
+                    .setMessage(getString(R.string.standalone_explanation))
+                    .setPositiveButton(android.R.string.ok,null)
+                    .setNeutralButton(R.string.offline_discard,(dialog,which)->new AlertDialog.Builder(this).setMessage(R.string.standalone_discard)
+                        .setNegativeButton(android.R.string.cancel,null).setPositiveButton(android.R.string.ok,(d,w)->{
+                            if (WearStandalone.discard(this)) { WearStandalone.receive(this,WearStateService.remote(this)); WearStateService.refresh(this); state=WearStateService.cached(this); render(); sync(); }
+                        }).show()).show();
+            });
             if(WearOutbox.read(this)!=null) option(R.string.offline_review,"◷","offline-review",() -> {
                 JSONObject queued=WearOutbox.read(this);
                 JSONObject base=queued==null?null:queued.optJSONObject("baseline");
@@ -743,7 +800,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     private void updateControls() {
         updateWorkoutScreen();
         if (ambient) return;
-        boolean enabled = enabled() && state.optBoolean("active") && WearOutbox.read(this)==null;
+        boolean enabled = controlsAvailable() && state.optBoolean("active") && WearOutbox.read(this)==null;
         if(connectionIndicator != null) {
             int status = connectionStatus();
             connectionIndicator.setVisibility(status == R.string.disconnected || status == R.string.phone_unresponsive ? View.VISIBLE : View.INVISIBLE);
@@ -759,7 +816,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             action(startSet, R.string.heart_start_set, "▶", true);
             startSet.setText(showingRest ? "" : getString(R.string.heart_start_short));
             if (!showingRest) startSet.setPadding(dp(4),0,dp(4),0);
-            startSet.setEnabled(enabled && (!WearHeartService.running || freshHeart()));
+            startSet.setEnabled(enabled && (standaloneMode() || !WearHeartService.running || freshHeart()));
         }
         JSONObject current = state.optJSONObject("current");
         if (manualComplete != null) manualComplete.setEnabled((enabled || localEditing()) && current != null && current.optBoolean("canComplete"));
@@ -792,11 +849,11 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         if (WearHeartService.running) {
             heartPreference().edit().remove("context").apply();
             JSONObject capture = state.optJSONObject("heartCapture");
-            if (enabled() && capture != null && "effort".equals(capture.optString("phase"))) send("heart-cancel");
+            if (!standaloneMode() && enabled() && capture != null && "effort".equals(capture.optString("phase"))) send("heart-cancel");
             startService(new Intent(this, WearHeartService.class).setAction("stop")); render(); return;
         }
-        if (!enabled()) return;
-        if (WearHeartResume.allowed(heartPreference().getString("context",""),state.optString("contextToken"),state.optBoolean("active"),checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,enabled())) { startHeart(); return; }
+        if (!controlsAvailable()) return;
+        if (WearHeartResume.allowed(heartPreference().getString("context",""),state.optString("contextToken"),state.optBoolean("active"),checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,controlsAvailable())) { startHeart(); return; }
         new AlertDialog.Builder(this).setTitle(R.string.heart_title).setMessage(R.string.heart_consent)
             .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.heart_enable, (dialog, which) -> {
                 if (checkSelfPermission(Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[] { Manifest.permission.BODY_SENSORS }, 42);
@@ -808,11 +865,11 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         if (!state.optBoolean("active")) { heartPreference().edit().remove("context").apply(); return; }
         String current=state.optString("contextToken");
         if (!foreground || ambient || WearHeartService.running || current.equals(heartRestoreAttempt)) return;
-        if (!WearHeartResume.allowed(heartPreference().getString("context",""),current,true,checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,enabled())) return;
+        if (!WearHeartResume.allowed(heartPreference().getString("context",""),current,true,checkSelfPermission(Manifest.permission.BODY_SENSORS)==PackageManager.PERMISSION_GRANTED,controlsAvailable())) return;
         heartRestoreAttempt=current; startHeart();
     }
     private void startHeart() {
-        if (!foreground || !state.optBoolean("active") || !enabled()) return;
+        if (!foreground || !state.optBoolean("active") || !controlsAvailable()) return;
         heartPreference().edit().putString("context",state.optString("contextToken")).apply();
         try { startForegroundService(new Intent(this, WearHeartService.class).setAction("start").putExtra("contextToken",state.optString("contextToken"))); } catch (Exception e) { WearHeartService.status = R.string.heart_unavailable; }
         render();
@@ -820,7 +877,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(requestCode, permissions, grants);
         if (requestCode == 42) {
-            if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) { if (enabled()) startHeart(); else { sync(); render(); } }
+            if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) { if (controlsAvailable()) startHeart(); else { sync(); render(); } }
             else { WearHeartService.status = R.string.heart_unavailable; render(); }
         }
     }
@@ -843,15 +900,14 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             if (fresh && heartPulse == null) { heartPulse = android.animation.ObjectAnimator.ofFloat(heartReading, "alpha", 1f, 0.35f, 1f); heartPulse.setDuration(1200); heartPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE); heartPulse.start(); }
             if (!fresh) stopHeartPulse();
         }
-        if (enableHeart != null) { action(enableHeart, WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", !WearHeartService.running); enableHeart.setEnabled(WearHeartService.running || enabled()); }
-        JSONObject mark = state.optJSONObject("heartCapture");
-        boolean start = mark == null || !"effort".equals(mark.optString("phase"));
+        if (enableHeart != null) { action(enableHeart, WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", !WearHeartService.running); enableHeart.setEnabled(WearHeartService.running || controlsAvailable()); }
+        boolean start = effort() == null;
         action(complete, start ? R.string.heart_start_set : R.string.complete, start ? "▶" : "✓", start);
         if (complete != null && start && pending.isEmpty()) complete.setText(getString(R.string.heart_start_short));
         if (complete != null && startSet != null && !showingRest) {
             complete.setText(getString(R.string.complete_short)); complete.setPadding(dp(4),0,dp(4),0);
         }
-        if (complete != null && start && WearHeartService.running && !fresh) {
+        if (!standaloneMode() && complete != null && start && WearHeartService.running && !fresh) {
             complete.setText(getString(R.string.heart_wait_short));
             complete.setContentDescription(getString(WearHeartService.status));
             complete.setEnabled(false);
@@ -859,17 +915,20 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     }
     private void updateTimer() {
         if (rest == null || ambient) return;
-        JSONObject timer = state.optJSONObject("timer"), capture = state.optJSONObject("heartCapture");
+        JSONObject timer = state.optJSONObject("timer"), capture = effort();
         if (phaseLabel != null) {
-            boolean effort = capture != null && "effort".equals(capture.optString("phase"));
+            boolean effort = capture != null;
             boolean resting = timer != null && !timer.optBoolean("ready") && (timer.optBoolean("paused") ? timer.optLong("leftMs") > 0 : timer.optLong("endsAt") > System.currentTimeMillis());
             int label = effort ? R.string.phase_effort : resting ? (timer.optBoolean("paused") ? R.string.phase_paused : R.string.phase_rest) : R.string.phase_ready;
-            phaseLabel.setText(WearOutbox.read(this)!=null ? getString(WearOutbox.conflicted(this)?R.string.offline_conflict:R.string.offline_saved) : state.optJSONObject("current").optString("setLabel"));
-            phaseLabel.setContentDescription(getString(label) + " · " + state.optJSONObject("current").optString("setLabel"));
+            JSONObject current=state.optJSONObject("current"); String setLabel=current==null?"":current.optString("setLabel");
+            boolean unsynced=WearOutbox.read(this)!=null || WearStandalone.pending(this)>0 || WearStandalone.conflicted(this);
+            phaseLabel.setText(unsynced ? getString(WearOutbox.conflicted(this)||WearStandalone.conflicted(this)?R.string.offline_conflict:R.string.offline_saved) : setLabel);
+            phaseLabel.setContentDescription(getString(label) + " · " + setLabel);
         }
-        if (!options && capture != null && "effort".equals(capture.optString("phase"))) {
+        if (!options && capture != null) {
             WearHeartCapture local = WearHeartStore.get(this).current();
             long elapsed = local != null && local.token.equals(capture.optString("token")) ? SystemClock.elapsedRealtime() - local.tapElapsed : Math.max(0, System.currentTimeMillis() - capture.optLong("startedAt", System.currentTimeMillis()));
+            if (standaloneMode()) elapsed=capture.optLong("elapsedMs")+(capture.optBoolean("paused")?0:Math.max(0,System.currentTimeMillis()-capture.optLong("resumedAt",System.currentTimeMillis())));
             long seconds = Math.max(0, elapsed / 1000); rest.setText(String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60)); return;
         }
         if (!options && timer == null) { rest.setText("00:00"); return; }
@@ -878,7 +937,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         long seconds = Math.max(0, (left + 999) / 1000);
         String label = timer.optBoolean("ready") || seconds == 0 ? getString(R.string.ready) : String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
         if (rest == pause && !pending.isEmpty()) label = getString(R.string.sending_short);
-        if (options && !enabled() && pending.isEmpty()) label += "\n" + getString(R.string.last_timer);
+        if (options && !standaloneMode() && !enabled() && pending.isEmpty()) label += "\n" + getString(R.string.last_timer);
         if (options && !timer.optBoolean("paused") && !timer.optBoolean("ready") && !WearTimer.prefs(this).getBoolean("armed", false) && seconds > 0) label += "\n" + getString(R.string.alarm_unavailable);
         rest.setText(label);
     }

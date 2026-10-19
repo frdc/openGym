@@ -169,3 +169,17 @@ Added WearOutbox: one durable edit or completion saved synchronously before tran
 Decimal report (32.2 becoming 32) remains unreproduced. Added regressions for the full Movement sequence and actual phone edit/cascade storage; instrumentation confirms 25.4 → 32.2, display and durable JSON. No demonstrated rounding defect was found or claimed fixed. User says it seems to affect all exercises; physical reproduction is still required.
 
 Validation: 19 focused web tests, 19 Java unit tests and 24 emulator instrumentation tests passed. The first instrument run found one outdated online-only assertion and a 1 dp editor clipping regression; both resolved before the passing full run. Final follow-up only replaces raw command names with exercise/set/value text in the pending-action dialog. Physical watch not connected via ADB during this task; no physical installation claimed.
+
+### Prepared workouts run independently on Wear — 2026-10-19
+
+The watch now executes a prepared workout locally: start/pause/resume effort, edit reps/load, save a set, start/pause/extend/skip rest and continue to the next set without a phone response or heart reading. A single committed SharedPreferences document persists the runtime and event journal before showing success. Local actions survive Activity recreation; pending work is retained on session replacement or conflicting phone edits, with explicit review/discard controls.
+
+Phone reopening replays ordered events into the owner-specific local store. Stable session tokens, event IDs, durable receipts and exact ACKs prevent duplicate completion after retries or restarts. Private timer seeds preserve phone-origin rest controls, absolute deadlines and pauses; expired breaks are not restarted. Both devices cap rest at 900 seconds. Heart capture remains optional and follows existing consent, with validated local starts bound to their sets during synchronization. Existing simple repetition sets, sides and supersets are supported; selecting a new workout and unsupported complex sets retain the phone flow.
+
+Verification: full web suite **356 files / 3905 tests passed**, including real store archive/restart and actual UI timer integration. Six build-script tests, all 17 locales/2031 keys, web/cloud-bundle checks, mobile sync/bundle verification and final APK builds passed. Java suites: **6 phone + 40 watch tests**. Full emulator run: 27/28 passed; the remaining notification test passed in its 2-test background class after granting the missing emulator notification permission. Offline progression, paused effort/rest reopening and SharedPreferences failure/restore checks passed. No physical device was connected or installed.
+
+Final debug APKs (no duplicate backup copies):
+- Phone: `frontend/android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `f19ab4092304267d779e7d0d58c182132d4131ac0901f19dd7983c792c008f97`.
+- Watch: `frontend/android/wear/build/outputs/apk/debug/wear-debug.apk`, SHA-256 `7a83ce25ba39c66c58d951a4fa56dcd35fb95960aed7d8002f3d4caf5fe33191`.
+
+The local layout editor is running at `http://127.0.0.1:5178/tools/wear-layout/index.html`; its Codex panel opening is queued until the task becomes visible. The test emulator was closed after verification. Full plan and design are linked in [the project diary](project-diary.md).

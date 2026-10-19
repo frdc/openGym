@@ -7,13 +7,13 @@ function locate(S,b) {
   return null
 }
 export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
-  let owner=null, bindings={}, disposed=false, chain=Promise.resolve()
+  let owner=null, bindings={}, disposed=false, chain=Promise.resolve(), standaloneDirty=false
   const results=new Map()
   const serial = fn => { const run=chain.then(fn); chain=run.catch(()=>{}); return run }
   const check = key => { if(disposed || !getStore().localReady || getStore().ownerKey!==key) fail('stale-context') }
   async function load() {
     const s=getStore(); check(s.ownerKey)
-    if(owner!==s.ownerKey) { const key=s.ownerKey; const saved=await plugin.getHeartBindings({ownerKey:key}); check(key); owner=key; bindings=saved.bindings||{}; results.clear() }
+    if(owner!==s.ownerKey) { const key=s.ownerKey; const saved=await plugin.getHeartBindings({ownerKey:key}); check(key); owner=key; bindings=saved.bindings||{}; standaloneDirty=false; results.clear() }
     return owner
   }
   async function save(key) { check(key); await plugin.saveHeartBindings({ownerKey:key,bindings:structuredClone(bindings)}); check(key) }
@@ -24,9 +24,24 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
     const trimmed=(m.points||[]).some(p=>p[0]>end)
     await write(key,b,buildHeartRate({...m,effortEndMs:b.effortEndMs??m.effortEndMs,recoveryEndMs:end,endReason:reason,partial:trimmed||m.partial||m.status==='partial',...(trimmed?{effort:null,recovery:null}:{} )}))
   }
+  async function adoptStandalone(key) {
+    const s=getStore(), checkpoint=s.S.active?._wearStandalone
+    if(!checkpoint?.nodeId || checkpoint.sessionId!==s.activeSessionToken) return
+    let dirty=false
+    for(const [token,record] of Object.entries(checkpoint.hearts||{})) {
+      const row=rowAt(s.S,record.target), previous=bindings[token]
+      if(!record.invalid && row?.heartRate?.startedAt!==record.startedAt) continue
+      if(previous && (previous.nodeId!==checkpoint.nodeId || previous.sessionId!==checkpoint.sessionId || previous.startedAt!==record.startedAt)) fail('stale-target')
+      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId:s.S.active.id,nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:record.effortEndMs==null?'effort':'recovery',effortEndMs:record.effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
+      if(JSON.stringify(next)!==JSON.stringify(previous)) { bindings[token]=next;dirty=true }
+    }
+    if(dirty) standaloneDirty=true
+    if(standaloneDirty) { await save(key);standaloneDirty=false }
+  }
   async function reconcileNow() {
     if(!getStore().localReady || !plugin.getHeartBindings) return
     const key=await load()
+    await adoptStandalone(key)
     let dirty=false
     for(const b of Object.values(bindings)) {
       const row=locate(getStore().S,b)
@@ -45,6 +60,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   return {
     result(command,nodeId) { return owner===getStore().ownerKey ? results.get(`${nodeId}:${command.contextToken}:${command.requestId}`) : null },
     authorizedTokens() { return owner===getStore().ownerKey ? Object.entries(bindings).filter(([,b])=>!b.invalid).map(([token])=>token) : [] },
+    adoptStandalone() { return serial(async()=>{ if(plugin.getHeartBindings) await adoptStandalone(await load()) }) },
     projection() { if(owner!==getStore().ownerKey) return null; const c=capture(); return c?{token:c[0],startedAt:c[1].startedAt,phase:c[1].phase,effortEndMs:c[1].effortEndMs??null}:null },
     handle(command,nodeId) { return serial(async()=>{
       const key=await load(), request=`${nodeId}:${command.contextToken}:${command.requestId}`

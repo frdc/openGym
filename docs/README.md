@@ -1,5 +1,6 @@
 # Documentation
 
+- [Project diary](project-diary.md): reported issues, decisions and next steps.
 - [FAQ](FAQ.md): local data, accounts, media and removed features.
 - [Static hosting](SELF_HOSTING.md): build-time Firebase configuration, nginx and catalogue media.
 - [Mobile](MOBILE.md): Android build, native persistence and explicit iOS policy.

@@ -1,5 +1,31 @@
 import { it, expect, vi } from 'vitest'
 import { createWearHeartSession } from './wear-heart-session.js'
+import { projectStandalone, applyStandalone } from './wear-standalone.js'
+it('restores validated offline capture bindings after restart and receives delayed measurements', async () => {
+  const f = fixture()
+  f.store.S.unit = 'kg'; f.store.S.restSec = 60
+  f.store.S.active.entries[0].id = '0025'
+  f.store.S.active.entries[0].sets.forEach(s => { s.r = 8; s.w = 30 })
+  const token = '00000000-0000-4000-8000-000000000001'
+  const events = [{ seq: 1, id: token, action: 'start', at: 1000, step: 0, heart: true }, { seq: 2, id: '00000000-0000-4000-8000-000000000002', action: 'complete', at: 2000, step: 0 }]
+  f.store.S = applyStandalone(f.store.S, { v: 1, action: 'standalone-sync', contextToken: 's', streamId: 'stream', baseline: projectStandalone(f.store.S, 's').baseline, requestId: events[1].id, events }, 's')
+  f.store.S.active._wearStandalone.nodeId = 'watch'
+  await f.host.reconcile()
+  expect(f.host.authorizedTokens()).toContain(token)
+  await f.host.receive({ v: 1, requestId: 'measurement', token, measurement: { startedAt: 1000, effortEndMs: 1000, recoveryEndMs: 31000, endReason: 'next-set', points: [[0, 100], [1000, 150], [31000, 120]] } }, 'watch')
+  expect(f.store.S.active.entries[0].sets[0].heartRate.effort.peak).toBe(150)
+  expect(JSON.stringify(f.store.S.active.entries[0].sets[0].heartRate)).not.toContain(token)
+})
+it('retries a failed offline binding write before authorizing acknowledgment', async () => {
+  const f = fixture(), token = '00000000-0000-4000-8000-000000000001'
+  f.store.S.active.entries[0].sets[0].heartRate = { startedAt: 1000, points: [] }
+  f.store.S.active._wearStandalone = { sessionId: 's', nodeId: 'watch', hearts: { [token]: { target: { entryIdx: 0, setIdx: 0 }, startedAt: 1000, effortEndMs: null } } }
+  f.plugin.saveHeartBindings.mockRejectedValueOnce(new Error('disk-full'))
+  await expect(f.host.adoptStandalone()).rejects.toThrow('disk-full')
+  expect((await f.plugin.getHeartBindings()).bindings[token]).toBeUndefined()
+  await f.host.adoptStandalone()
+  expect((await f.plugin.getHeartBindings()).bindings[token]).toMatchObject({ startedAt: 1000, nodeId: 'watch' })
+})
 function fixture(initial={}) {
   const store={ownerKey:'a',localReady:true,activeSessionToken:'s',S:{active:{id:'w',entries:[{sets:[{done:false},{done:false}]}]},workouts:[]},flushLocal:vi.fn(async()=>{}),update(fn){const next=structuredClone(this.S);fn(next);this.S=next}}
   let journal=initial

@@ -278,6 +278,25 @@ export const useUI = create((set, get) => ({
     bookRestEnd(endsAt, sec, kind)
     runRest(set, get)
   },
+  // A watch replay carries the original deadline. Reopening the phone must neither restart
+  // an elapsed break nor announce a rest that already ended on the watch.
+  importWearRest(timer, target) {
+    const { entryIdx, setIdx } = target || {}
+    const context = timerContext()
+    if (!validContext(context)) return
+    get().stopRest()
+    if (!timer || timer.ready || typeof timer.timerToken !== 'string' || !timer.timerToken) return
+    const left = timer.paused ? timer.leftMs / 1000 : (timer.endsAt - Date.now()) / 1000
+    if (!Number.isFinite(left) || left <= 0 || left > REST_MAX) return
+    const total = Math.min(REST_MAX, Math.max(left, Number.isFinite(timer.leftMs) ? timer.leftMs / 1000 : left))
+    get().abandonWork()
+    pageHiddenAt = document.hidden ? Date.now() : null
+    retainTimer(REST_KEY)
+    set({ timer: { context, timerToken: timer.timerToken, left, total, endsAt: timer.paused ? 0 : timer.endsAt,
+      forIdx: entryIdx, ...(setIdx != null ? { forSet: setIdx } : {}), ...(timer.paused ? { paused: true } : {}) } })
+    if (timer.paused) holdRestAlert(left, total, timer.timerToken)
+    else { bookRestEnd(timer.endsAt, total); runRest(set, get) }
+  },
   // Holding the rest where it is — a longer break than planned, a machine to wait for, a phone
   // call (#193). Paused time does not count: the countdown stops, and so does everything that
   // would announce its end — the server's push and the alert this tab shows are cancelled, not
