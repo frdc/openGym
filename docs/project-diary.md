@@ -1,5 +1,15 @@
 # Diário do projeto
 
+## 2026-10-21 - Visualizador de movimento no PC
+
+- Trabalho anterior salvo no commit `77831066` e enviado para `frdc/openGym`, branch `codex/wear-standalone`, com autorização explícita do usuário. Limpeza de intermediários e log gerado liberou aproximadamente 186 MB, preservando APKs, evidências e configurações.
+- [Visualizador local](../frontend/tools/wear-motion/README.md) em `http://127.0.0.1:5180`, iniciado por `npm run motion:viewer` na pasta frontend. Mostra orientação do relógio em 3D, calibração, gráficos dos sensores e gravação/exportação JSON local limitada a 30 minutos.
+- Activity e socket exclusivos da versão debug; conexão via túnel ADB e servidor loopback, sem celular. Sensores liberados ao sair/encerrar; canais sem atualização expiram individualmente. Treinos e dados existentes preservados.
+- Modelo exibe um antebraço com cotovelo fixo e comprimento ilustrativo. Não estima posição absoluta, distância percorrida ou postura do braço inteiro. Referencial é relativo à calibração; mudança do tronco exige recalibração.
+- Validação: **29 testes Node, 51 unitários Wear, 5 instrumentados motion** aprovados, APKs debug e de testes compilados; suíte web existente com **356 arquivos / 3.905 testes** aprovada. Revisão independente aprovada após correções de encerramento concorrente e validade dos canais de sensores.
+- Fluxo confirmado em emulador: conexão → calibração → mudança de orientação/sensores → rotação 3D → gravação e exportação de **7.262 amostras**, incluindo referência de calibração e unidades. Evidências locais em `frontend/android/wear/build/motion-evidence/` (ignoradas pelo Git).
+- Usuário informou estar fora de casa. **A nova versão foi instalada apenas no emulador**; instalação e validação do visualizador no relógio físico continuam pendentes até ele estar acessível. APK pronto em `frontend/android/wear/build/outputs/apk/debug/wear-debug.apk`.
+
 ## 2026-10-21 - Instalação no celular e no relógio
 
 - APKs atuais conferidos: bundle mobile idêntico à cópia Android e compilação `:app:assembleDebug :wear:assembleDebug` aprovada.

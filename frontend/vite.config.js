@@ -93,7 +93,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(appVersion) },
   plugins: [react(), umami, flavor, swStamp, cloudBuild],
   base: './',
-  test: { maxWorkers: Math.min(4, availableParallelism()), exclude: [...configDefaults.exclude, 'scripts/build-mobile.test.mjs', 'scripts/check-cloud-bundle.test.mjs'] },
+  test: { maxWorkers: Math.min(4, availableParallelism()), exclude: [...configDefaults.exclude, 'scripts/build-mobile.test.mjs', 'scripts/check-cloud-bundle.test.mjs', 'tools/wear-motion/*.test.mjs'] },
   server: {
     proxy: {
       '/img': { target: media, changeOrigin: true },

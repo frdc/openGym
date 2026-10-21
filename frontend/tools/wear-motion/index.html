@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#101316">
+    <title>OpenGym · Motion Lab</title>
+    <link rel="stylesheet" href="/style.css">
+    <script type="module" src="/viewer.mjs"></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="OpenGym Motion Lab"><span class="brand-mark" aria-hidden="true">o<span>g</span></span><strong>OpenGym</strong><span class="brand-divider"></span><span class="brand-product">MOTION LAB</span></a>
+      <div class="local-badge"><span class="dot"></span> LOCAL <span class="badge-divider">/</span> WEAR OS</div>
+    </header>
+
+    <main>
+      <section class="page-heading" aria-labelledby="page-title">
+        <div><div class="eyebrow">LABORATÓRIO DE MOVIMENTO</div><h1 id="page-title">Seu movimento, <span>em perspectiva.</span></h1><p>Explore a orientação do relógio e os sinais dos sensores, ao vivo no seu PC.</p></div>
+        <div class="connection-pill" id="connection-pill" data-state="disconnected"><span class="dot"></span><span id="connection-label">Desconectado</span></div>
+      </section>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <div class="workspace">
+        <section class="scene-panel panel" aria-labelledby="scene-title">
+          <div class="panel-heading scene-heading"><div><span class="eyebrow">VISUALIZAÇÃO 3D</span><h2 id="scene-title">Orientação do relógio</h2></div><span class="live-label" id="live-label"><span class="dot"></span> SEM SINAL</span></div>
+          <div class="scene-wrap">
+            <canvas id="scene" aria-label="Antebraço e relógio em 3D. A orientação é medida após calibrar; o cotovelo e o comprimento do braço são ilustrativos."></canvas>
+            <div class="scene-hint" id="scene-hint"><span class="hint-rule"></span><div><strong id="hint-title">Pronto para conectar</strong><p id="hint-text">Conecte seu relógio para começar.</p></div></div>
+            <div class="pose-label"><span class="tiny-square"></span> POSIÇÃO ILUSTRATIVA <span>· COTOVELO FIXO</span></div>
+            <div class="scene-controls"><div class="camera-control" role="group" aria-label="Ângulo da câmera"><button data-camera="perspective" aria-pressed="true" title="Câmera em perspectiva">3D</button><button data-camera="front" aria-pressed="false">Frente</button><button data-camera="side" aria-pressed="false">Lado</button><button data-camera="top" aria-pressed="false">Topo</button></div><button class="pause-button" id="pause" aria-pressed="false"><span id="pause-icon" aria-hidden="true">Ⅱ</span> <span id="pause-label">Pausar</span></button></div>
+          </div>
+          <div class="scene-metrics"><div><span class="metric-label">TAXA RECEBIDA</span><strong><span id="rate">—</span> <small>Hz</small></strong></div><div><span class="metric-label">ÚLTIMA CHEGADA</span><strong><span id="age">—</span> <small>ms</small></strong></div><div><span class="metric-label">ORIENTAÇÃO</span><strong class="metric-state" id="orientation-state">Aguardando</strong></div></div>
+        </section>
+
+        <aside class="sidebar" aria-label="Controles da sessão">
+          <section class="panel connection-panel" aria-labelledby="connection-title">
+            <div class="section-number">01 <span>CONEXÃO</span></div>
+            <div class="panel-title-line"><h2 id="connection-title">Seu relógio</h2><button class="icon-button" id="refresh" title="Atualizar lista de relógios" aria-label="Atualizar lista de relógios">↻</button></div>
+            <label class="sr-only" for="device">Relógio disponível</label><select id="device"><option value="">Buscando relógios…</option></select>
+            <button class="button primary full" id="connect" disabled><span aria-hidden="true">↗</span> Conectar relógio</button>
+            <p class="helper" id="device-help">Conexão local via ADB. Somente relógios.</p>
+          </section>
+
+          <section class="panel calibration-panel" aria-labelledby="calibration-title">
+            <div class="section-number">02 <span>REFERÊNCIA</span></div><h2 id="calibration-title">Defina o ponto de partida</h2>
+            <ol class="calibration-steps"><li>Estenda o antebraço à frente.</li><li>Deixe a palma virada para baixo.</li><li>Aponte o topo da tela para os dedos.</li></ol>
+            <div class="arm-control"><span>Braço ilustrado</span><div role="group" aria-label="Braço ilustrado"><button data-arm="left" aria-pressed="true">Esquerdo</button><button data-arm="right" aria-pressed="false">Direito</button></div></div>
+            <button class="button secondary full" id="calibrate" disabled><span aria-hidden="true">⊕</span> Calibrar posição</button>
+            <p class="helper" id="calibration-help">Mantenha o tronco na mesma direção. Recalibre ao mudar de posição.</p>
+          </section>
+
+          <section class="panel recording-panel" aria-labelledby="recording-title">
+            <div class="section-number">03 <span>CAPTURA LOCAL</span></div><div class="panel-title-line"><h2 id="recording-title">Gravação</h2><span class="record-clock" id="record-clock">00:00</span></div>
+            <div class="record-buttons"><button class="button secondary" id="record" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">Gravar</span></button><button class="button quiet" id="export" disabled title="Baixar gravação JSON"><span aria-hidden="true">↓</span> Exportar</button></div>
+            <p class="helper" id="recording-help">Até 30 min · JSON no seu PC.<br>A pausa da visualização não pausa a gravação.</p>
+          </section>
+        </aside>
+      </div>
+
+      <section class="signals" aria-labelledby="signals-title">
+        <div class="signals-heading"><div><span class="eyebrow">TELEMETRIA</span><h2 id="signals-title">O movimento em números</h2></div><div class="chart-legend"><span class="legend-x">X</span><span class="legend-y">Y</span><span class="legend-z">Z</span><span class="legend-time">ÚLTIMOS 8 S</span></div></div>
+        <div class="chart-grid">
+          <article class="panel chart-panel"><div class="chart-heading"><h3>Aceleração</h3><span>m/s²</span></div><div class="channel-value" id="accel-value">Sem dados</div><canvas id="accel-chart" aria-label="Gráfico dos três eixos de aceleração nos últimos oito segundos"></canvas><div class="chart-caption"><span>Inclui gravidade</span><span class="sensor-state" id="accel-state">AGUARDANDO</span></div></article>
+          <article class="panel chart-panel"><div class="chart-heading"><h3>Velocidade angular</h3><span>rad/s</span></div><div class="channel-value" id="gyro-value">Sem dados</div><canvas id="gyro-chart" aria-label="Gráfico dos três eixos de velocidade angular nos últimos oito segundos"></canvas><div class="chart-caption"><span>Giroscópio</span><span class="sensor-state" id="gyro-state">AGUARDANDO</span></div></article>
+          <article class="panel chart-panel"><div class="chart-heading"><h3>Aceleração linear</h3><span>m/s²</span></div><div class="channel-value" id="linear-value">Sem dados</div><canvas id="linear-chart" aria-label="Gráfico dos três eixos de aceleração linear nos últimos oito segundos"></canvas><div class="chart-caption"><span>Sem gravidade</span><span class="sensor-state" id="linear-state">AGUARDANDO</span></div></article>
+        </div>
+      </section>
+      <footer><p><span class="footer-mark">og</span> Orientação medida. Posição ilustrativa. Nenhuma distância ou postura corporal é estimada.</p><span id="session-detail">SESSÃO LOCAL · SEM DADOS DE TREINO</span></footer>
+    </main>
+  </body>
+</html>

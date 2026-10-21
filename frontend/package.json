@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "motion:viewer": "node tools/wear-motion/server.mjs",
+    "test:motion": "node --test tools/wear-motion/*.test.mjs",
     "build": "vite build",
     "build:mobile": "node scripts/build-mobile.mjs",
     "preview": "vite preview",

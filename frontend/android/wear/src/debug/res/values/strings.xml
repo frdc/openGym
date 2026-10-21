@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="motion_title">Movimento · debug</string>
+    <string name="motion_waiting">Aguardando conexão do PC</string>
+    <string name="motion_connected">Transmitindo ao PC · 25 Hz</string>
+    <string name="motion_slow">PC lento · conecte novamente</string>
+    <string name="motion_error">Não foi possível abrir o transporte local.</string>
+    <string name="motion_available">disponível</string>
+    <string name="motion_unavailable">indisponível</string>
+    <string name="motion_sensors">Orientação: %1$s\nAcel.: %2$s · Giro: %3$s\nLimite: 30 minutos</string>
+    <string name="motion_stop">Encerrar</string>
+</resources>
