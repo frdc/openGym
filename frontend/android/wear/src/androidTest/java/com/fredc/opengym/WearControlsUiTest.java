@@ -69,7 +69,9 @@ public class WearControlsUiTest {
             assertNotNull("Pause is available without opening options", get(activity, "pause"));
             assertNotNull(get(activity, "plus")); assertNotNull(get(activity, "skip"));
             assertNotNull("Load remains editable during rest", get(activity, "loadChip"));
-            set(activity, "options", true); render(activity);
+            View menu = activity.getWindow().getDecorView().findViewWithTag("options-menu");
+            assertNotNull("Options can be opened with a visible touch target", menu);
+            menu.performClick();
             assertNull("Workout controls are not mixed into settings", get(activity, "pause"));
             View root = activity.getWindow().getDecorView();
             assertNotNull(root.findViewWithTag("heart-settings"));

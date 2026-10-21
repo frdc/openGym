@@ -14,16 +14,55 @@ import androidx.core.graphics.PathParser;
 
 /** Material-inspired violet surfaces and font-independent icons for the native watch UI. */
 final class WearStyle {
+    static final class MetricButton extends Button {
+        float layoutScale=1;
+        MetricButton(android.content.Context context) { super(context); }
+    }
+    static final class QuietButton extends Button {
+        boolean menu;
+        float contentOffsetY;
+        QuietButton(android.content.Context context) { super(context); }
+        @Override protected void onDraw(Canvas canvas) {
+            Paint paint=getPaint(); paint.setColor(getCurrentTextColor());
+            float unit=getWidth()/48f, centerY=getHeight()/2f+contentOffsetY;
+            if (menu) {
+                canvas.save(); canvas.translate(0,contentOffsetY);
+                Drawable symbol=new Symbol(this,"options"); int size=Math.round(16*unit);
+                symbol.setBounds(Math.round(getWidth()/2f-size/2f),Math.round(13*unit),Math.round(getWidth()/2f+size/2f),Math.round(13*unit)+size); symbol.draw(canvas);
+                canvas.drawText(getText().toString(),(getWidth()-paint.measureText(getText().toString()))/2f,38*unit,paint);
+                canvas.restore();
+            } else {
+                Paint.FontMetrics metrics=paint.getFontMetrics();
+                canvas.drawText(getText().toString(),(getWidth()-paint.measureText(getText().toString()))/2f,centerY-(metrics.ascent+metrics.descent)/2f,paint);
+            }
+        }
+    }
     static final class EdgeButton extends Button {
+        boolean workoutLayout;
+        float layoutScale = 1;
         EdgeButton(android.content.Context context) { super(context); }
         @Override protected void onDraw(Canvas canvas) {
-            // Center the icon and label as one group, rather than pinning the icon to the left padding.
-            Paint text = getPaint(); text.setColor(getCurrentTextColor());
+            Paint text = new Paint(getPaint()); text.setColor(getCurrentTextColor());
             String label = getText().toString(); Drawable icon = getCompoundDrawablesRelative()[0];
-            float gap = icon == null ? 0 : 8 * getResources().getDisplayMetrics().density;
+            if (workoutLayout && icon != null) {
+                float unit=getWidth()/153.5f, iconX=43.75f*unit, iconY=getHeight()-23.5f*unit;
+                float labelX=60.75f*unit;
+                if (text.measureText(label)>70*unit) {
+                    // Longer status/action labels fit inside the bowl at the text baseline.
+                    float gap=8*unit, available=104*unit-icon.getBounds().width()-gap;
+                    if (text.measureText(label)>available) text.setTextSize(text.getTextSize()*available/text.measureText(label));
+                    float left=(getWidth()-icon.getBounds().width()-gap-text.measureText(label))/2f;
+                    iconX=left+icon.getBounds().width()/2f; labelX=left+icon.getBounds().width()+gap;
+                }
+                canvas.save(); canvas.translate(iconX-icon.getBounds().width()/2f,iconY-icon.getBounds().height()/2f); icon.draw(canvas); canvas.restore();
+                Paint.FontMetrics metrics=text.getFontMetrics();
+                canvas.drawText(label,labelX,iconY+unit-(metrics.ascent+metrics.descent)/2f,text); return;
+            }
+            // Other pages and pending actions center their current label as one group.
+            float gap = icon == null ? 0 : 8 * (workoutLayout ? layoutScale : 1) * getResources().getDisplayMetrics().density;
             float iconWidth = icon == null ? 0 : icon.getBounds().width();
             float x = (getWidth() - text.measureText(label) - iconWidth - gap) / 2f;
-            float y = (getHeight() + 12 * getResources().getDisplayMetrics().density) / 2f;
+            float y = workoutLayout ? getHeight()-23.5f*layoutScale*getResources().getDisplayMetrics().density : (getHeight() + 12 * getResources().getDisplayMetrics().density) / 2f;
             if (icon != null) { canvas.save(); canvas.translate(x,y-icon.getBounds().height()/2f); icon.draw(canvas); canvas.restore(); }
             Paint.FontMetrics metrics = text.getFontMetrics();
             canvas.drawText(label,x+iconWidth+gap,y-(metrics.ascent+metrics.descent)/2f,text);
@@ -34,7 +73,9 @@ final class WearStyle {
         // Replacing the typeface clears the applied axes, even when TextView caches the same settings string.
         if (!variation.equals(view.getFontVariationSettings())) {
             android.graphics.Typeface base = view.getResources().getFont(R.font.nunito);
-            view.setTypeface(android.graphics.Typeface.create(base, weight, false));
+            // The variable font starts at weight 200. Requesting a bold Typeface as
+            // well as the wght axis adds synthetic weight on Android.
+            view.setTypeface(base);
             view.setFontVariationSettings(variation);
         }
         if (numbers) view.setFontFeatureSettings("tnum");
@@ -57,11 +98,11 @@ final class WearStyle {
             private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
             private final Path path = new Path();
             @Override public void draw(Canvas canvas) {
-                paint.setColor(button.isEnabled() ? fill : DISABLED);
+                paint.setColor(button.isEnabled() ? (button instanceof MetricButton ? 0xCC2A154B : fill) : DISABLED);
                 path.reset();
-                if (button instanceof EdgeButton) {
-                    var bounds = getBounds(); float w = bounds.width(), h = bounds.height() - 6 * density, radius = Math.min(8 * density, h * .28f);
-                    canvas.save(); canvas.translate(bounds.left, bounds.top + 6 * density);
+                if (button instanceof EdgeButton edgeButton) {
+                    var bounds = getBounds(); float w = bounds.width(), h = edgeButton.workoutLayout ? Math.min(bounds.height(),45*density*edgeButton.layoutScale) : bounds.height() - 6 * density, radius = Math.min(8 * density * (edgeButton.workoutLayout ? edgeButton.layoutScale : 1), h * .28f);
+                    canvas.save(); canvas.translate(bounds.left, bounds.bottom-h);
                     path.moveTo(radius, 0); path.lineTo(w - radius, 0); path.quadTo(w, 0, w, radius);
                     path.lineTo(w, h * .22f); path.cubicTo(w, h * .65f, w * .76f, h, w * .5f, h);
                     path.cubicTo(w * .24f, h, 0, h * .65f, 0, h * .22f);
@@ -70,7 +111,8 @@ final class WearStyle {
                 }
                 android.graphics.RectF box = new android.graphics.RectF(getBounds());
                 if ("edit-reps".equals(button.getTag()) || "edit-load".equals(button.getTag()) || "cancel-edit".equals(button.getTag())) {
-                    box.inset(0, 8 * density); path.addRoundRect(box, 20 * density, 20 * density, Path.Direction.CW);
+                    float scale=button instanceof MetricButton metric ? metric.layoutScale : 1;
+                    box.inset(0, 8 * density * scale); path.addRoundRect(box, 20 * density * scale, 20 * density * scale, Path.Direction.CW);
                 } else {
                     if ("heart-settings".equals(button.getTag()) || "alerts-settings".equals(button.getTag()) || "reconnect".equals(button.getTag())) box.inset(0,3*density);
                     path.addRoundRect(box,corners,Path.Direction.CW);
@@ -91,18 +133,38 @@ final class WearStyle {
         button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x30FFFFFF), surface, null));
         button.getBackground().setState(button.getDrawableState());
         button.setTextColor(new ColorStateList(new int[][] {new int[] {-android.R.attr.state_enabled}, new int[] {}}, new int[] {DISABLED_INK, ink}));
-        typography(button, button instanceof EdgeButton ? 700 : 600, true);
+        typography(button, button instanceof MetricButton || (button instanceof EdgeButton e && e.workoutLayout) ? 800 : button instanceof EdgeButton ? 700 : 600, true);
         button.setPadding(Math.round(8 * density), button instanceof EdgeButton ? Math.round(12 * density) : 0, Math.round(8 * density), button instanceof EdgeButton ? Math.round(4 * density) : 0);
     }
 
     static void icon(Button button, String kind) {
         Drawable icon = kind == null || kind.isEmpty() ? null : new Symbol(button, kind);
         if (icon != null) {
-            int size = Math.round((button instanceof EdgeButton ? 24 : "settings".equals(kind) ? 28 : 18) * button.getResources().getDisplayMetrics().density);
+            int size = Math.round((button instanceof EdgeButton edge ? (edge.workoutLayout ? 20*edge.layoutScale : 24) : "settings".equals(kind) ? 28 : 18) * button.getResources().getDisplayMetrics().density);
             icon.setBounds(0, 0, size, size);
         }
         button.setCompoundDrawablesRelative(icon, null, null, null);
         button.setCompoundDrawablePadding(Math.round(4 * button.getResources().getDisplayMetrics().density));
+    }
+
+    static void quiet(Button button) {
+        GradientDrawable mask=new GradientDrawable(); mask.setColor(Color.WHITE); mask.setCornerRadius(18*button.getResources().getDisplayMetrics().density);
+        button.setBackgroundTintList(null); button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22D3B1FF),null,mask));
+        button.setStateListAnimator(null); button.setPadding(0,0,0,0);
+        button.setTextColor(new ColorStateList(new int[][] {new int[] {-android.R.attr.state_enabled},new int[] {}},new int[] {DISABLED_INK,PRIMARY}));
+        typography(button,700,true);
+    }
+
+    static void menuAbove(Button button) {
+        if (button instanceof QuietButton quiet) { quiet.menu=true; button.setTextColor(0xFFD4C4E7); typography(button,650,false); return; }
+        labelAbove(button,"options");
+    }
+    static void labelAbove(Button button, String kind) {
+        Drawable menu=new Symbol(button,kind); int size=Math.round(16*button.getResources().getDisplayMetrics().density); menu.setBounds(0,0,size,size);
+        button.setCompoundDrawablesRelative(null,menu,null,null); button.setCompoundDrawablePadding(0);
+        button.setAutoSizeTextTypeWithDefaults(android.widget.TextView.AUTO_SIZE_TEXT_TYPE_NONE); button.setTextSize(8);
+        button.setPadding(0,Math.round(12*button.getResources().getDisplayMetrics().density),0,0);
+        button.setTextColor(0xFFD4C4E7); typography(button,600,false);
     }
 
     static void chevron(Button button) {
@@ -130,6 +192,7 @@ final class WearStyle {
                 case "chevron" -> "M9,5 L16,12 L9,19";
                 case "back" -> "M14,5 L7,12 L14,19 M7,12 H21";
                 case "menu" -> "M12,4 L12,4.1 M12,12 L12,12.1 M12,20 L12,20.1";
+                case "options" -> "M5,6 H19 M5,12 H19 M5,18 H19";
                 case "settings" -> "M9,2 H15 L16,5 L19,5 L22,10 L20,12 L22,14 L19,19 L16,19 L15,22 H9 L8,19 L5,19 L2,14 L4,12 L2,10 L5,5 L8,5 Z M12,8 A4,4 0,1 1,12,16 A4,4 0,1 1,12,8 Z";
                 default -> "M4,12 H20";
             };

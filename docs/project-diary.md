@@ -1,5 +1,20 @@
 # Diário do projeto
 
+## 2026-10-21 - Instalação no celular e no relógio
+
+- APKs atuais conferidos: bundle mobile idêntico à cópia Android e compilação `:app:assembleDebug :wear:assembleDebug` aprovada.
+- Atualização de `com.fredc.opengym.test` via `adb install -r --user 0` concluída com Success no Galaxy S23 Ultra (SM-S918B) e no Galaxy Watch Ultra (SM-L705F), preservando os diretórios de dados existentes.
+- Instalações confirmadas pelo novo `lastUpdateTime`; MainActivity no celular e WearActivity no relógio abertas com `Status: ok`. O relógio recebeu o layout corrigido. Esta etapa confirma instalação e abertura; não constitui um treino completo de validação em dispositivo físico.
+
+## 2026-10-20 - Layout aprovado aplicado ao relógio
+
+- Referência visual: [mockup de treino e descanso](../frontend/tools/wear-layout/mockup-rest.html), que substitui o desenho anterior para estas telas. [Plano concluído](superpowers/plans/2026-10-20-wear-approved-layout.md).
+- Timer, repetições e carga mantêm a mesma posição nas duas fases. Descanso recebe Pular e +15 s discretos nas laterais; Opções sem fundo substitui os pontos de navegação, com retorno explícito nas configurações.
+- A primeira implementação divergiu do mockup e foi considerada fiel prematuramente. A comparação enviada pelo usuário mostrou título truncado, deslocamentos e fonte incorreta. A correção usa a composição proporcional de 225 dp, inclusive em telas compactas, corrige os insets e o peso variável da Nunito, e separa a posição visual das áreas de toque sem sobreposição. Textos longos do botão principal se ajustam ao espaço da superfície curva.
+- Validação: 40 testes unitários Wear e 28 instrumentados passaram. Os dois testes de geometria/estados visuais passaram também com densidade equivalente a 192 dp. Após o ajuste final de textos longos, APK recompilado e teste de estados visuais novamente aprovado. Capturas reais de treino e descanso em ambos os tamanhos foram inspecionadas lado a lado com a referência, usando dados iguais, batimentos simulados e fundo parado.
+- Evidências locais em `frontend/android/wear/build/layout-evidence/comparison.html` e `comparison.png`; APK em `frontend/android/wear/build/outputs/apk/debug/wear-debug.apk`. As capturas são do emulador; nenhum relógio físico estava conectado para instalação.
+- Contrato de sincronização e execução standalone preservados.
+
 ## 2026-10-19 - Pendências de uso do relógio e do celular
 
 Contexto:

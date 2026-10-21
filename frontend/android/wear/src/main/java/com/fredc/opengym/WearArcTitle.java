@@ -15,7 +15,7 @@ final class WearArcTitle extends TextView {
 
     @Override protected void onDraw(Canvas canvas) {
         if (getWidth() == 0) return;
-        float density = getResources().getDisplayMetrics().density;
+        float density = getWidth()/225f;
         float radius = getWidth() * .45f;
         float centerX = getWidth() / 2f, centerY = radius + 18 * density;
         arc.reset();

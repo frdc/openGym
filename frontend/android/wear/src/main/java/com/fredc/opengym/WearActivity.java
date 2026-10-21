@@ -115,7 +115,8 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER_HORIZONTAL);
         content.setPadding(dp(30), dp(12), dp(30), dp(8));
         content.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(dp(30) + insets.getSystemWindowInsetLeft(), dp(12) + insets.getSystemWindowInsetTop(), dp(30) + insets.getSystemWindowInsetRight(), dp(8) + insets.getSystemWindowInsetBottom()); return insets;
+            boolean workout = content.findViewWithTag("workout-panel") != null;
+            view.setPadding((workout ? 0 : dp(30)) + insets.getSystemWindowInsetLeft(), (workout ? 0 : dp(12)) + insets.getSystemWindowInsetTop(), (workout ? 0 : dp(30)) + insets.getSystemWindowInsetRight(), (workout ? 0 : dp(8)) + insets.getSystemWindowInsetBottom()); return insets;
         }); scroll.addView(content); setContentView(scroll); render();
         getOnBackPressedDispatcher().addCallback(this,new androidx.activity.OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
@@ -456,7 +457,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         LinearLayout.LayoutParams params = (LinearLayout.LayoutParams)b.getLayoutParams(); params.height = dp(48); params.topMargin = dp(3); b.setLayoutParams(params); return b;
     }
     private Button rowButton(LinearLayout row, String label, String description, Runnable action) {
-        Button b = new Button(this); b.setText(label); b.setTextSize(16); b.setMaxLines(1); b.setAutoSizeTextTypeUniformWithConfiguration(12,16,1,android.util.TypedValue.COMPLEX_UNIT_SP); b.setAllCaps(false); b.setTag(description); b.setContentDescription("edit-reps".equals(description) ? getString(R.string.edit_reps) + ": " + label : "edit-load".equals(description) ? getString(R.string.edit_load) + ": " + label : "increase".equals(description) ? getString(R.string.increase) : "decrease".equals(description) ? getString(R.string.decrease) : description); b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(dp(48)); rounded(b, false);
+        Button b = "edit-reps".equals(description) || "edit-load".equals(description) ? new WearStyle.MetricButton(this) : new Button(this); b.setText(label); b.setTextSize(16); b.setMaxLines(1); b.setAutoSizeTextTypeUniformWithConfiguration(12,16,1,android.util.TypedValue.COMPLEX_UNIT_SP); b.setAllCaps(false); b.setTag(description); b.setContentDescription("edit-reps".equals(description) ? getString(R.string.edit_reps) + ": " + label : "edit-load".equals(description) ? getString(R.string.edit_load) + ": " + label : "increase".equals(description) ? getString(R.string.increase) : "decrease".equals(description) ? getString(R.string.decrease) : description); b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(dp(48)); rounded(b, false);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(48), 1); params.setMargins(dp(2), 0, dp(2), 0); row.addView(b, params); b.setOnClickListener(v -> action.run()); return b;
     }
     private TextView heartIcon() {
@@ -516,24 +517,9 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         heartReading = heartIcon(); heartReading.setTag("heart-status");
         host.addView(heartReading,new FrameLayout.LayoutParams(dp(12),dp(12),Gravity.CENTER)); indicator(host);
     }
-    private void pageDots() {
-        View dots = new View(this) {
-            private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-            @Override protected void onDraw(android.graphics.Canvas canvas) {
-                for (int i=0;i<2;i++) {
-                    paint.setColor((i == 1) == options ? WearStyle.PRIMARY : WearStyle.MUTED);
-                    paint.setAlpha((i == 1) == options ? 255 : 90);
-                    canvas.drawCircle(getWidth()/2f + dp(i == 0 ? -5 : 5),getHeight()/2f,dp(2),paint);
-                }
-            }
-        };
-        dots.setTag("page-indicator"); dots.setContentDescription(getString(R.string.options) + (options ? " 2/2" : " 1/2"));
-        content.addView(dots,new LinearLayout.LayoutParams(-1,dp(12)));
-    }
     private void footerSpace() { content.addView(new View(this),new LinearLayout.LayoutParams(1,0,1)); }
     private Button primaryButton(Runnable action) {
         footerSpace();
-        if (draft == null) pageDots();
         Button button = new WearStyle.EdgeButton(this); button.setTag("main-action"); button.setAllCaps(false); button.setTextSize(18);
         button.setMaxLines(1); button.setIncludeFontPadding(false);
         button.setAutoSizeTextTypeUniformWithConfiguration(18,20,1,android.util.TypedValue.COMPLEX_UNIT_SP);
@@ -637,18 +623,8 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
                 loadChip = rowButton(chips, Double.isFinite(load) ? displayNumber(load) + " " + current.optString("loadUnit") : "— " + current.optString("loadUnit"), "edit-load", () -> openEditor("w"));
                 metricText(repsChip); metricText(loadChip);
                 if (showingRest) {
-                    content.removeView(chips);
-                    FrameLayout counter = content.findViewWithTag("workout-counter");
-                    counter.addView(chips,new FrameLayout.LayoutParams(-1,dp(48),Gravity.BOTTOM));
-                    for (Button chip : new Button[] {repsChip,loadChip}) {
-                        chip.setBackgroundColor(Color.TRANSPARENT); chip.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-                        chip.setPadding(0,0,0,0); chip.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE); chip.setTextSize(16); chip.setIncludeFontPadding(false);
-                    }
-                    TextView times = new TextView(this); times.setText("×"); times.setTextColor(WearStyle.INK); times.setTextSize(12); times.setGravity(Gravity.CENTER); times.setIncludeFontPadding(false);
-                    counter.addView(times,new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
-                    LinearLayout actions = row(); actions.setTag("rest-actions"); ((LinearLayout.LayoutParams)actions.getLayoutParams()).topMargin = dp(0);
-                    plus = rowButton(actions, "+15 s", "rest-plus", () -> send("plus15"));
-                    skip = rowButton(actions, "» " + getString(R.string.skip_short), "rest-skip", () -> send("skip"));
+                    skip = quietButton(getString(R.string.skip_short), "rest-skip", () -> send("skip"));
+                    plus = quietButton("+15 s", "rest-plus", () -> send("plus15"));
                     pause = primaryButton(() -> { JSONObject timer = state.optJSONObject("timer"); if (timer != null) send(timer.optBoolean("paused") ? "resume" : "pause"); });
                     pause.setTag("rest-pause");
                 } else if (current.optBoolean("canComplete")) {
@@ -698,42 +674,72 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         if (split < 0) return;
         android.text.SpannableString styled = new android.text.SpannableString(label);
         button.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE);
-        button.setTextSize(18);
-        styled.setSpan(new android.text.style.AbsoluteSizeSpan(11,true),split,label.length(),0);
+        button.setTextSize(16);
+        styled.setSpan(new android.text.style.RelativeSizeSpan(.75f),split,label.length(),0);
         styled.setSpan(new android.text.style.TypefaceSpan(android.graphics.Typeface.create(getResources().getFont(R.font.nunito),500,false)),split,label.length(),0);
         button.setText(styled);
     }
+    private Button quietButton(String label, String tag, Runnable action) {
+        Button button = new WearStyle.QuietButton(this); button.setText(label); button.setTag(tag); button.setAllCaps(false);
+        button.setContentDescription(label); button.setIncludeFontPadding(false); button.setGravity(Gravity.CENTER);
+        button.setMinWidth(0); button.setMinimumWidth(0); button.setMinHeight(0); button.setMinimumHeight(0);
+        button.setMaxLines(1); button.setAutoSizeTextTypeUniformWithConfiguration(8,11,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        WearStyle.quiet(button); button.setOnClickListener(view -> action.run()); return button;
+    }
     private void arrangeWorkout() {
-        View header = content.findViewWithTag("workout-header"), counter = content.findViewWithTag("workout-counter");
-        View metrics = showingRest ? content.findViewWithTag("rest-actions") : content.findViewWithTag("workout-metrics");
-        View dots = content.findViewWithTag("page-indicator"), primary = showingRest ? pause : complete;
+        View header = content.findViewWithTag("workout-header"), metrics = content.findViewWithTag("workout-metrics");
+        WearStyle.EdgeButton primary = (WearStyle.EdgeButton)(showingRest ? pause : complete);
+        primary.workoutLayout = true; primary.setTranslationX(0);
         ((android.view.ViewGroup)rest.getParent()).removeView(rest);
         ((android.view.ViewGroup)heartReading.getParent()).removeView(heartReading);
         ((android.view.ViewGroup)phaseLabel.getParent()).removeView(phaseLabel);
+        ((android.view.ViewGroup)connectionIndicator.getParent()).removeView(connectionIndicator);
+        rest.setTag("workout-counter"); rest.setTranslationY(0);
+        Button menu = quietButton(getString(R.string.options),"options-menu",() -> { options=true; optionsPage=""; render(); });
+        WearStyle.menuAbove(menu);
+        content.setPadding(0,0,0,0);
         FrameLayout panel = new FrameLayout(this) {
             @Override protected void onMeasure(int widthSpec,int heightSpec) {
                 int w = View.MeasureSpec.getSize(widthSpec), h = View.MeasureSpec.getSize(heightSpec);
-                boolean compact = h < dp(200);
-                position(header,-dp(30),compact ? 0 : dp(3.5f),w+dp(60),compact ? dp(44) : dp(52));
-                position(phaseLabel,-dp(30),compact ? dp(32) : dp(43),w+dp(60),dp(20));
-                int footer = h-dp(56), metricsTop = footer-dp(48), counterTop = compact ? dp(44) : Math.round(h*.34f);
-                int counterHeight = showingRest ? metricsTop-counterTop : Math.min(dp(56),metricsTop+dp(8)-counterTop);
-                position(counter,-dp(30),counterTop,w+dp(60),counterHeight);
-                rest.setAutoSizeTextTypeUniformWithConfiguration(24,compact ? 32 : 40,1,android.util.TypedValue.COMPLEX_UNIT_SP);
-                rest.setTranslationY(0);
-                if (compact) {
-                    int clockHeight=showingRest ? counterHeight-dp(12) : counterHeight;
-                    position(rest,-dp(30),counterTop,w+dp(60),clockHeight);
-                    position(heartReading,-dp(12),counterTop+dp(18),dp(12),dp(12));
-                } else {
-                    // Coordinates match the user's 225 dp preview export.
-                    position(rest,-dp(19.5f),dp((showingRest ? 98.5f : 105.5f)-4-28),dp(201),dp(56));
-                    position(heartReading,dp(76),dp(30),dp(12),dp(12));
+                // ScrollView first measures weighted children without a height constraint.
+                float scale=(h>0 ? Math.min(w,h) : w)/(float)dp(225), unit=dp(225)*scale/225f;
+                int touch=Math.round(48*unit), primaryTop=Math.round(175*unit), metricsTop=Math.round(126*unit);
+                int sideTop=metricsTop-touch, menuTop=sideTop-touch;
+                int sideWidth=touch, sideInset=Math.round(5*unit);
+                position(header,0,Math.round(2.4f*unit),w,Math.round(52*unit));
+                TextView title=header.findViewWithTag("workout-title"); title.setTextSize(18.5f*scale); WearStyle.typography(title,750,false);
+                position(phaseLabel,Math.round(54*unit),Math.round(47*unit),w-Math.round(108*unit),Math.round(20*unit));
+                phaseLabel.setTextSize((WearOutbox.read(WearActivity.this)!=null || WearStandalone.pending(WearActivity.this)>0 || WearStandalone.conflicted(WearActivity.this) ? 10 : 12)*scale);
+                int timerLeft=sideInset+sideWidth, timerWidth=w-2*timerLeft;
+                position(rest,timerLeft,Math.round(77.5f*unit),timerWidth,Math.round(56*unit));
+                rest.setAutoSizeTextTypeUniformWithConfiguration(20,Math.max(21,Math.round(40*scale)),1,android.util.TypedValue.COMPLEX_UNIT_SP);
+                position(heartReading,Math.round(w/2f-6*unit),Math.round(34*unit),Math.round(12*unit),Math.round(12*unit));
+                position(connectionIndicator,Math.round(35*unit),Math.round(49*unit),dp(6),dp(6));
+                float menuCenter=187*unit;
+                position(menu,Math.min(w-touch,Math.round(menuCenter-touch/2f)),menuTop,touch,touch);
+                ((WearStyle.QuietButton)menu).contentOffsetY=32*unit-menuTop;
+                menu.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE); menu.setTextSize(8*scale);
+                position(metrics,Math.round(31*unit),metricsTop,w-Math.round(62*unit),touch);
+                for (Button chip : new Button[] {repsChip,loadChip}) {
+                    chip.setTextSize(16*scale); chip.setPadding(dp(3),0,dp(3),0);
+                    ((WearStyle.MetricButton)chip).layoutScale=scale;
+                    LinearLayout.LayoutParams params=(LinearLayout.LayoutParams)chip.getLayoutParams();
+                    params.leftMargin=Math.round(unit); params.rightMargin=Math.round(unit); params.height=touch; chip.setLayoutParams(params);
                 }
-                position(metrics,0,metricsTop,w,dp(48));
-                position(dots,0,footer-dp(6),w,dp(12));
-                int primaryWidth=Math.min(dp(164),w+dp(12));
-                position(primary,(w-primaryWidth)/2,footer,primaryWidth,dp(56));
+                if (showingRest) {
+                    position(skip,sideInset,sideTop,sideWidth,touch);
+                    position(plus,w-sideInset-sideWidth,sideTop,sideWidth,touch);
+                    for (Button button : new Button[] {skip,plus}) {
+                        button.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE); button.setTextSize(11*scale);
+                        ((WearStyle.QuietButton)button).contentOffsetY=105.5f*unit-(sideTop+touch/2f);
+                    }
+                }
+                primary.layoutScale=scale;
+                primary.setAutoSizeTextTypeUniformWithConfiguration(12,Math.max(13,Math.round(16*scale)),1,android.util.TypedValue.COMPLEX_UNIT_SP);
+                android.graphics.drawable.Drawable icon=primary.getCompoundDrawablesRelative()[0];
+                if (icon != null) { int size=Math.round(20*unit); icon.setBounds(0,0,size,size); }
+                int primaryWidth=Math.round(153.5f*unit);
+                position(primary,Math.round(w/2f-.5f*unit-primaryWidth/2f),primaryTop,primaryWidth,touch);
                 super.onMeasure(widthSpec,heightSpec);
             }
             private void position(View view,int left,int top,int width,int height) {
@@ -741,7 +747,9 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             }
         };
         panel.setTag("workout-panel"); panel.setClipChildren(false); panel.setClipToPadding(false);
-        for (View view : new View[] {header,counter,metrics,dots,primary,phaseLabel,rest,heartReading}) { content.removeView(view); panel.addView(view); }
+        for (View view : new View[] {header,metrics,primary,phaseLabel,rest,heartReading,connectionIndicator,menu,skip,plus}) {
+            if (view != null) { content.removeView(view); panel.addView(view); }
+        }
         content.removeAllViews(); content.addView(panel,new LinearLayout.LayoutParams(-1,0,1));
     }
     private void renderOptions() {
@@ -749,6 +757,9 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             if (optionsPage.isEmpty()) options = false; else optionsPage = "";
             render();
         });
+        if (optionsPage.isEmpty()) {
+            Button back=content.findViewWithTag("back"); back.setText(getString(R.string.back)); WearStyle.labelAbove(back,"back");
+        }
         if ("heart".equals(optionsPage)) {
             heartReading = text("", 14);
             enableHeart = option(WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", "toggle-heart", this::toggleHeart);
@@ -794,7 +805,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             });
             option(R.string.alert_settings, "◷", "alerts-settings", () -> { optionsPage = "alerts"; render(); });
             reconnect = option(R.string.refresh, "↻", "reconnect", this::sync);
-            footerSpace(); pageDots();
+            footerSpace();
         }
     }
     private void updateControls() {
@@ -836,8 +847,8 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         boolean paused = timer != null && timer.optBoolean("paused");
         if (pause == rest && pause != null) { palette(pause, paused ? WearStyle.PRIMARY : WearStyle.REST, WearStyle.ON_PRIMARY); WearStyle.typography(pause, 400, true); WearStyle.icon(pause, pending.isEmpty() ? (paused ? "play" : "pause") : null); pause.setContentDescription(getString(!pending.isEmpty() ? R.string.waiting : paused ? R.string.resume : R.string.pause)); }
         else action(pause, paused ? R.string.resume : R.string.pause, paused ? "▶" : "Ⅱ", true);
-        if (plus != null) { plus.setText("+15 s"); palette(plus, WearStyle.SURFACE, WearStyle.INK); WearStyle.icon(plus, "clock"); }
-        if (skip != null) { skip.setText(getString(R.string.skip_short)); WearStyle.icon(skip, "skip"); skip.setContentDescription(getString(R.string.skip)); }
+        if (plus != null) { plus.setText("+15 s"); }
+        if (skip != null) { skip.setText(getString(R.string.skip_short)); skip.setContentDescription(getString(R.string.skip)); }
         if (showingRest && startSet != null) {
             plus.setText("+15 s"); WearStyle.icon(plus, null);
             skip.setText("");

@@ -43,9 +43,18 @@ public class WearVisualStatesTest {
     }
     private void checkTargets(WearActivity activity, View view) {
         if (view instanceof Button && view.isShown()) {
-            assertTrue("Touch height: " + view.getTag(), view.getHeight() >= activity.dp(48));
-            assertTrue("Touch width: " + view.getTag(), view.getWidth() >= activity.dp(48));
-            Rect visible = new Rect(); assertTrue(view.getGlobalVisibleRect(visible));
+            View panel=activity.getWindow().getDecorView().findViewWithTag("workout-panel");
+            float scale=panel==null ? 1 : Math.min(1,Math.min(panel.getWidth(),panel.getHeight())/(float)activity.dp(225));
+            int target=Math.round(activity.dp(48)*scale);
+            assertTrue("Touch height: " + view.getTag(), view.getHeight() >= target);
+            assertTrue("Touch width: " + view.getTag(), view.getWidth() >= target);
+            Rect visible = new Rect();
+            if (!view.getGlobalVisibleRect(visible) || visible.height()!=view.getHeight()) {
+                assertNull("Workout controls must fit without scrolling",activity.getWindow().getDecorView().findViewWithTag("workout-panel"));
+                // Settings and editor pages can scroll on compact watches; every target must be reachable in full.
+                view.requestRectangleOnScreen(new Rect(0,0,view.getWidth(),view.getHeight()),true);
+                assertTrue("Scrollable control is reachable: " + view.getTag(),view.getGlobalVisibleRect(visible));
+            }
             assertEquals("Button is fully visible: " + view.getTag(), view.getHeight(), visible.height());
             View root = activity.getWindow().getDecorView();
             double x = visible.exactCenterX() - root.getWidth() / 2.0, y = visible.exactCenterY() - root.getHeight() / 2.0;
@@ -66,7 +75,8 @@ public class WearVisualStatesTest {
             View main = activity.getWindow().getDecorView().findViewWithTag("main-action");
             if (main != null) {
                 Rect bounds = new Rect(); assertTrue(main.getGlobalVisibleRect(bounds));
-                int color = screenshot.getPixel(bounds.centerX(), bounds.top + activity.dp(20));
+                // Sample the empty upper surface, above the scaled icon and label.
+                int color = screenshot.getPixel(bounds.centerX(), bounds.top + Math.round(main.getHeight()*10/48f));
                 assertEquals("Primary surface matches its enabled state", main.isEnabled() ? WearStyle.PRIMARY : WearStyle.DISABLED, color);
             }
         });
@@ -78,11 +88,23 @@ public class WearVisualStatesTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> { try { configure(activity, state, heart, phone, pending, options, page); } catch (Exception e) { throw new RuntimeException(e); } });
         capture(activity, name);
     }
+    private void approvedScreen(WearActivity activity,String name,JSONObject state) throws Exception {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> { try {
+            configure(activity,state,true,"fixture-phone","",false,"");
+            WearHeartService.latestBpm=78; WearHeartService.latestElapsed=SystemClock.elapsedRealtime(); render(activity);
+            ((WearBackdrop)get(activity,"backdrop")).motion(false);
+        } catch (Exception e) { throw new RuntimeException(e); } });
+        capture(activity,name);
+    }
     @Test public void captureWorkoutAndSettingsStatesWithUsableTouchTargets() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         WearActivity activity = (WearActivity) instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(), WearActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         boolean previousRunning = WearHeartService.running;
         try {
+            JSONObject approved=workout(); approved.getJSONObject("current").put("loadValue",333);
+            approvedScreen(activity,"approved-workout",approved);
+            approved.put("timer",new JSONObject().put("timerToken","visual-approved-rest").put("endsAt",System.currentTimeMillis()+90000));
+            approvedScreen(activity,"approved-rest",approved);
             screen(activity, "01-start", workout(), true, "fixture-phone", "", false, "");
             instrumentation.runOnMainSync(() -> { try {
                 WearHeartService.latestBpm = 78; WearHeartService.latestElapsed = SystemClock.elapsedRealtime(); render(activity);

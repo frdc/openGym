@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenGym · Prévia de treino e descanso</title>
+<style>
+@font-face{font-family:Nunito;src:url('../../android/wear/src/main/res/font/nunito.ttf');font-weight:200 900;font-display:swap}
+*{box-sizing:border-box}body{margin:0;background:#100e17;color:#f7efff;font-family:Nunito,system-ui,sans-serif}main{max-width:1040px;margin:auto;padding:28px 28px 22px}header{display:flex;align-items:center;justify-content:space-between;gap:18px}small{color:#bc9fdb;letter-spacing:2px;font-size:10px;font-weight:800}h1{font-size:clamp(22px,3.7vw,33px);line-height:1.15;margin:9px 0}p{font-size:14px;line-height:1.5;color:#bcaecb;margin:10px 0}header p{max-width:620px}button,a{font:inherit}button{color:#e7d1ff;background:#241b32;border:1px solid #a86de143;border-radius:12px;padding:10px 13px;cursor:pointer;white-space:nowrap;font-size:12px}button:hover{background:#39264d}a{color:#d3b1ff}button:focus-visible,a:focus-visible,[role=button]:focus-visible{outline:2px solid #e9d4ff;outline-offset:5px}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:22px}.screen-label{display:flex;align-items:center;justify-content:space-between;margin:0 4px 16px;gap:8px}h2{font-size:17px;margin:0}.tag{font-size:10px;color:#c7b1dd;border:1px solid #d3b1ff25;border-radius:20px;padding:4px 9px}.watch{border-radius:50%;overflow:hidden;aspect-ratio:1;background:#08030e;box-shadow:0 0 0 5px #040307,0 18px 42px #0007;isolation:isolate}.watch svg{display:block;width:100%;height:100%;font-family:Nunito,sans-serif;user-select:none;touch-action:pan-y}.caption{font-size:12px;margin:18px 8px 0;line-height:1.6;color:#a99bb9}.caption strong{color:#e3cdf8;font-weight:750}.notes{display:grid;grid-template-columns:1fr 1fr;gap:26px;border-top:1px solid #d3b1ff20;margin-top:27px;padding-top:20px}.notes p{margin:0;font-size:12px}.notes strong{display:block;font-size:13px;color:#e6d5f7;margin-bottom:4px}.footer{display:flex;gap:16px;justify-content:space-between;align-items:center;font-size:11px;color:#8f819f;margin-top:24px}.control{cursor:pointer;outline:none}.control .surface{transition:filter .12s}.control:hover .surface,.control:focus-visible .surface{filter:brightness(1.35)}.control:focus-visible .surface{stroke:#fff;stroke-width:1.4}.control:active{opacity:.8}.guides{display:none;pointer-events:none}.show-guides .guides{display:block}.guide-toggle{border:0;background:transparent;padding:0;font-size:11px}.guide-toggle[aria-pressed=true]{color:#9af0c2}
+@media(min-width:1000px){main{padding-top:34px}.comparison{gap:54px}.watch{max-width:430px;margin:auto}}
+@media(max-width:560px){main{padding:20px 16px}.comparison{gap:20px;grid-template-columns:1fr}.watch{max-width:360px;margin:auto}.screen-label,.caption{max-width:360px;margin-left:auto;margin-right:auto}.screen-label{margin-bottom:14px}.caption{margin-top:18px}.notes{grid-template-columns:1fr;gap:14px}.footer{align-items:flex-start;flex-direction:column}header{align-items:flex-start}header button{font-size:11px;padding:8px}}
+</style>
+<main>
+  <header><div><small>OPENGYM · MOCKUP</small><h1>Treino e descanso, alinhados.</h1><p>Timer e carga no mesmo lugar. Ações de descanso nas laterais.</p></div><button id="reset">Reiniciar prévia</button></header>
+  <section class="comparison" aria-label="Comparação das telas">
+    <article><div class="screen-label"><h2>Treino</h2><span class="tag">mesma estrutura</span></div><div class="watch" id="workout"></div><p class="caption"><strong>Timer central + carga abaixo.</strong><br>O botão principal mantém o tamanho que você ajustou.</p></article>
+    <article><div class="screen-label"><h2>Descanso</h2><span class="tag">Pular ← · → +15 s</span></div><div class="watch" id="rest"></div><p class="caption"><strong>Pular à esquerda. +15 s à direita.</strong><br>As métricas ficam nas mesmas posições do treino.</p></article>
+  </section>
+  <section class="notes"><p><strong>Opções com um toque</strong>Botão visível no alto à direita. Toque nele para abrir a outra tela e use Voltar para retornar.</p><p><strong>Experimente a prévia</strong>Pular, +15 s e Pausar são clicáveis. O botão Reiniciar prévia restaura a comparação inicial.</p></section>
+  <div class="footer"><span>Prévia visual · valores de exemplo · 225 dp</span><button class="guide-toggle" id="guides" aria-pressed="false">Mostrar linhas de alinhamento</button><a href="./index.html">Voltar ao editor</a></div>
+</main>
+<script type="module">
+const asset = '../../android/wear/src/main/res/drawable-nodpi/wear_violet_aurora.png'
+const initial = () => ({ workout:{rest:false, running:false, paused:false, options:false, seconds:0}, rest:{rest:true,running:false,paused:false,options:false,seconds:90} })
+let states = initial()
+const paths = { play:'M7 4 L20 12 L7 20 Z', pause:'M6 4 H10 V20 H6 Z M14 4 H18 V20 H14 Z', heart:'M12 20 C9 17 3 13 3 8 C3 3 9 2 12 7 C15 2 21 3 21 8 C21 13 15 17 12 20 Z', skip:'M6 5 L15 12 L6 19 Z M18 5 V19', back:'M14 5 L7 12 L14 19 M7 12 H21', check:'M4 12 L9 17 L20 6', menu:'M5 6 H19 M5 12 H19 M5 18 H19' }
+const icon = (name,x,y,size=18,color='#f7efff') => `<g transform="translate(${x-size/2} ${y-size/2}) scale(${size/24})"><path d="${paths[name]}" fill="${['play','pause','heart'].includes(name)?color:'none'}" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>`
+const control = (action,label,inner) => `<g role="button" tabindex="0" class="control" data-action="${action}" aria-label="${label}">${inner}</g>`
+function render(id) {
+  const s=states[id], host=document.getElementById(id), clock=`${String(Math.floor(s.seconds/60)).padStart(2,'0')}:${String(s.seconds%60).padStart(2,'0')}`
+  let inside
+  if (s.options) {
+    inside=`<rect width="225" height="225" fill="#130920" opacity=".57"/><text x="112.5" y="35" text-anchor="middle" font-size="18" font-weight="750">Opções</text>
+      ${control('back','Voltar ao '+(s.rest?'descanso':'treino'),`<rect class="surface" x="32" y="49" width="161" height="39" rx="19.5" fill="#d3b1ff"/>${icon('back',54,68.5,19,'#201130')}<text x="115" y="69" fill="#201130" font-size="14" font-weight="800" dominant-baseline="central" text-anchor="middle">Voltar</text>`)}
+      <g fill="#241038" stroke="#8f60b8" stroke-opacity=".55"><rect x="32" y="101" width="161" height="36" rx="18"/><rect x="32" y="145" width="161" height="36" rx="18"/></g>
+      ${icon('heart',53,119,15,'#ff3b4f')}<g font-size="13" font-weight="700" dominant-baseline="central"><text x="73" y="119">Batimentos</text><text x="48" y="163">Alertas e conexão</text></g>`
+  } else {
+    const primary=s.rest?(s.paused?'Retomar':'Pausar'):(s.running?'Concluir':'Iniciar'), primaryIcon=s.rest?(s.paused?'play':'pause'):(s.running?'check':'play')
+    inside=`<defs><path id="arc-${id}" d="M26 69 A101.25 101.25 0 0 1 199 69"/></defs>
+      <text font-size="18.5" font-weight="750" text-anchor="middle"><textPath href="#arc-${id}" startOffset="50%">Supino Reto</textPath></text>
+      ${icon('heart',112,40,12,'#ff3b4f')}
+      <text x="112.5" y="57" fill="#d2bfeb" font-size="12" font-weight="600" dominant-baseline="central" text-anchor="middle">Série 2/4</text>
+      ${control('options','Abrir Opções',`<rect class="surface" x="166" y="40" width="42" height="38" rx="14" fill="transparent"/>${icon('menu',187,53,16,'#d4c4e7')}<text x="187" y="70" fill="#d4c4e7" text-anchor="middle" font-size="8" font-weight="650">Opções</text>`)}
+      <text data-metric="timer" x="112.5" y="105.5" text-anchor="middle" dominant-baseline="central" font-size="40" font-weight="700" style="font-variant-numeric:tabular-nums">${clock}</text>
+      ${s.rest?control('skip','Pular descanso',`<rect class="surface" x="6" y="82" width="46" height="48" rx="18" fill="transparent"/><text x="29" y="105.5" fill="#d3b1ff" font-size="11" font-weight="700" dominant-baseline="central" text-anchor="middle">Pular</text>`)+control('plus','Adicionar 15 segundos',`<rect class="surface" x="173" y="82" width="46" height="48" rx="18" fill="transparent"/><text x="196" y="105.5" fill="#d3b1ff" font-size="11" font-weight="700" dominant-baseline="central" text-anchor="middle">+15 s</text>`):''}
+      <g data-metric="load" dominant-baseline="central" text-anchor="middle"><g fill="#2a154b" fill-opacity=".8" stroke="#6a39b3" stroke-opacity=".6" stroke-width=".5"><rect x="32" y="134" width="79.5" height="32" rx="20"/><rect x="113.5" y="134" width="79.5" height="32" rx="20"/></g><text x="71.75" y="150"><tspan font-size="16" font-weight="800">10</tspan><tspan font-size="12"> reps</tspan></text><text x="153.25" y="150"><tspan font-size="16" font-weight="800">333</tspan><tspan font-size="12"> kg</tspan></text></g>
+      ${control('primary',primary,`<path class="surface" d="M43.25 178 H180.75 Q188.75 178 188.75 186 V187.9 C188.75 207.25 151.91 223 112 223 C72.09 223 35.25 207.25 35.25 187.9 V186 Q35.25 178 43.25 178 Z" fill="#d3b1ff"/>${icon(primaryIcon,79,199.5,20,'#201130')}<text x="96" y="200.5" font-size="16" font-weight="800" fill="#201130" dominant-baseline="central">${primary}</text>`)}
+      <g class="guides" stroke="#8cf0be" stroke-width=".5" stroke-dasharray="2 2" opacity=".9"><path d="M0 105.5 H225 M0 150 H225"/><path d="M112.5 85 V166"/></g>`
+  }
+  host.innerHTML=`<svg viewBox="0 0 225 225" xmlns="http://www.w3.org/2000/svg" aria-label="Mockup de ${id==='rest'?'descanso':'treino'}" fill="#f7efff"><image href="${asset}" width="225" height="225" preserveAspectRatio="xMidYMid slice"/>${inside}</svg>`
+}
+function action(id, kind) {
+  const s=states[id]
+  if(kind==='options')s.options=true
+  if(kind==='back')s.options=false
+  if(kind==='plus')s.seconds=Math.min(900,s.seconds+15)
+  if(kind==='skip'){s.rest=false;s.running=false;s.paused=false;s.seconds=0}
+  if(kind==='primary') {
+    if(s.rest)s.paused=!s.paused
+    else if(s.running){s.running=false;s.rest=true;s.seconds=90}
+    else s.running=true
+  }
+  render(id)
+}
+for(const id of ['workout','rest']) {
+  const host=document.getElementById(id)
+  host.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(button)action(id,button.dataset.action)})
+  host.addEventListener('keydown',event=>{if(!['Enter',' '].includes(event.key))return;const button=event.target.closest('[data-action]');if(button){event.preventDefault();action(id,button.dataset.action)}})
+  render(id)
+}
+document.getElementById('reset').onclick=()=>{states=initial();render('workout');render('rest')}
+document.getElementById('guides').onclick=event=>{const on=document.body.classList.toggle('show-guides');event.currentTarget.setAttribute('aria-pressed',String(on));event.currentTarget.textContent=on?'Ocultar linhas de alinhamento':'Mostrar linhas de alinhamento'}
+</script>
+</html>
