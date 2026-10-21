@@ -121,12 +121,34 @@ final class WearStandalone {
     }
     private boolean conflict(JSONObject doc, String code) throws Exception { doc.put("conflict", code); return save(doc); }
 
+    private void receiveReceipt(JSONObject doc, JSONObject remote) throws Exception {
+        JSONObject standalone = remote.optJSONObject("standalone");
+        JSONObject receipt = standalone == null ? null : standalone.optJSONObject("receipt");
+        if (receipt == null || !doc.optString("sessionId").equals(remote.optString("contextToken"))
+                || !doc.optString("baseline").equals(receipt.optString("baseline"))
+                || !doc.optString("streamId").equals(receipt.optString("streamId"))
+                || !integer(receipt.opt("seq"), 1, lastSeq(doc))) return;
+        int seq = receipt.getInt("seq");
+        JSONArray events = doc.getJSONArray("events");
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.getJSONObject(i);
+            if (event.optInt("seq") != seq || !event.optString("id").equals(receipt.optString("requestId"))) continue;
+            doc.put("ack", Math.max(doc.optInt("ack"), seq));
+            if (pending(doc) == 0) doc.remove("conflict");
+            return;
+        }
+    }
+
     boolean receive(JSONObject remote) {
         try {
             // A boot-time phone snapshot is not an owner/session replacement.
             if (remote == null || remote.has("localReady") && !remote.optBoolean("localReady")) return true;
             JSONObject doc = read();
             if (doc == null) return store.read() == null && validSnapshot(remote) && save(fresh(remote));
+            if (validSnapshot(remote)) {
+                receiveReceipt(doc, remote);
+                if (!save(doc)) return false;
+            }
             if (!doc.optString("conflict").isEmpty()) return true;
             if (!doc.optString("sessionId").equals(remote.optString("contextToken")) || !remote.optBoolean("active")) {
                 if (pending(doc) > 0) return conflict(doc, "stale-context");

@@ -2,9 +2,9 @@
 // Real owner store, persistence and UI timer; only the native transport/alarm boundary is fake.
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-const runtime = vi.hoisted(() => ({ fixture: null, command: null }))
+const runtime = vi.hoisted(() => ({ fixture: null, command: null, heart: null }))
 const plugin = vi.hoisted(() => ({
-  publish: vi.fn().mockResolvedValue(), reply: vi.fn().mockResolvedValue(), clear: vi.fn().mockResolvedValue(),
+  publish: vi.fn().mockResolvedValue(), reply: vi.fn().mockResolvedValue(), replyHeart: vi.fn().mockResolvedValue(), clear: vi.fn().mockResolvedValue(),
   getHeartBindings: vi.fn().mockResolvedValue({ bindings: {} }), saveHeartBindings: vi.fn().mockResolvedValue(),
   addListener: vi.fn(),
 }))
@@ -30,7 +30,7 @@ const packet = (state, events) => ({ v: 1, action: 'standalone-sync', requestId:
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 beforeEach(async () => {
   vi.clearAllMocks()
-  plugin.addListener.mockImplementation(async (name, handler) => { if (name === 'command') runtime.command = handler; return { remove: vi.fn() } })
+  plugin.addListener.mockImplementation(async (name, handler) => { if (name === 'command') runtime.command = handler; if (name === 'heart') runtime.heart = handler; return { remove: vi.fn() } })
   runtime.fixture.begin()
   await runtime.fixture.prepare({ restSec: 90, active: { id: 'integration', start: Date.now(), cur: 0, entries: [{ id: '0025', target: { mode: 'reps' }, sets: [{ r: 10, w: 60, done: false }, { r: 10, w: 60, done: false }] }] } })
   useUI.setState({ timer: null, work: null, sheets: [] })
@@ -38,6 +38,30 @@ beforeEach(async () => {
   await vi.waitFor(() => expect(latest()?.standalone).toBeTruthy())
 })
 afterEach(async () => { stop?.(); useUI.getState().stopRest(); await runtime.fixture.close() })
+
+it('imports an offline workout, adds another exercise and retains its delayed heart measurements', async () => {
+  const initial = latest(), at = Date.now() - 10000
+  const events = [{ ...event(1, 'start', at), heart: true }, event(2, 'complete', at + 1000), event(3, 'start', at + 2000, 1), event(4, 'complete', at + 3000, 1)]
+  const offline = packet(initial, events)
+  await runtime.command({ nodeId: 'watch', command: offline })
+  expect(useStore.getState().S.active.entries[0].sets.map(s => s.done)).toEqual([true, true])
+  useStore.getState().update(S => { S.active.entries.push({ id: '0026', sets: [{ r: 12, w: 20, done: false }] }); S.active.cur = 1 })
+  await vi.waitFor(() => expect(latest().standalone.receipt?.seq).toBe(4))
+  expect(latest().standalone.steps[0]).toMatchObject({ entryIdx: 1, setIdx: 0, repsValue: 12 })
+  await runtime.command({ nodeId: 'watch', command: offline })
+  expect(plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 4 })
+  await runtime.heart({ nodeId: 'watch', packet: { v: 1, requestId: 'late-measurement', token: events[0].id,
+    measurement: { startedAt: at, effortEndMs: 1000, recoveryEndMs: 2000, endReason: 'next-set', points: [[0, 100], [1000, 155], [2000, 120]] } } })
+  expect(plugin.replyHeart.mock.calls.at(-1)[0].response.status).toBe('ok')
+  expect(useStore.getState().S.active.entries[0].sets[0].heartRate.effort.peak).toBe(155)
+  expect(useStore.getState().S.active.entries[1].sets[0].done).toBe(false)
+  const fresh = latest()
+  const newEvents = [event(1, 'start', at + 5000), event(2, 'complete', at + 6000)].map(e => ({ ...e, id: crypto.randomUUID() }))
+  await runtime.command({ nodeId: 'watch', command: { ...packet(fresh, newEvents), streamId: 'new-sequence' } })
+  expect(plugin.reply.mock.calls.at(-1)[0].response.status).toBe('ok')
+  expect(useStore.getState().S.active.entries[1].sets[0].done).toBe(true)
+  expect(useStore.getState().S.active.entries[0].sets[0].heartRate.effort.peak).toBe(155)
+})
 
 it('persists first start and completion through the real UI, then replays without restarting rest', async () => {
   const initial = latest(), at = Date.now() - 15000

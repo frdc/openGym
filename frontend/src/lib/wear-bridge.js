@@ -6,9 +6,10 @@ import { createWearHeartSession } from './wear-heart-session.js'
 import { validateWearCommand } from './wear-protocol.js'
 import { createWearController } from './wear-session.js'
 import { applyStandalone, projectStandalone, reconcileStandaloneTimer, standaloneTimerSignature } from './wear-standalone.js'
+import { createWearSync } from './wear-sync.js'
 
 let completeHandler = null, editHandler = null, notifyReady = () => {}
-let openHandler = null
+let openHandler = null, syncHandler = null
 let automaticOpen = null, requestedWorkout = null
 // A bridge remount is not a disk reload. Keep failed-write receipts hidden until
 // flushLocal confirms them, including across a route/root effect remount.
@@ -23,6 +24,10 @@ export function requestWearWorkoutOpen() {
 export async function openWearApp() {
   if (!openHandler) throw new Error('wear-unavailable')
   return openHandler()
+}
+export async function syncWearApp() {
+  if (!syncHandler) throw new Error('wear-unavailable')
+  return syncHandler()
 }
 export function registerWearCompletion(handler) {
   completeHandler = handler; notifyReady()
@@ -42,7 +47,14 @@ export function bindWearBridge() {
     return plugin.open({ state: snapshot() })
   }
   let closed = false, plugin, listener, revision = 0, identity = '', contextToken = '', serialized = '', state
-  let heart, heartListener
+  let heart, heartListener, syncListener
+  const manualSync = createWearSync({ request: request => plugin.sync({ request }) })
+  const sync = async () => {
+    const store = useStore.getState(), expected = { ownerKey: store.ownerKey, sessionToken: store.activeSessionToken }
+    if (closed || !initialized || !store.S.active) throw new Error('wear-unavailable')
+    try { return await manualSync.start(store.activeSessionToken, () => !closed && matches(expected)) }
+    finally { void publish().catch(() => {}) }
+  }
   const publisherId = crypto.randomUUID()
   let pendingStandalone = null
   let preparingTimer = null
@@ -110,7 +122,7 @@ export function bindWearBridge() {
     projection.publisherId = publisherId
     projection.localReady = !!store.localReady
     const standalone = projection.active ? projectStandalone(store.S, contextToken) : null
-    projection.standalone = pendingStandalone && standalone?.ack ? pendingStandalone.projection : standalone
+    projection.standalone = pendingStandalone ? pendingStandalone.projection : standalone
     projection.heartCapture = heart?.projection() || null
     projection.heartAuthorizedTokens = heart?.authorizedTokens() || []
     if (projection.current && (!completeHandler || ui.sheets.length || ui.work)) projection.current.canComplete = false
@@ -124,6 +136,7 @@ export function bindWearBridge() {
     if (closed || !plugin) return Promise.resolve()
     const run = transport.then(async () => {
       if (closed) return
+      if (manualSync.active && sync?.syncId !== manualSync.requestId) return
       await prepareStandaloneTimer()
       return plugin.publish({ state: snapshot(), ...(sync || {}) })
     })
@@ -142,6 +155,7 @@ export function bindWearBridge() {
     if (!(await isAndroid()) || closed) return
     const { registerPlugin } = await import('@capacitor/core')
     plugin = registerPlugin('WearBridge')
+    syncListener = await plugin.addListener('sync', event => manualSync.receive(event))
     heart = createWearHeartSession({ getStore: () => useStore.getState(), plugin, changed: () => { if (!closed) void publish().catch(() => {}) } })
     heartListener = await plugin.addListener('heart', async ({ nodeId, packet }) => {
       try { const response = await heart.receive(packet, nodeId); await plugin.replyHeart({ nodeId, response }) } catch { await plugin.replyHeart({ nodeId, response: { v: 1, requestId: packet?.requestId || '', token: packet?.token || '', status: 'error' } }).catch(() => {}) }
@@ -180,6 +194,7 @@ export function bindWearBridge() {
             let response
             const store = useStore.getState(), expected = { ownerKey: store.ownerKey, sessionToken: store.activeSessionToken }
             try {
+              if (!store.localReady) throw Object.assign(new Error('unavailable'), { code: 'unavailable' })
               await prepareStandaloneTimer()
               if (!matches(expected)) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
               const currentStore = useStore.getState(), before = snapshot(), checkpoint = currentStore.S.active?._wearStandalone
@@ -201,7 +216,7 @@ export function bindWearBridge() {
               observedPhoneTimers.set(expected.sessionToken, standaloneTimerSignature(phoneTimer(useStore.getState())))
               pendingStandalone = null
               pendingStandaloneSessions.delete(expected.sessionToken)
-              response = { status: 'ok', streamId: saved.streamId, seq: saved.events.length }
+              response = { status: 'ok', streamId: saved.streamId, seq: command.events.at(-1).seq }
             } catch (e) { response = { status: 'error', code: e.code || 'unavailable', streamId: command.streamId || '', seq: pendingStandalone?.projection?.ack?.seq || 0 } }
             await plugin.reply({ nodeId, response: { v: 1, requestId: command.requestId || '', ...response } })
             await publish()
@@ -231,8 +246,9 @@ export function bindWearBridge() {
     await heart.reconcile()
     await publish()
     initialized = true
+    syncHandler = sync
     openNewWorkout()
   })().catch(() => {})
   let commands = Promise.resolve()
-  return () => { closed = true; if (automaticOpen === openNewWorkout) { automaticOpen = null; requestedWorkout = null } if (openHandler === open) openHandler = null; offStore(); offUI(); notifyReady = () => {}; for (const c of controllers.values()) c.dispose(); heart?.dispose(); void heartListener?.remove(); void listener?.remove(); void plugin?.clear().catch(() => {}) }
+  return () => { closed = true; if (automaticOpen === openNewWorkout) { automaticOpen = null; requestedWorkout = null } if (openHandler === open) openHandler = null; if (syncHandler === sync) syncHandler = null; manualSync.dispose(); offStore(); offUI(); notifyReady = () => {}; for (const c of controllers.values()) c.dispose(); heart?.dispose(); void syncListener?.remove(); void heartListener?.remove(); void listener?.remove(); void plugin?.clear().catch(() => {}) }
 }

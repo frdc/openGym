@@ -9,6 +9,6 @@ final class WearBridgeGuard {
     }
     static boolean allowed(String path, int size) {
         int limit = "/opengym/v1/command".equals(path) ? 65536 : 16384;
-        return size > 0 && size <= limit && ("/opengym/v1/command".equals(path) || "/opengym/v1/sync".equals(path) || "/opengym/v1/heart".equals(path));
+        return size > 0 && size <= limit && ("/opengym/v1/command".equals(path) || "/opengym/v1/sync".equals(path) || "/opengym/v1/heart".equals(path) || "/opengym/v1/refresh-result".equals(path));
     }
 }

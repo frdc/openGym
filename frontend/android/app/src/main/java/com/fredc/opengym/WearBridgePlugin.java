@@ -17,6 +17,29 @@ import java.util.UUID;
 @CapacitorPlugin(name = "WearBridge")
 public class WearBridgePlugin extends Plugin {
     private volatile JSObject latestState;
+    @PluginMethod public void sync(PluginCall call) {
+        JSObject request = call.getObject("request");
+        JSObject state = latestState;
+        if (request == null || request.optInt("v") != 1 || request.optString("requestId").isEmpty() || request.optString("requestId").length() > 100
+                || state == null || !state.optBoolean("localReady") || !state.optBoolean("active")
+                || !state.optString("contextToken").equals(request.optString("contextToken")) || request.toString().length() > 4096) { call.reject("wear unavailable"); return; }
+        Wearable.getCapabilityClient(getContext()).getCapability("opengym_watch_v1", CapabilityClient.FILTER_REACHABLE).addOnSuccessListener(capability -> {
+            if (capability.getNodes().size() != 1) { call.reject("wear unavailable"); return; }
+            String node = capability.getNodes().iterator().next().getId();
+            Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/refresh", request.toString().getBytes(StandardCharsets.UTF_8))
+                .addOnSuccessListener(id -> { JSObject result = new JSObject(); result.put("nodeId", node); call.resolve(result); })
+                .addOnFailureListener(error -> call.reject("wear unavailable"));
+        }).addOnFailureListener(error -> call.reject("wear unavailable"));
+    }
+    static void deliverSync(String node, JSONObject response) {
+        WearBridgePlugin plugin = instance;
+        if (plugin == null) return;
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (instance != plugin) return;
+            JSObject event = new JSObject(); event.put("nodeId", node); event.put("response", response);
+            plugin.notifyListeners("sync", event);
+        });
+    }
     @PluginMethod public void open(PluginCall call) {
         JSObject state = call.getObject("state");
         if (state == null || !state.optBoolean("active") || state.toString().getBytes(StandardCharsets.UTF_8).length > 131072) { call.reject("invalid state"); return; }
@@ -122,7 +145,8 @@ public class WearBridgePlugin extends Plugin {
             .addOnSuccessListener(id -> call.resolve()).addOnFailureListener(error -> call.reject("wear unavailable"));
     }
     @PluginMethod public void clear(PluginCall call) {
-        JSObject state = new JSObject(); state.put("v", 1); state.put("active", false); state.put("contextToken", ""); state.put("revision", 0);
+        // Detaching the WebView is not the user ending/replacing the workout.
+        JSObject state = new JSObject(); state.put("v", 1); state.put("active", false); state.put("localReady", false); state.put("contextToken", ""); state.put("revision", 0);
         latestState = state;
         WearRequestLocks.clear();
         WearWorkoutService.update(getContext(), false);

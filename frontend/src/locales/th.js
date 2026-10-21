@@ -2014,6 +2014,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym จะทำเซสชันที่วางแผนไว้เหล่านี้ซ้ำเมื่อเสร็จครบทั้งหมด การนำเข้าแผนใหม่อาจแทนที่รอบหมุนเวียนนี้",
   "{0} pending changes": "การเปลี่ยนแปลงที่รอดำเนินการ {0} รายการ",
 
+  "Sync with watch": "ซิงค์กับนาฬิกา",
+  "Syncing with watch…": "กำลังซิงค์กับนาฬิกา…",
+  "Workout synced with watch": "ซิงค์การฝึกกับนาฬิกาแล้ว",
+  "Workout updated. Heart rate data is still pending on the watch.": "อัปเดตการฝึกแล้ว ยังมีข้อมูลอัตราการเต้นของหัวใจรอส่งอยู่ในนาฬิกา",
+  "Sync conflict. Watch data was kept.": "การซิงค์ขัดแย้งกัน เก็บข้อมูลในนาฬิกาไว้แล้ว",
+  "Watch did not confirm sync. Pending data was kept.": "นาฬิกายังไม่ยืนยันการซิงค์ เก็บข้อมูลที่รอส่งไว้แล้ว",
   "Open on watch": "เปิดบนนาฬิกา",
   "Request sent to watch": "ส่งคำขอไปยังนาฬิกาแล้ว",
   "Watch unavailable": "นาฬิกาไม่พร้อมใช้งาน",

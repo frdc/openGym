@@ -23,7 +23,7 @@ public class WearStandaloneStoreTest {
                     SharedPreferences.Editor editor = preferences.edit();
                     return Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(), new Class<?>[] { SharedPreferences.Editor.class }, (editorProxy, operation, values) -> {
                         Object result = operation.invoke(editor, values);
-                        if (operation.getName().equals("commit") && failCommit[0]) return false;
+                        if (operation.getName().equals("commit") && name.equals("wear-standalone") && failCommit[0]) return false;
                         return result == editor ? editorProxy : result;
                     });
                 });
@@ -62,5 +62,26 @@ public class WearStandaloneStoreTest {
             assertEquals(0, WearStandalone.pending(context)); assertTrue(WearStandalone.view(context, remote).isNull("effort"));
             assertNull(WearStandalone.packet(isolated(prefix, fail)));
         } finally { fail[0] = false; context.getSharedPreferences("wear-standalone", Context.MODE_PRIVATE).edit().clear().commit(); }
+    }
+    @Test public void stateServiceRejectsFailedStandaloneUpdateAndCanRetryTheSameSnapshot() throws Exception {
+        String prefix = "standalone-test-" + UUID.randomUUID(); boolean[] fail = {false};
+        Context context = isolated(prefix, fail); JSONObject remote = snapshot(); long now = System.currentTimeMillis();
+        try {
+            assertTrue(WearStateService.receive(context, remote, now));
+            JSONObject updated = snapshot().put("revision", 2);
+            updated.getJSONObject("standalone").put("baseline", "added-exercise");
+            fail[0] = true;
+            assertFalse("Remote-state persistence alone must not confirm application", WearStateService.receive(context, updated, now + 1));
+            assertEquals(2, WearStateService.remote(context).getInt("revision"));
+            assertEquals(1, WearStateService.cached(context).getInt("revision"));
+            assertEquals(0, WearStandalone.pending(context));
+            fail[0] = false;
+            assertTrue(WearStateService.receive(context, updated, now + 1));
+            assertEquals(2, WearStateService.cached(context).getInt("revision"));
+        } finally {
+            fail[0] = false;
+            context.getSharedPreferences("wear-state", Context.MODE_PRIVATE).edit().clear().commit();
+            context.getSharedPreferences("wear-standalone", Context.MODE_PRIVATE).edit().clear().commit();
+        }
     }
 }

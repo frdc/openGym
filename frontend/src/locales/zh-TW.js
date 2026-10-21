@@ -1996,6 +1996,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "所有計畫訓練完成後，openGym 將重複這些訓練。匯入新計畫可能取代此輪替。",
   "{0} pending changes": "{0} 項待處理變更",
 
+  "Sync with watch": "與手錶同步",
+  "Syncing with watch…": "正在與手錶同步…",
+  "Workout synced with watch": "訓練已與手錶同步",
+  "Workout updated. Heart rate data is still pending on the watch.": "訓練已更新。手錶上仍有待同步的心率資料。",
+  "Sync conflict. Watch data was kept.": "同步衝突。手錶資料已保留。",
+  "Watch did not confirm sync. Pending data was kept.": "手錶未確認同步。待同步的資料已保留。",
   "Open on watch": "在手錶上開啟",
   "Request sent to watch": "已向手錶傳送請求",
   "Watch unavailable": "手錶無法使用",

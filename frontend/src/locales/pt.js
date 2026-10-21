@@ -2003,6 +2003,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "O openGym repete estas sessões planeadas quando estiverem todas concluídas. Importar um novo plano pode substituir esta rotação.",
   "{0} pending changes": "{0} alterações pendentes",
 
+  "Sync with watch": "Sincronizar com o relógio",
+  "Syncing with watch…": "A sincronizar com o relógio…",
+  "Workout synced with watch": "Treino sincronizado com o relógio",
+  "Workout updated. Heart rate data is still pending on the watch.": "Treino atualizado. Ainda há dados de frequência cardíaca pendentes no relógio.",
+  "Sync conflict. Watch data was kept.": "Conflito de sincronização. Os dados do relógio foram preservados.",
+  "Watch did not confirm sync. Pending data was kept.": "O relógio não confirmou a sincronização. Os dados pendentes foram preservados.",
   "Open on watch": "Abrir no relógio",
   "Request sent to watch": "Pedido enviado ao relógio",
   "Watch unavailable": "Relógio indisponível",

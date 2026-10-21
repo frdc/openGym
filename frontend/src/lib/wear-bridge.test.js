@@ -7,10 +7,31 @@ vi.mock('./mobile.js', () => ({ isAndroid: async () => true }))
 vi.mock('../store/useStore.js', () => ({ useStore: { getState: () => f.store, subscribe: cb => { f.storeListeners.add(cb); return () => f.storeListeners.delete(cb) } } }))
 vi.mock('../store/useUI.js', () => ({ useUI: { getState: () => f.ui, subscribe: cb => { f.uiListeners.add(cb); return () => f.uiListeners.delete(cb) } } }))
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => f.plugin }))
-import { bindWearBridge, registerWearCompletion, registerWearEditing, openWearApp, requestWearWorkoutOpen } from './wear-bridge.js'
+import { bindWearBridge, registerWearCompletion, registerWearEditing, openWearApp, requestWearWorkoutOpen, syncWearApp } from './wear-bridge.js'
 const standaloneEvents = () => [{ seq: 1, id: '00000000-0000-4000-8000-000000000001', action: 'start', at: 1000, step: 0 }, { seq: 2, id: '00000000-0000-4000-8000-000000000002', action: 'complete', at: 2000, step: 0 }]
 const standaloneCommand = state => ({ v: 1, action: 'standalone-sync', requestId: standaloneEvents()[1].id, contextToken: state.contextToken, streamId: 'stream', baseline: state.standalone.baseline, events: standaloneEvents() })
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+it('pulls watch work before publishing the explicit refresh and waits for its result', async () => {
+  heartFixture()
+  const handlers = {}
+  f.plugin.addListener.mockImplementation(async (name, cb) => { handlers[name] = cb; return { remove: vi.fn() } })
+  f.plugin.sync = vi.fn().mockResolvedValue({ nodeId: 'watch' })
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const before = f.plugin.publish.mock.calls.at(-1)[0].state
+    const task = syncWearApp(); await tick()
+    const refresh = f.plugin.sync.mock.calls[0][0].request
+    const count = f.plugin.publish.mock.calls.length
+    await handlers.command({ nodeId: 'watch', command: standaloneCommand(before) })
+    expect(f.store.S.active.entries[0].sets[0].done).toBe(true)
+    expect(f.plugin.publish.mock.calls).toHaveLength(count)
+    await handlers.command({ nodeId: 'watch', syncId: refresh.requestId })
+    expect(f.plugin.publish.mock.calls.at(-1)[0]).toMatchObject({ nodeId: 'watch', syncId: refresh.requestId, state: { standalone: { ack: { seq: 2 } } } })
+    handlers.sync({ nodeId: 'watch', response: { ...refresh, status: 'ok', heartPending: 0 } })
+    expect(await task).toEqual({ heartPending: 0 })
+  } finally { stop(); delete f.plugin.sync }
+})
 it('preserves workout authorization across bridge restarts and changes publisher identity', async () => {
   let stop = bindWearBridge()
   try {
@@ -39,6 +60,22 @@ it('imports a standalone completion without a mounted Workout and acknowledges o
     expect(f.plugin.publish.mock.calls.at(-1)[0].state.standalone.ack).toEqual({ streamId: 'stream', seq: 2 })
     await f.receive({ nodeId: 'watch', command })
     expect(f.store.update).toHaveBeenCalledOnce()
+  } finally { stop() }
+})
+it('keeps a reconnecting watch retryable while the phone is still hydrating', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const command = standaloneCommand(f.plugin.publish.mock.calls.at(-1)[0].state)
+    f.store.localReady = false
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'error', code: 'unavailable' })
+    expect(f.store.S.active.entries[0].sets[0].done).toBe(false)
+    f.store.localReady = true
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 2 })
+    expect(f.store.S.active.entries[0].sets[0].done).toBe(true)
   } finally { stop() }
 })
 it('retries a failed local standalone write without publishing an unpersisted receipt or applying twice', async () => {

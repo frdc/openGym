@@ -93,7 +93,11 @@ export function projectStandalone(S, sessionId) {
   }
   const steps = projectSteps(S, sessionId)
   const timer = S.active._wearStandaloneTimer?.sessionId === sessionId ? S.active._wearStandaloneTimer.timer : null
-  return steps ? { v: 1, sessionId, baseline, steps, cursor: 0, ack: null, runtime: { effort: null, timer: structuredClone(timer) } } : null
+  // A changed phone sequence must still acknowledge the durable journal that
+  // preceded it. Otherwise a lost ACK turns an already imported set into conflict.
+  const last = checkpoint?.sessionId === sessionId ? checkpoint.events.at(-1) : null
+  const receipt = last ? { streamId: checkpoint.streamId, baseline: checkpoint.baseline, seq: last.seq, requestId: last.id } : null
+  return steps ? { v: 1, sessionId, baseline, steps, cursor: 0, ack: null, runtime: { effort: null, timer: structuredClone(timer) }, ...(receipt ? { receipt } : {}) } : null
 }
 
 export function validateStandaloneCommand(command) {
@@ -194,6 +198,10 @@ export function applyStandalone(S, command, sessionId) {
   if (previous && previous.streamId !== command.streamId && previous.fingerprint !== current && command.baseline === current) previous = null
   if (previous && previous.streamId !== command.streamId) fail('stream-conflict')
   if (previous && previous.baseline !== command.baseline) fail('baseline-conflict')
+  if (previous && command.events.every(e => previous.events[e.seq - 1])) {
+    for (const e of command.events) if (JSON.stringify(canonical(previous.events[e.seq - 1])) !== JSON.stringify(canonical(e))) fail('event-conflict')
+    return S // Durable duplicate: acknowledge without reapplying onto newer phone edits.
+  }
   if (previous && previous.fingerprint !== current) fail('state-conflict')
   const projection = previous ? null : projectStandalone(S, sessionId)
   if (!previous && (!projection || projection.baseline !== command.baseline)) fail('baseline-conflict')

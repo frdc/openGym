@@ -18,6 +18,10 @@ public class WearBridgeService extends WearableListenerService {
             if (!trusted) return;
             JSONObject payload = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
             if (payload.optInt("v") != 1) return;
+            if ("/opengym/v1/refresh-result".equals(event.getPath())) {
+                WearBridgePlugin.deliverSync(event.getSourceNodeId(), payload);
+                return;
+            }
             if ("/opengym/v1/heart".equals(event.getPath())) {
                 // No success reply while the WebView is unavailable: watch retains its queue.
                 WearBridgePlugin.deliverHeart(event.getSourceNodeId(), payload);

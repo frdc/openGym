@@ -15,6 +15,8 @@ public class WearBridgeGuardTest {
         assertFalse(WearBridgeGuard.allowed("/opengym/v1/heart", 16385));
         assertTrue(WearBridgeGuard.allowed("/opengym/v1/command", 100));
         assertTrue(WearBridgeGuard.allowed("/opengym/v1/sync", 100));
+        assertTrue(WearBridgeGuard.allowed("/opengym/v1/refresh-result", 512));
+        assertFalse(WearBridgeGuard.allowed("/opengym/v1/refresh-result", 16385));
         assertFalse(WearBridgeGuard.allowed("/other", 100));
         assertTrue(WearBridgeGuard.allowed("/opengym/v1/command", 65536));
         assertFalse(WearBridgeGuard.allowed("/opengym/v1/command", 65537));

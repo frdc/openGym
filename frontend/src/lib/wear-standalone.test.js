@@ -39,6 +39,15 @@ describe('standalone projection', () => {
 })
 
 describe('standalone import', () => {
+  it('acknowledges an already saved batch after adding an exercise without reapplying or losing that exercise', () => {
+    const S = fixture(), batch = command(S, [event(1, 'start'), event(2, 'complete')])
+    const applied = applyStandalone(S, batch, session)
+    applied.active.entries.push({ id: '0026', sets: [{ r: 12, w: 20, done: false }] })
+    expect(applyStandalone(applied, batch, session)).toBe(applied)
+    expect(applied.active.entries[1].sets[0]).toMatchObject({ r: 12, done: false })
+    const receipt = projectStandalone(applied, session).receipt
+    expect(receipt).toEqual({ streamId: 'stream', baseline: batch.baseline, seq: 2, requestId: event(2, 'complete').id })
+  })
   it('persists a phone rest seed so an offline pause can replay against it', () => {
     const S = fixture(), timer = { timerToken: 'phone-rest', endsAt: 160000, leftMs: 90000, paused: false, ready: false }
     const seeded = reconcileStandaloneTimer(S, timer, session, 100000)

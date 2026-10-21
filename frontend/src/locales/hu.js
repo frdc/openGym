@@ -2006,6 +2006,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "Az openGym megismétli ezeket a tervezett edzéseket, ha mind elkészültek. Egy új terv importálása felülírhatja ezt a rotációt.",
   "{0} pending changes": "{0} függő módosítás",
 
+  "Sync with watch": "Szinkronizálás az órával",
+  "Syncing with watch…": "Szinkronizálás az órával…",
+  "Workout synced with watch": "Az edzés szinkronizálva az órával",
+  "Workout updated. Heart rate data is still pending on the watch.": "Az edzés frissítve. Az órán még vannak függőben lévő pulzusadatok.",
+  "Sync conflict. Watch data was kept.": "Szinkronizálási ütközés. Az óra adatai megmaradtak.",
+  "Watch did not confirm sync. Pending data was kept.": "Az óra nem erősítette meg a szinkronizálást. A függőben lévő adatok megmaradtak.",
   "Open on watch": "Megnyitás az órán",
   "Request sent to watch": "Kérés elküldve az órának",
   "Watch unavailable": "Az óra nem érhető el",

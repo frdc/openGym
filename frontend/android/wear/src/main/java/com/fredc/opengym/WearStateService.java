@@ -15,6 +15,22 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 public class WearStateService extends WearableListenerService {
+    private static WearRefresh manualRefresh;
+    private static synchronized WearRefresh refreshFlow(Context source) {
+        if (manualRefresh == null) {
+            Context c = source.getApplicationContext();
+            manualRefresh = new WearRefresh(new WearRefresh.Port() {
+                public String context() { return cached(c).optString("contextToken"); }
+                public int pending() { return WearStandalone.pending(c); }
+                public int heartPending() { return WearHeartStore.get(c).pending(); }
+                public boolean conflicted() { return WearStandalone.conflicted(c) || WearOutbox.read(c) != null; }
+                public void replay(String node) { WearStateService.replay(c, node); WearHeartStore.get(c).snapshot(cached(c), node); }
+                public boolean receive(JSONObject state, long at) { return WearStateService.receive(c, state, at); }
+                public void send(String node, String path, JSONObject payload) { Wearable.getMessageClient(c).sendMessage(node, path, payload.toString().getBytes(StandardCharsets.UTF_8)); }
+            });
+        }
+        return manualRefresh;
+    }
     static JSONObject remote(Context context) {
         try { return new JSONObject(context.getSharedPreferences("wear-state", MODE_PRIVATE).getString("json", "{}")); }
         catch (Exception ignored) { return new JSONObject(); }
@@ -26,9 +42,9 @@ public class WearStateService extends WearableListenerService {
         long previousSentAt = context.getSharedPreferences("wear-state", MODE_PRIVATE).getLong("sentAt", 0);
         if (sentAt < previousSentAt || !WearProtocol.acceptSnapshot(old.optString("contextToken"), old.optLong("revision"), old.optString("publisherId"), state.optString("contextToken"), state.optLong("revision"), state.optString("publisherId"))) return false;
         if (!context.getSharedPreferences("wear-state", MODE_PRIVATE).edit().putString("json", state.toString()).putLong("sentAt", sentAt).commit()) return false;
-        WearStandalone.receive(context, state);
+        boolean applied = WearStandalone.receive(context, state);
         refresh(context);
-        return true;
+        return applied;
     }
     static void refresh(Context context) {
         JSONObject visible = cached(context);
@@ -62,10 +78,18 @@ public class WearStateService extends WearableListenerService {
         }
     }
     @Override public void onMessageReceived(MessageEvent event) {
+        if ("/opengym/v1/refresh".equals(event.getPath()) && event.getData().length <= 4096 && trusted(event.getSourceNodeId())) {
+            try { refreshFlow(this).request(event.getSourceNodeId(), new JSONObject(new String(event.getData(), StandardCharsets.UTF_8)), System.currentTimeMillis()); } catch (Exception ignored) { }
+            return;
+        }
+        if ("/opengym/v1/state".equals(event.getPath()) && event.getData().length <= WearProtocol.STATE_MESSAGE_BYTES && trusted(event.getSourceNodeId())) {
+            try { refreshFlow(this).state(event.getSourceNodeId(), new JSONObject(new String(event.getData(), StandardCharsets.UTF_8)), System.currentTimeMillis()); } catch (Exception ignored) { }
+            return;
+        }
         if ("/opengym/v1/reply".equals(event.getPath()) && event.getData().length <= 16384 && trusted(event.getSourceNodeId())) {
             try {
                 JSONObject reply = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
-                if (WearStandalone.acknowledge(this, reply)) { refresh(this); replay(this, event.getSourceNodeId()); }
+                if (WearStandalone.acknowledge(this, reply)) { refresh(this); replay(this, event.getSourceNodeId()); refreshFlow(this).advance(System.currentTimeMillis()); }
             } catch (Exception ignored) { }
         }
         if ("/opengym/v1/heart-ack".equals(event.getPath()) && event.getData().length <= 16384 && trusted(event.getSourceNodeId())) {

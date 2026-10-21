@@ -2056,6 +2056,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "سيكرر openGym هذه الجلسات المخططة بعد إكمالها جميعًا. قد يستبدل استيراد خطة جديدة هذا التناوب.",
   "{0} pending changes": "{0} تغييرات معلقة",
 
+  "Sync with watch": "مزامنة مع الساعة",
+  "Syncing with watch…": "جارٍ المزامنة مع الساعة…",
+  "Workout synced with watch": "تمت مزامنة التمرين مع الساعة",
+  "Workout updated. Heart rate data is still pending on the watch.": "تم تحديث التمرين. لا تزال هناك بيانات لمعدل ضربات القلب معلقة على الساعة.",
+  "Sync conflict. Watch data was kept.": "تعارض في المزامنة. تم الاحتفاظ ببيانات الساعة.",
+  "Watch did not confirm sync. Pending data was kept.": "لم تؤكد الساعة المزامنة. تم الاحتفاظ بالبيانات المعلقة.",
   "Open on watch": "فتح على الساعة",
   "Request sent to watch": "تم إرسال الطلب إلى الساعة",
   "Watch unavailable": "الساعة غير متاحة",

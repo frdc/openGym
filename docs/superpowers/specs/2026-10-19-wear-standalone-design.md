@@ -37,3 +37,13 @@ Iniciar funciona sem conexão e sem exigir leitura cardíaca. Durante a série, 
 ## Verificação
 
 Testes de sequência/resto, valores decimais, lados/supersets, reinício, reenvio/ACK perdido, eventos inválidos, falha de disco, alteração concorrente e troca de perfil. Teste nativo de UI sem telefone para iniciar, completar, descansar, pausar e continuar outra série; regressões existentes e builds. A instalação física depende de dispositivo conectado e deve ser relatada separadamente.
+
+## Complemento — reconexão e sincronização manual (2026-10-21)
+
+- Durante hidratação do telefone, responder `unavailable` aos comandos; desmontar a WebView publica `localReady=false`, sem encerrar o treino do relógio.
+- Reenvio integral de eventos já persistidos e idênticos é idempotente mesmo após edição posterior no telefone. Confirmar apenas o último evento do lote recebido.
+- Uma nova sequência pode incluir `standalone.receipt = {streamId, baseline, seq, requestId}` da importação anterior. O relógio só reconhece esse prefixo quando sessão, stream, baseline e identidade do evento correspondem ao diário local; só troca de base se nenhuma ação permanecer pendente. Recibos ficam ocultos enquanto a persistência no telefone não for confirmada.
+- “Sincronizar com o relógio” fica no treino ativo do app Android, junto a “Abrir no relógio”. Envia `/opengym/v1/refresh` com `{v:1, requestId, contextToken, sentAt}` a um único relógio acessível. Repete o mesmo pedido a cada 2 segundos, por até 30 segundos.
+- O relógio reenvia seu diário e as capturas cardíacas; só solicita `/opengym/v1/sync` quando as ações estiverem confirmadas. Durante a operação, o telefone publica apenas a resposta com o `syncId` correspondente. O relógio aceita a resposta apenas do mesmo nó, pedido e contexto.
+- `/opengym/v1/refresh-result` inclui `{v:1, requestId, contextToken, status, code, heartPending}`. `ok` exige aplicação gravada no relógio; confirmação de transporte ou gravação apenas do estado remoto não bastam. Falha de gravação, expiração e contexto divergente não são sucesso.
+- Séries e batimentos usam confirmações independentes. `heartPending` informa capturas ainda guardadas, inclusive coleta em andamento. O botão pode confirmar atualização do treino e avisar que batimentos continuam pendentes, preservados até seu próprio ACK. Conflitos reais são apresentados sem descarte automático.

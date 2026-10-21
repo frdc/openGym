@@ -144,6 +144,7 @@ final class WearHeartStore {
         return new JSONObject().put("contextToken", contextToken).put("phone", phone).put("captures", entries).toString().getBytes(StandardCharsets.UTF_8);
     }
     synchronized boolean canStart() { return captures.size() < 200 && !limitReached && !storageFailed; }
+    synchronized int pending() { return captures.size(); }
     synchronized void replay(String confirmedContext) {
         if (phone.isEmpty()) return;
         for (WearHeartCapture c : captures) {

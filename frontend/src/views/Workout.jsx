@@ -41,10 +41,10 @@ import { bestSetFor } from '../lib/exercise-history.js'
 import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt } from '../lib/workout-model.js'
 import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit } from '../lib/active-workout-order.js'
 import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
-import { registerWearCompletion, registerWearEditing, openWearApp } from '../lib/wear-bridge.js'
+import { registerWearCompletion, registerWearEditing } from '../lib/wear-bridge.js'
+import WearWorkoutActions from '../components/WearWorkoutActions.jsx'
 import { projectWearState, validateWearCommand } from '../lib/wear-protocol.js'
 import { setWorkoutField } from '../lib/workout-set-field.js'
-import { isAndroid } from '../lib/mobile.js'
 import { MUSCLE_NAME } from '../lib/muscles.js'
 
 // How long after a key starts a hold the same key is not yet its "Done" (#133). A USB button
@@ -901,15 +901,6 @@ function ActiveWorkout() {
   const { startRest: liveRest, stopRest, stopWork, work, timer } = useUI()
   const A = S.active
   const editing = !!A.editingWorkoutId
-  const [watchButton, setWatchButton] = useState(false)
-  const [openingWatch, setOpeningWatch] = useState(false)
-  useEffect(() => { let live = true; void isAndroid().then(android => { if (live) setWatchButton(android) }); return () => { live = false } }, [])
-  const openWatch = async () => {
-    setOpeningWatch(true)
-    try { await openWearApp(); useUI.getState().toast(t('Request sent to watch')) }
-    catch { useUI.getState().toast(t('Watch unavailable')) }
-    finally { setOpeningWatch(false) }
-  }
   // A past workout has no rest to time — the sets were done days ago. The work timer for
   // timed sets stays, since counting a hold is how its duration gets entered.
   const startRest = (A.backfill || editing) ? () => {} : liveRest
@@ -1745,7 +1736,7 @@ function ActiveWorkout() {
   }, [])
 
   return <div className="narrow">
-    {watchButton && !editing && <Button size="sm" variant="ghost" disabled={openingWatch} onClick={openWatch}>{t('Open on watch')}</Button>}
+    {!editing && !A.backfill && <WearWorkoutActions />}
     {/* In list mode the whole session scrolls under the header, so the header (name, clock,
         set counter, discard/finish, progress) stays pinned — the one thing you want in view
         while you are somewhere in the middle of a long stack. Cards mode never scrolls far. */}

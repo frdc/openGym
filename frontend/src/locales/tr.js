@@ -2003,6 +2003,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym bu planlanmış seansları hepsi tamamlandığında tekrarlar. Yeni bir planı içe aktarmak bu rotasyonu değiştirebilir.",
   "{0} pending changes": "{0} bekleyen değişiklik",
 
+  "Sync with watch": "Saatle eşitle",
+  "Syncing with watch…": "Saatle eşitleniyor…",
+  "Workout synced with watch": "Antrenman saatle eşitlendi",
+  "Workout updated. Heart rate data is still pending on the watch.": "Antrenman güncellendi. Saatte bekleyen kalp atış hızı verileri var.",
+  "Sync conflict. Watch data was kept.": "Eşitleme çakışması. Saatteki veriler korundu.",
+  "Watch did not confirm sync. Pending data was kept.": "Saat eşitlemeyi onaylamadı. Bekleyen veriler korundu.",
   "Open on watch": "Saatte aç",
   "Request sent to watch": "İstek saate gönderildi",
   "Watch unavailable": "Saat kullanılamıyor",

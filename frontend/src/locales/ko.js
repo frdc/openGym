@@ -2003,6 +2003,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "계획된 세션을 모두 완료하면 openGym이 반복합니다. 새 계획을 가져오면 이 순환이 교체될 수 있습니다.",
   "{0} pending changes": "대기 중인 변경 사항 {0}개",
 
+  "Sync with watch": "시계와 동기화",
+  "Syncing with watch…": "시계와 동기화 중…",
+  "Workout synced with watch": "운동이 시계와 동기화되었습니다",
+  "Workout updated. Heart rate data is still pending on the watch.": "운동이 업데이트되었습니다. 시계에 아직 전송 대기 중인 심박수 데이터가 있습니다.",
+  "Sync conflict. Watch data was kept.": "동기화 충돌이 발생했습니다. 시계 데이터는 보존되었습니다.",
+  "Watch did not confirm sync. Pending data was kept.": "시계가 동기화를 확인하지 않았습니다. 대기 중인 데이터는 보존되었습니다.",
   "Open on watch": "시계에서 열기",
   "Request sent to watch": "시계로 요청을 보냈습니다",
   "Watch unavailable": "시계를 사용할 수 없습니다",

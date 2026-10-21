@@ -2003,6 +2003,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "सभी नियोजित सत्र पूरे होने पर openGym इन्हें दोहराएगा। नया प्लान आयात करने पर यह रोटेशन बदल सकता है।",
   "{0} pending changes": "{0} लंबित बदलाव",
 
+  "Sync with watch": "घड़ी से सिंक करें",
+  "Syncing with watch…": "घड़ी से सिंक हो रहा है…",
+  "Workout synced with watch": "वर्कआउट घड़ी से सिंक हो गया",
+  "Workout updated. Heart rate data is still pending on the watch.": "वर्कआउट अपडेट हो गया। हृदय गति का कुछ डेटा अभी घड़ी पर लंबित है।",
+  "Sync conflict. Watch data was kept.": "सिंक में टकराव। घड़ी का डेटा सुरक्षित रखा गया।",
+  "Watch did not confirm sync. Pending data was kept.": "घड़ी ने सिंक की पुष्टि नहीं की। लंबित डेटा सुरक्षित रखा गया।",
   "Open on watch": "घड़ी पर खोलें",
   "Request sent to watch": "घड़ी को अनुरोध भेजा गया",
   "Watch unavailable": "घड़ी उपलब्ध नहीं है",

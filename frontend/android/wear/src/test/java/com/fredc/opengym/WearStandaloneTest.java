@@ -131,6 +131,37 @@ public class WearStandaloneTest {
         assertEquals(6, engine.pending());
     }
 
+    @Test public void newExerciseSnapshotRetiresOnlyItsDurableReceiptBeforeReplacingCompletedSequence() throws Exception {
+        WearStandalone engine = new WearStandalone(new MemoryStore()); JSONObject remote = snapshot(); engine.receive(remote);
+        for (int i = 0; i < 4; i++) {
+            assertTrue(engine.perform(event("start", 1000 + i * 2000)));
+            assertTrue(engine.perform(event("complete", 2000 + i * 2000)));
+        }
+        JSONObject packet = engine.packet();
+        assertTrue(engine.view(remote).isNull("current"));
+        JSONObject added = snapshot().put("revision", 3);
+        JSONObject next = added.getJSONObject("standalone");
+        next.put("baseline", "exercise-added").put("steps", new JSONArray().put(step(0, null, 0).put("entryIdx", 1)))
+            .put("receipt", new JSONObject().put("streamId", packet.getString("streamId")).put("baseline", "fingerprint")
+                .put("seq", 8).put("requestId", packet.getString("requestId")));
+        assertTrue(engine.receive(added));
+        assertFalse(engine.conflicted()); assertEquals(0, engine.pending());
+        assertEquals(1, engine.view(added).getJSONObject("current").getInt("entryIdx"));
+        assertTrue(engine.perform(event("start", 10000)));
+        assertEquals("exercise-added", engine.packet().getString("baseline"));
+    }
+
+    @Test public void aReceiptCannotDiscardActionsBeyondItsConfirmedPrefix() throws Exception {
+        WearStandalone engine = new WearStandalone(new MemoryStore()); JSONObject remote = snapshot(); engine.receive(remote);
+        engine.perform(event("start", 1000).put("heart", true)); engine.perform(event("complete", 2000));
+        JSONObject packet = engine.packet(), added = snapshot().put("revision", 3);
+        added.getJSONObject("standalone").put("baseline", "exercise-added").put("receipt", new JSONObject()
+            .put("streamId", packet.getString("streamId")).put("baseline", "fingerprint").put("seq", 1)
+            .put("requestId", packet.getJSONArray("events").getJSONObject(0).getString("id")));
+        assertTrue(engine.receive(added)); assertTrue(engine.conflicted()); assertEquals(1, engine.pending());
+        assertEquals("recovery", engine.view(added).getJSONObject("heartCapture").getString("phase"));
+    }
+
     @Test public void unsupportedOrOversizeSnapshotsNeverOfferLocalControls() throws Exception {
         WearStandalone engine = new WearStandalone(new MemoryStore()); JSONObject remote = snapshot();
         remote.getJSONObject("standalone").getJSONArray("steps").getJSONObject(0).put("canComplete", false);

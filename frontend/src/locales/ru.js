@@ -2007,6 +2007,12 @@ export default {
   "openGym will repeat these planned sessions once they are all done. Importing a new plan can replace this rotation.": "openGym повторит эти запланированные занятия после завершения всех. Импорт нового плана может заменить эту ротацию.",
   "{0} pending changes": "Ожидающих изменений: {0}",
 
+  "Sync with watch": "Синхронизировать с часами",
+  "Syncing with watch…": "Синхронизация с часами…",
+  "Workout synced with watch": "Тренировка синхронизирована с часами",
+  "Workout updated. Heart rate data is still pending on the watch.": "Тренировка обновлена. На часах ещё есть неотправленные данные пульса.",
+  "Sync conflict. Watch data was kept.": "Конфликт синхронизации. Данные часов сохранены.",
+  "Watch did not confirm sync. Pending data was kept.": "Часы не подтвердили синхронизацию. Неотправленные данные сохранены.",
   "Open on watch": "Открыть на часах",
   "Request sent to watch": "Запрос отправлен на часы",
   "Watch unavailable": "Часы недоступны",
