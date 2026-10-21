@@ -142,3 +142,24 @@ test('a closed stream becomes an error and frees the session before reconnecting
   await bridge.connect()
   assert.equal(bridge.status.state, 'connected')
 })
+
+test('an established stream survives a brief wireless gap but still expires when silent', { timeout: 23000 }, async t => {
+  const hello = { v: 1, type: 'hello', session: 'wireless', model: 'Test Watch', orientation: 'unavailable', sensors: { orientation: false, accel: false, gyro: false, linear: false }, rateHz: 25 }
+  const sample = { v: 1, type: 'sample', session: 'wireless', seq: 1, tMs: 6500, q: null, accel: null, gyro: null, linear: null, accuracy: 0, orientationAgeMs: null }
+  let peer
+  const sensorServer = net.createServer(socket => { peer = socket; socket.write(JSON.stringify(hello) + '\n') })
+  await new Promise(resolve => sensorServer.listen(0, '127.0.0.1', resolve))
+  const run = async args => args[0] === 'devices' ? 'watch device model:Watch' : args.includes('features') ? 'feature:android.hardware.type.watch' : args.includes('tcp:0') ? String(sensorServer.address().port) : 'Status: ok'
+  const bridge = new MotionBridge(run)
+  t.after(async () => { await bridge.cleanup(); peer?.destroy(); await new Promise(resolve => sensorServer.close(resolve)) })
+  await bridge.connect()
+  await new Promise(resolve => setTimeout(resolve, 6500))
+  assert.equal(bridge.status.state, 'connected', 'Temporary radio silence must not close an established stream')
+  const recovered = once(bridge, 'sample')
+  peer.write(JSON.stringify(sample) + '\n')
+  assert.equal((await recovered)[0].seq, 1)
+  const [expired] = await once(bridge, 'status')
+  assert.equal(expired.state, 'error')
+  assert.match(expired.message, /não enviou dados/)
+  assert.equal(bridge.port, null)
+})

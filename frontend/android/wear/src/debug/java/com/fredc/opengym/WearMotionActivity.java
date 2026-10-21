@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -41,6 +42,8 @@ public final class WearMotionActivity extends Activity implements SensorEventLis
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // A PC launch can arrive with the wrist down. KEEP_SCREEN_ON alone cannot wake it.
+        setTurnScreenOn(!ACTION_STOP.equals(getIntent().getAction()));
         sensors = getSystemService(SensorManager.class);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -69,6 +72,7 @@ public final class WearMotionActivity extends Activity implements SensorEventLis
 
     @Override protected void onResume() {
         super.onResume();
+        Log.i("OpenGymMotion", "Resuming motion activity; stop=" + ACTION_STOP.equals(getIntent().getAction()));
         if (isFinishing() || ACTION_STOP.equals(getIntent().getAction())) { finish(); return; }
         if (protocol != null) return;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -86,6 +90,7 @@ public final class WearMotionActivity extends Activity implements SensorEventLis
         try {
             transport = new WearMotionSocket(session.hello(), state -> main.post(() -> {
                 if (protocol != session) return;
+                Log.i("OpenGymMotion", "Motion transport state: " + state);
                 if (state == WearMotionSocket.Status.ERROR) stopCapture();
                 status.setText(switch (state) {
                     case CONNECTED -> R.string.motion_connected;
@@ -98,6 +103,7 @@ public final class WearMotionActivity extends Activity implements SensorEventLis
             main.post(transmit);
             main.postDelayed(sessionTimeout, WearMotionProtocol.SESSION_LIMIT_MS);
         } catch (IOException e) {
+            Log.w("OpenGymMotion", "Could not start motion capture", e);
             stopCapture();
             status.setText(R.string.motion_error);
         }
@@ -106,10 +112,15 @@ public final class WearMotionActivity extends Activity implements SensorEventLis
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        setTurnScreenOn(!ACTION_STOP.equals(intent.getAction()));
+        Log.i("OpenGymMotion", "Motion intent; stop=" + ACTION_STOP.equals(intent.getAction()));
         if (ACTION_STOP.equals(intent.getAction())) { stopCapture(); finish(); }
     }
 
-    @Override protected void onPause() { stopCapture(); super.onPause(); }
+    @Override protected void onPause() {
+        Log.i("OpenGymMotion", "Pausing motion activity; finishing=" + isFinishing());
+        stopCapture(); super.onPause();
+    }
     @Override protected void onDestroy() { stopCapture(); super.onDestroy(); }
 
     private Sensor register(int type) {

@@ -51,3 +51,12 @@ Evidências:
 - Seis testes de scripts, 17 idiomas/2.031 chaves, builds web/mobile, verificação dos bundles e ambos os APKs aprovados. Há avisos preexistentes de React e tamanho de chunks, sem falhas.
 - Editor iniciado em segundo plano, HTTP 200 verificado e abertura solicitada no Codex: `http://127.0.0.1:5178/tools/wear-layout/index.html`. O painel retornou `queued`, para mostrar a página ao voltar à tarefa. O emulador criado para os testes foi fechado ao final.
 - Nenhum dispositivo físico está conectado nesta execução. A evidência atual é de testes automatizados e emulador.
+
+## 2026-10-21 - Quedas da conexão de movimento no relógio físico
+
+- Usuário voltou para testar no Galaxy Watch Ultra (SM-L705F), confirmou que o modelo acompanha o movimento e relatou conexões intermitentes. Repositório permanece público, conforme sua decisão final.
+- Logs reproduziram duas causas: iniciar com a tela apagada levava a Activity a pausar e fechar o socket; um envio bloqueado por 1.076 ms disparava o limite excessivamente curto de 1 segundo.
+- Conectar agora acende a tela de sensores; a ação de encerramento não acorda o relógio. Envios bloqueados toleram até 10 segundos e a ponte aceita até 12 segundos sem quadros após o handshake. A pose ainda congela após 1 segundo sem dados frescos, e a fila permanece limitada à amostra mais recente. Mensagens de erro incluem a causa da interrupção.
+- Regressões de tela apagada e leitura temporariamente bloqueada falharam antes das correções e passaram depois. **30 testes Node, 51 unitários Wear e 7 instrumentados motion** aprovados, APK compilado e instalado no relógio físico preservando os dados. A ponte também foi testada com uma pausa de 6,5 segundos seguida de recuperação e depois silêncio definitivo, que libera a conexão.
+- Após a atualização, monitoramento físico de **60 segundos** recebeu **1.319 amostras**, uma única sessão, nenhum evento de desconexão e intervalo máximo de **630 ms** entre chegadas. Esse resultado confirma o intervalo observado; não equivale a um teste prolongado de rede nem mede a precisão espacial.
+- Servidor local atualizado e visualizador aberto para o usuário recalibrar e continuar o teste. Evidências técnicas permanecem locais em `frontend/android/wear/build/motion-evidence/`, ignoradas pelo Git.

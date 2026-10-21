@@ -21,7 +21,7 @@ adb pair IP:PORTA_DE_PAREAMENTO
 adb connect IP:PORTA_DE_DEPURACAO
 ```
 
-A porta de pareamento é diferente da porta de conexão e pode mudar. Nenhum código de pareamento é salvo pelo painel. Só relógios autorizados e conectados aparecem na lista. Toque **Conectar** no PC: a tela de sensores abre no relógio. Se a rede cair, reconecte o ADB e use Conectar novamente.
+A porta de pareamento é diferente da porta de conexão e pode mudar. Nenhum código de pareamento é salvo pelo painel. Só relógios autorizados e conectados aparecem na lista. Toque **Conectar** no PC: a tela de sensores abre e acende no relógio. Se a rede cair, reconecte o ADB e use Conectar novamente.
 
 ## Experimentar
 
@@ -32,6 +32,8 @@ A porta de pareamento é diferente da porta de conexão e pode mudar. Nenhum có
 5. Use a gravação/exportação para salvar dados JSON no PC. A gravação é temporária na memória do navegador, limitada a 30 minutos; exporte antes de fechar a página. O histórico de treinos não é alterado.
 
 O painel identifica dados antigos e sensores indisponíveis. Ausência de orientação não é tratada como movimento zero. Os gráficos mostram aceleração e velocidade angular; não são uma trajetória em centímetros.
+
+Interrupções breves do Wi-Fi não encerram imediatamente a sessão. Após 1 segundo sem dados novos, a pose fica congelada e o painel sinaliza falta de dados; a transmissão pode se recuperar mantendo a calibração. O relógio encerra envios bloqueados por 10 segundos, e a ponte no PC encerra uma sessão estabelecida após 12 segundos sem quadros válidos. Uma conexão inicial ainda exige resposta em 5 segundos. A fila de envio mantém apenas a amostra mais recente, e uma interrupção definitiva informa o motivo no painel.
 
 **Encerrar:** Desconectar no PC ou Encerrar no relógio. Sair da tela de sensores também interrompe a aquisição. Fechar a última aba libera a sessão após 10 segundos; há limite de 30 minutos no relógio. O servidor só escuta neste PC, e o fluxo usa o túnel ADB existente, sem abrir uma porta Wi-Fi no relógio.
 

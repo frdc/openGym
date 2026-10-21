@@ -112,10 +112,14 @@ export class MotionBridge extends EventEmitter {
         const pending = this.operation || Promise.resolve()
         this.failureCleanup = pending.catch(() => {}).then(() => this.cleanup()).finally(() => {
           this.failureCleanup = null
-          this.setStatus('error', 'Conexão interrompida. Reconecte o relógio.')
+          this.setStatus('error', `Conexão interrompida: ${error.message} Reconecte o relógio.`)
         })
       }
-      this.watchdog = setInterval(() => { if (Date.now() - lastFrame > 5000) fail(Error('O relógio não enviou dados.')) }, 1000)
+      // Keep the handshake bounded, but allow an established wireless stream to recover.
+      // The viewer freezes the pose after 1 s without fresh data during this grace period.
+      this.watchdog = setInterval(() => {
+        if (Date.now() - lastFrame > (ready ? 12000 : 5000)) fail(Error('O relógio não enviou dados.'))
+      }, 1000)
       this.watchdog.unref()
       socket.on('data', chunk => {
         try {

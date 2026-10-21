@@ -53,7 +53,7 @@ public class WearMotionSocketTest {
         try (var server = new WearMotionSocket(protocol.hello(), status -> { if (status == WearMotionSocket.Status.SLOW) slow.countDown(); })) {
             try (LocalSocket stalled = connect()) {
                 assertEquals("hello", new JSONObject(lines(stalled).readLine()).getString("type"));
-                long deadline = SystemClock.elapsedRealtime() + 5000;
+                long deadline = SystemClock.elapsedRealtime() + WearMotionSocket.WRITE_STALL_TIMEOUT_MS + 2000;
                 while (slow.getCount() != 0 && SystemClock.elapsedRealtime() < deadline) {
                     server.publish(protocol.sample(SystemClock.elapsedRealtimeNanos()));
                     Thread.sleep(5);
@@ -66,6 +66,23 @@ public class WearMotionSocketTest {
                     assertEquals("sample", new JSONObject(input.readLine()).getString("type"));
                 }
             }
+        }
+    }
+
+    @Test public void briefWirelessBackpressureDoesNotDisconnectTheSession() throws Exception {
+        var protocol = new WearMotionProtocol("wireless-test", "unavailable", false, false, false);
+        CountDownLatch slow = new CountDownLatch(1);
+        try (var server = new WearMotionSocket(protocol.hello(), status -> { if (status == WearMotionSocket.Status.SLOW) slow.countDown(); });
+             LocalSocket pausedReader = connect()) {
+            var input = lines(pausedReader);
+            assertEquals("hello", new JSONObject(input.readLine()).getString("type"));
+            long deadline = SystemClock.elapsedRealtime() + 2250;
+            while (SystemClock.elapsedRealtime() < deadline) {
+                server.publish(protocol.sample(SystemClock.elapsedRealtimeNanos()));
+                Thread.sleep(5);
+            }
+            assertEquals("A temporary wireless stall must not end the session", 1L, slow.getCount());
+            assertEquals("sample", new JSONObject(input.readLine()).getString("type"));
         }
     }
 }

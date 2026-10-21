@@ -4,6 +4,9 @@ import android.content.Intent;
 import android.content.ComponentName;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
+import android.os.ParcelFileDescriptor;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.view.WindowManager;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.BufferedReader;
@@ -14,6 +17,49 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class WearMotionLifecycleTest {
+    private void screenKey(int code) throws Exception {
+        var automation = InstrumentationRegistry.getInstrumentation().getUiAutomation();
+        try (var input = new ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("input keyevent " + code))) {
+            while (input.read() != -1) { }
+        }
+    }
+
+    private void awaitInteractive(PowerManager power, boolean expected) {
+        long deadline = SystemClock.elapsedRealtime() + 5000;
+        while (power.isInteractive() != expected && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
+        assertEquals("Motion launch must wake the display; STOP must not", expected, power.isInteractive());
+    }
+
+    @Test public void connectingWakesSleepingWatchButColdStopDoesNot() throws Exception {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        var context = instrumentation.getTargetContext();
+        var power = context.getSystemService(PowerManager.class);
+        Intent start = new Intent(context, WearMotionActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent stop = new Intent(start).setAction(WearMotionActivity.ACTION_STOP);
+        try {
+            screenKey(223); // KEYCODE_SLEEP: reproduce a PC connection with the wrist down.
+            awaitInteractive(power, false);
+            context.startActivity(start);
+            awaitInteractive(power, true);
+            instrumentation.waitForIdleSync();
+            try (LocalSocket socket = connect()) {
+                assertEquals("hello", new JSONObject(lines(socket).readLine()).getString("type"));
+            }
+            context.startActivity(stop);
+            instrumentation.waitForIdleSync();
+            screenKey(223);
+            awaitInteractive(power, false);
+            context.startActivity(stop);
+            instrumentation.waitForIdleSync();
+            SystemClock.sleep(300);
+            assertFalse("Cleanup must not wake an idle watch", power.isInteractive());
+        } finally {
+            context.startActivity(stop);
+            instrumentation.waitForIdleSync();
+            screenKey(224); // Restore the test device's interactive state.
+        }
+    }
+
     private LocalSocket connect() throws Exception {
         LocalSocket socket = new LocalSocket();
         socket.connect(new LocalSocketAddress("opengym-motion-v1", LocalSocketAddress.Namespace.ABSTRACT));

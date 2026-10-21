@@ -7,6 +7,7 @@ import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
+import android.util.Log;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -19,6 +20,9 @@ import java.util.function.Consumer;
 /** Debug-only abstract Unix socket. No network listener or workout-service dependencies. */
 final class WearMotionSocket implements Closeable {
     static final String NAME = "opengym-motion-v1";
+    // Wireless ADB can briefly stop draining the socket without losing its connection.
+    // The mailbox stays bounded to one latest sample throughout that pause.
+    static final long WRITE_STALL_TIMEOUT_MS = 10_000;
     enum Status { WAITING, CONNECTED, SLOW, ERROR }
     private final Object lock = new Object();
     private final LocalServerSocket server;
@@ -63,6 +67,7 @@ final class WearMotionSocket implements Closeable {
                     socket.setSendBufferSize(1024);
                     next = new Peer(socket);
                 } catch (IOException e) {
+                    Log.w("OpenGymMotion", "Could not accept motion peer", e);
                     closeSocket(socket);
                     continue;
                 }
@@ -76,6 +81,7 @@ final class WearMotionSocket implements Closeable {
                 next.writer.start();
             }
         } catch (IOException e) {
+            if (!closed) Log.w("OpenGymMotion", "Motion listener failed", e);
             if (!closed) { listener.accept(Status.ERROR); close(); }
         }
     }
@@ -84,7 +90,8 @@ final class WearMotionSocket implements Closeable {
         Peer peer = current;
         if (peer == null) return;
         long started = peer.writeStarted;
-        if (started != 0 && SystemClock.elapsedRealtime() - started >= 1000) {
+        if (started != 0 && SystemClock.elapsedRealtime() - started >= WRITE_STALL_TIMEOUT_MS) {
+            Log.w("OpenGymMotion", "Motion peer write stalled for " + (SystemClock.elapsedRealtime() - started) + " ms");
             peer.endStatus = Status.SLOW;
             peer.close();
         }
@@ -129,7 +136,8 @@ final class WearMotionSocket implements Closeable {
                 }
                 String line;
                 while ((line = mailbox.take()) != null) write(output, line);
-            } catch (IOException ignored) {
+            } catch (IOException error) {
+                if (!closed) Log.w("OpenGymMotion", "Motion peer write ended", error);
                 // ADB disconnect, replacement and lifecycle shutdown all close this stream.
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
