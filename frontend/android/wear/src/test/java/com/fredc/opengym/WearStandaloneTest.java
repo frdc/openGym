@@ -9,8 +9,9 @@ public class WearStandaloneTest {
     private static final class MemoryStore implements WearStandalone.Store {
         String document;
         boolean fail;
+        int writes, failAt = -1;
         public String read() { return document; }
-        public boolean write(String value) { if (fail) return false; document = value; return true; }
+        public boolean write(String value) { if (++writes == failAt || fail) return false; document = value; return true; }
     }
 
     private JSONObject step(int set, String side, int rest) throws Exception {
@@ -118,6 +119,60 @@ public class WearStandaloneTest {
         assertNull(engine.packet()); assertFalse(engine.perform(event("complete", 2000)));
         assertTrue(engine.discard()); assertTrue(engine.receive(other)); assertTrue(engine.available());
         assertEquals("other", engine.view(other).getString("contextToken"));
+    }
+
+    @Test public void returningToTheSamePreparedSessionUnblocksStaleContextWithoutLosingItsJournal() throws Exception {
+        for (boolean replyConflict : new boolean[] {false, true}) {
+            MemoryStore disk = new MemoryStore(); WearStandalone engine = new WearStandalone(disk);
+            JSONObject remote = snapshot().put("publisherId", "original").put("revision", 10);
+            assertTrue(engine.receive(remote));
+            assertTrue(engine.perform(event("start", 1000).put("heart", true)));
+            assertTrue(engine.perform(event("complete", 2000)));
+            JSONObject packet = engine.packet();
+            if (replyConflict) {
+                assertTrue(engine.acknowledge(new JSONObject().put("v", 1).put("streamId", packet.getString("streamId"))
+                    .put("requestId", packet.getString("requestId")).put("status", "error").put("code", "stale-context")));
+            } else assertTrue(engine.receive(new JSONObject().put("v", 1).put("active", false).put("localReady", true)));
+            assertTrue(engine.conflicted()); assertNull(engine.packet());
+            JSONObject restored = new JSONObject(remote.toString()).put("publisherId", "restarted").put("revision", 1);
+            assertTrue(engine.receive(restored));
+            assertFalse("Returning owner with the same baseline must be able to replay", engine.conflicted());
+            assertEquals(2, engine.pending()); assertEquals(packet.toString(), engine.packet().toString());
+            assertTrue(engine.view(restored).has("heartCapture"));
+        }
+    }
+
+    @Test public void staleContextDoesNotUnblockForAnotherBaselineOrAnOlderSnapshot() throws Exception {
+        MemoryStore disk = new MemoryStore(); WearStandalone engine = new WearStandalone(disk);
+        JSONObject remote = snapshot().put("publisherId", "original").put("revision", 10);
+        engine.receive(remote); engine.perform(event("start", 1000));
+        engine.receive(new JSONObject().put("v", 1).put("active", false).put("localReady", true));
+        JSONObject changed = new JSONObject(remote.toString()); changed.getJSONObject("standalone").put("baseline", "edited");
+        assertTrue(engine.receive(changed)); assertTrue(engine.conflicted()); assertNull(engine.packet());
+        assertTrue(engine.receive(new JSONObject(remote.toString()).put("revision", 9)));
+        assertTrue(engine.conflicted()); assertEquals(1, engine.pending()); assertNull(engine.packet());
+    }
+
+    @Test public void returningSnapshotCannotClearARealBaselineConflict() throws Exception {
+        WearStandalone engine = new WearStandalone(new MemoryStore()); JSONObject remote = snapshot();
+        engine.receive(remote); engine.perform(event("start", 1000));
+        JSONObject changed = new JSONObject(remote.toString()); changed.getJSONObject("standalone").put("baseline", "edited");
+        engine.receive(changed); assertTrue(engine.conflicted());
+        assertTrue(engine.receive(remote)); assertTrue(engine.conflicted());
+        assertEquals(1, engine.pending()); assertNull(engine.packet());
+    }
+
+    @Test public void failedStreamConflictWriteCannotPersistAnUnblockedJournal() throws Exception {
+        MemoryStore disk = new MemoryStore(); WearStandalone engine = new WearStandalone(disk);
+        engine.receive(snapshot()); engine.perform(event("start", 1000));
+        engine.receive(new JSONObject().put("v", 1).put("active", false).put("localReady", true));
+        JSONObject otherStream = snapshot();
+        otherStream.getJSONObject("standalone").put("ack", new JSONObject().put("streamId", "another-stream").put("seq", 0));
+        disk.failAt = disk.writes + 2;
+        assertFalse(engine.receive(otherStream));
+        WearStandalone restored = new WearStandalone(disk);
+        assertTrue("Failed validation write must leave the old blocking conflict durable", restored.conflicted());
+        assertEquals(1, restored.pending()); assertNull(restored.packet());
     }
 
     @Test public void packetsHaveStableIdsAndAtMost64OrderedEvents() throws Exception {

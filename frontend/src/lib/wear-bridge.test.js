@@ -78,6 +78,39 @@ it('keeps a reconnecting watch retryable while the phone is still hydrating', as
     expect(f.store.S.active.entries[0].sets[0].done).toBe(true)
   } finally { stop() }
 })
+it('does not treat the temporary guest profile during authentication as a workout replacement', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const command = standaloneCommand(f.plugin.publish.mock.calls.at(-1)[0].state)
+    const previous = { S: f.store.S, ownerKey: f.store.ownerKey, activeSessionToken: f.store.activeSessionToken }
+    Object.assign(f.store, { authReady: false, ownerKey: 'temporary-guest', activeSessionToken: null, S: { unit: 'kg', active: null } })
+    for (const cb of f.storeListeners) cb()
+    await tick(); await tick()
+    expect(f.plugin.publish.mock.calls.at(-1)[0].state.localReady).toBe(false)
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'error', code: 'unavailable' })
+    Object.assign(f.store, previous, { authReady: true })
+    for (const cb of f.storeListeners) cb()
+    await tick(); await tick()
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 2 })
+    expect(f.store.S.active.entries[0].sets[0].done).toBe(true)
+  } finally { stop() }
+})
+it('returns a temporary error to offline work received before authentication settles', async () => {
+  heartFixture()
+  const stop = bindWearBridge()
+  try {
+    await tick(); await tick()
+    const command = standaloneCommand(f.plugin.publish.mock.calls.at(-1)[0].state)
+    Object.assign(f.store, { authReady: false, ownerKey: 'temporary-guest', activeSessionToken: null, S: { active: null } })
+    await f.receive({ nodeId: 'watch', command })
+    expect(f.plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'error', code: 'unavailable' })
+    expect(f.store.update).not.toHaveBeenCalled()
+  } finally { stop() }
+})
 it('retries a failed local standalone write without publishing an unpersisted receipt or applying twice', async () => {
   heartFixture()
   const stop = bindWearBridge()

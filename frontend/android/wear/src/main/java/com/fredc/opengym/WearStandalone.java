@@ -148,6 +148,13 @@ final class WearStandalone {
             if (validSnapshot(remote)) {
                 receiveReceipt(doc, remote);
                 if (!save(doc)) return false;
+                // A transient owner during phone startup may have rejected this
+                // journal. Only the original session with its unchanged prepared
+                // baseline can make that stale-context rejection retryable again.
+                if ("stale-context".equals(doc.optString("conflict"))
+                        && doc.optString("sessionId").equals(remote.optString("contextToken"))
+                        && doc.optString("baseline").equals(remote.getJSONObject("standalone").optString("baseline"))
+                        && !older(remote, doc)) doc.remove("conflict");
             }
             if (!doc.optString("conflict").isEmpty()) return true;
             if (!doc.optString("sessionId").equals(remote.optString("contextToken")) || !remote.optBoolean("active")) {

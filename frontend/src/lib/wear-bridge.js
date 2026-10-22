@@ -15,9 +15,12 @@ let automaticOpen = null, requestedWorkout = null
 // flushLocal confirms them, including across a route/root effect remount.
 const pendingStandaloneSessions = new Map()
 const observedPhoneTimers = new Map(), pendingTimerSeeds = new Set()
+// Local guest storage can hydrate before authentication restores the real owner.
+// That temporary profile cannot authoritatively end or replace a watch workout.
+const ownerReady = store => store.localReady && store.authReady !== false
 export function requestWearWorkoutOpen() {
   const store = useStore.getState(), active = store.S.active
-  if (!store.localReady || !store.activeSessionToken || !active || active.backfill || active.editingWorkoutId) return
+  if (!ownerReady(store) || !store.activeSessionToken || !active || active.backfill || active.editingWorkoutId) return
   requestedWorkout = { ownerKey: store.ownerKey, sessionToken: store.activeSessionToken }
   automaticOpen?.()
 }
@@ -39,7 +42,7 @@ export function registerWearEditing(handler) {
 }
 
 export function bindWearBridge() {
-  const matches = expected => !expected || (useStore.getState().ownerKey === expected.ownerKey && useStore.getState().activeSessionToken === expected.sessionToken && useStore.getState().localReady)
+  const matches = expected => !expected || (useStore.getState().ownerKey === expected.ownerKey && useStore.getState().activeSessionToken === expected.sessionToken && ownerReady(useStore.getState()))
   const open = async (expected = null) => {
     if (closed || !plugin || !matches(expected) || !snapshot().active) throw new Error('wear-unavailable')
     await publish()
@@ -83,7 +86,7 @@ export function bindWearBridge() {
     if (preparingTimer) return preparingTimer
     preparingTimer = Promise.resolve().then(async () => {
       const store = useStore.getState(), sessionId = store.activeSessionToken
-      if (!store.localReady || !sessionId || !store.S.active) return
+      if (!ownerReady(store) || !sessionId || !store.S.active) return
       const timer = phoneTimer(store), signature = standaloneTimerSignature(timer)
       const observed = observedPhoneTimers.get(sessionId), seed = store.S.active._wearStandaloneTimer
       const first = preparedTimerSession !== sessionId
@@ -114,13 +117,13 @@ export function bindWearBridge() {
   }
   function snapshot() {
     const store = useStore.getState(), ui = useUI.getState()
-    const nextIdentity = `${store.ownerKey}:${store.activeSessionToken}:${store.localReady}`
+    const nextIdentity = `${store.ownerKey}:${store.activeSessionToken}:${ownerReady(store)}`
     if (nextIdentity !== identity) { identity = nextIdentity; contextToken = store.activeSessionToken || ''; serialized = ''; pendingStandalone = pendingStandaloneSessions.get(contextToken) || null }
     if (!store.S.active?._wearStandalone) { pendingStandaloneSessions.delete(contextToken); pendingStandalone = null }
     const timer = ui.timer?.context?.ownerKey === store.ownerKey && ui.timer?.context?.activeSessionToken === store.activeSessionToken ? ui.timer : null
-    const projection = projectWearState({ S: store.S, timer, contextToken, revision: 0, ready: store.localReady && !!store.activeSessionToken, editingReady: !!editHandler && !ui.sheets.length && !ui.work })
+    const projection = projectWearState({ S: store.S, timer, contextToken, revision: 0, ready: ownerReady(store) && !!store.activeSessionToken, editingReady: !!editHandler && !ui.sheets.length && !ui.work })
     projection.publisherId = publisherId
-    projection.localReady = !!store.localReady
+    projection.localReady = !!ownerReady(store)
     const standalone = projection.active ? projectStandalone(store.S, contextToken) : null
     projection.standalone = pendingStandalone ? pendingStandalone.projection : standalone
     projection.heartCapture = heart?.projection() || null
@@ -194,7 +197,7 @@ export function bindWearBridge() {
             let response
             const store = useStore.getState(), expected = { ownerKey: store.ownerKey, sessionToken: store.activeSessionToken }
             try {
-              if (!store.localReady) throw Object.assign(new Error('unavailable'), { code: 'unavailable' })
+              if (!ownerReady(store)) throw Object.assign(new Error('unavailable'), { code: 'unavailable' })
               await prepareStandaloneTimer()
               if (!matches(expected)) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
               const currentStore = useStore.getState(), before = snapshot(), checkpoint = currentStore.S.active?._wearStandalone
