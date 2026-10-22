@@ -74,3 +74,8 @@ Evidências:
 
 - A pedido do usuário, APK Wear do commit `47e8c388` instalado no Galaxy Watch Ultra (SM-L705F) com `adb install -r --user 0`, sem limpar dados. Instalação retornou Success; `lastUpdateTime` mudou e `firstInstallTime` permaneceu igual. WearActivity aberta com `Status: ok`.
 - Esta etapa confirma instalação e abertura no relógio; a sincronização completa ainda depende da atualização correspondente do celular e de teste entre os aparelhos. O celular não foi atualizado nesta etapa.
+
+## 2026-10-21 - Atualização de sincronização instalada no celular
+
+- APK Android correspondente ao commit `47e8c388` instalado no Galaxy S23 Ultra (SM-S918B), selecionado explicitamente pelo identificador ADB Wi-Fi. O aparelho `0123456789ABCDEF` foi excluído da operação conforme pedido do usuário.
+- Atualização com `adb install -r --user 0` retornou Success, preservando os dados; `lastUpdateTime` avançou e `firstInstallTime` foi mantido. MainActivity aberta com `Status: ok`. Celular e relógio agora receberam a atualização; a validação física da sincronização entre eles continua pendente.
