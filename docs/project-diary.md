@@ -69,3 +69,8 @@ Evidências:
 - Regressões reproduziram carregamento, ACK perdido, exercício novo e captura cardíaca tardia (pico de 155 mantido após completar o novo exercício). Revisão independente apontou falso sucesso após falha de gravação standalone; teste com SharedPreferences real falhou antes e passou após propagar a falha, incluindo repetição do mesmo snapshot.
 - Validação: **358 arquivos / 3.914 testes web, 6 unitários do celular, 56 unitários Wear e 10 instrumentados no emulador** aprovados. Builds mobile e ambos os APKs debug aprovados, bundle Android idêntico ao mobile; 17 idiomas / 2.037 chaves conferidos. Avisos preexistentes de chunks/importação dinâmica, sem falha de build.
 - **Usuário escolheu testar depois; nova versão ainda não instalada nos dispositivos físicos.** APKs em `frontend/android/app/build/outputs/apk/debug/app-debug.apk` e `frontend/android/wear/build/outputs/apk/debug/wear-debug.apk`. Sem alterações nos dados pessoais e sem recuperação antiga. O servidor do visualizador de movimento foi encerrado a pedido do usuário antes desta tarefa e continua fechado.
+
+## 2026-10-21 - Atualização de sincronização instalada no relógio
+
+- A pedido do usuário, APK Wear do commit `47e8c388` instalado no Galaxy Watch Ultra (SM-L705F) com `adb install -r --user 0`, sem limpar dados. Instalação retornou Success; `lastUpdateTime` mudou e `firstInstallTime` permaneceu igual. WearActivity aberta com `Status: ok`.
+- Esta etapa confirma instalação e abertura no relógio; a sincronização completa ainda depende da atualização correspondente do celular e de teste entre os aparelhos. O celular não foi atualizado nesta etapa.
