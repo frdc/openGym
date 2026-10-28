@@ -202,6 +202,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
                 String key = timerPrefs.getString("key", "");
                 boolean handled = timerPrefs.getBoolean("armed", false) || key.equals(timerPrefs.getString("fired", ""));
                 request.put("alarmKey", handled ? key : "");
+                request.put("replay",WearStandalone.replayHint(this));
                 Wearable.getMessageClient(this).sendMessage(phone, "/opengym/v1/sync", request.toString().getBytes(StandardCharsets.UTF_8)).addOnFailureListener(e -> { confirmedAt = 0; updateControls(); });
             } catch (Exception ignored) { }
         }).addOnFailureListener(e -> { phone = ""; confirmedAt = 0; updateControls(); });
@@ -220,7 +221,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             } else if ("/opengym/v1/reply".equals(event.getPath())) {
                 if (packet.optInt("v") != 1) return;
                 if (WearStandalone.acknowledge(this, packet)) {
-                    WearStateService.refresh(this); state = WearStateService.cached(this); render(); WearStateService.replay(this, phone); return;
+                    WearStandalone.receive(this,WearStateService.remote(this));WearStateService.refresh(this); state = WearStateService.cached(this); render(); WearStateService.replay(this, phone); return;
                 }
                 if (pending.equals(packet.optString("requestId")) && !pending.isEmpty()) {
                     JSONObject queued=WearOutbox.read(this);

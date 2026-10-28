@@ -32,6 +32,46 @@ public class WearStandaloneTest {
 
     private JSONObject event(String action, long at) throws Exception { return new JSONObject().put("action", action).put("at", at); }
 
+    private JSONObject authorize(JSONObject remote) throws Exception {
+        return remote.put("localReady",true).put("standaloneSync",new JSONObject().put("v",2)
+            .put("sessions",new JSONArray().put(new JSONObject().put("sessionId","session-one").put("baselines",new JSONArray().put("fingerprint")))).put("receipts",new JSONArray()));
+    }
+    @Test public void authorizedChangedBaseOrFinishedSessionRetainsReplayUntilExactHistoricalReceipt() throws Exception {
+        for(boolean finished:new boolean[]{false,true}) {
+            MemoryStore disk=new MemoryStore();WearStandalone engine=new WearStandalone(disk);engine.receive(snapshot());
+            engine.perform(event("start",1000).put("heart",true));engine.perform(event("complete",2000));JSONObject packet=engine.packet();
+            JSONObject next=authorize(snapshot().put("revision",2));next.getJSONObject("standalone").put("baseline","edited");
+            if(finished) next.put("active",false).put("contextToken","").remove("standalone");
+            assertTrue(engine.receive(next));assertFalse(engine.conflicted());assertEquals(2,engine.pending());assertNotNull(engine.packet());
+            JSONObject receipt=new JSONObject().put("sessionId","session-one").put("baseline","fingerprint").put("streamId",packet.getString("streamId")).put("seq",2).put("requestId","wrong");
+            next.getJSONObject("standaloneSync").getJSONArray("receipts").put(receipt);
+            assertTrue(engine.receive(next));assertEquals(2,engine.pending());
+            receipt.put("requestId",packet.getString("requestId"));disk.fail=true;
+            assertFalse(engine.receive(next));assertEquals(2,engine.pending());disk.fail=false;
+            assertTrue(engine.receive(next));assertEquals(0,new WearStandalone(disk).pending());
+            if(!finished) assertEquals("edited",engine.view(next).getJSONObject("standalone").getString("baseline"));
+        }
+    }
+    @Test public void authorizedNewSessionCanRecoverOldGlobalConflictsButNeverFieldOrTargetConflicts() throws Exception {
+        for(String code:new String[]{"stale-context","baseline-conflict","state-conflict","field-conflict","target-conflict"}) {
+            WearStandalone engine=new WearStandalone(new MemoryStore());engine.receive(snapshot());engine.perform(event("start",1000));JSONObject packet=engine.packet();
+            engine.acknowledge(new JSONObject().put("v",1).put("requestId",packet.getString("requestId")).put("streamId",packet.getString("streamId")).put("status","error").put("code",code));
+            assertTrue(engine.conflicted());
+            JSONObject next=authorize(snapshot().put("contextToken","session-two").put("revision",2));next.getJSONObject("standalone").put("sessionId","session-two");
+            assertTrue(engine.receive(next));
+            assertEquals(code.equals("field-conflict")||code.equals("target-conflict"),engine.conflicted());
+            assertEquals(1,engine.pending());
+        }
+    }
+    @Test public void anotherManifestCannotAuthorizeOrAcknowledgeOurJournal() throws Exception {
+        WearStandalone engine=new WearStandalone(new MemoryStore());engine.receive(snapshot());engine.perform(event("start",1000));
+        JSONObject next=authorize(snapshot().put("revision",2).put("contextToken","other"));
+        next.getJSONObject("standalone").put("sessionId","other");
+        next.getJSONObject("standaloneSync").getJSONArray("sessions").getJSONObject(0).put("baselines",new JSONArray().put("wrong"));
+        assertTrue(engine.receive(next));assertTrue(engine.conflicted());assertEquals(1,engine.pending());
+        assertEquals("session-one",engine.replayHint().getString("sessionId"));assertEquals("fingerprint",engine.replayHint().getString("baseline"));
+    }
+
     @Test public void startCompleteAndRestartAdvanceOriginalSidesAndKeepRestDeadline() throws Exception {
         MemoryStore disk = new MemoryStore(); WearStandalone engine = new WearStandalone(disk);
         assertTrue(engine.receive(snapshot())); assertTrue(engine.available());

@@ -45,13 +45,19 @@ export function prepareWearLedger(S, sessionId, sessions = {}) {
 }
 
 /** Advertise only opaque sessions owned by the loaded archive. No account IDs. */
-export function wearSyncProjection(sessions = {}) {
-  const entries=Object.entries(sessions)
-  return { v:2, sessions:entries.map(([sessionId,s])=>({ sessionId,baselines:Object.keys(s.records || {}) })),
-    receipts:entries.flatMap(([sessionId,s])=>Object.entries(s.records || {}).flatMap(([baseline,r])=>{
-      const cp=r.replay?.active?._wearStandalone, last=cp?.events.at(-1)
-      return last ? [{sessionId,baseline,streamId:cp.streamId,seq:last.seq,requestId:last.id}] : []
-    })) }
+export function wearSyncProjection(sessions = {},hint=null) {
+  const records=Object.entries(sessions).flatMap(([sessionId,s])=>Object.entries(s.records || {}).map(([baseline,r])=>({sessionId,baseline,r})))
+  const selected=records.slice(-96)
+  const requested=records.find(r=>r.sessionId===hint?.sessionId && r.baseline===hint?.baseline)
+  if(requested && !selected.includes(requested)) selected.push(requested)
+  const grouped=new Map(),receipts=[]
+  for(const {sessionId,baseline,r} of selected) {
+    if(!grouped.has(sessionId)) grouped.set(sessionId,[])
+    grouped.get(sessionId).push(baseline)
+    const cp=r.replay?.active?._wearStandalone,last=cp?.events.at(-1)
+    if(last) receipts.push({sessionId,baseline,streamId:cp.streamId,seq:last.seq,requestId:last.id})
+  }
+  return {v:2,sessions:[...grouped].map(([sessionId,baselines])=>({sessionId,baselines})),receipts}
 }
 
 function targetAt(workout, entryId, setId, exerciseId) {

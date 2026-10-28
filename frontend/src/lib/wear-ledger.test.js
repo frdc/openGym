@@ -8,6 +8,14 @@ import { DEF } from '../store/state-defaults.js'
 import { makeSideSet, toggleSide } from './workout-model.js'
 
 const fixture = () => ({ ...structuredClone(DEF), active: { id: 'workout', start: 1000, cur: 0, entries: [{ id: '0025', sets: [{ r: 10, w: 60, done: false }, { r: 10, w: 60, done: false }] }] } })
+it('bounds transport manifests while a pending watch can request an older exact baseline',()=>{
+  const sessions=Object.fromEntries(Array.from({length:1024},(_,i)=>[`session-${String(i).padStart(36,'0')}`,{records:{['v1:'+String(i).padStart(16,'0')]:{replay:{active:{_wearStandalone:{streamId:'x'.repeat(100),events:[{seq:2,id:'a'.repeat(36)}]}}}}}}]))
+  const hint={sessionId:Object.keys(sessions)[0],baseline:Object.keys(Object.values(sessions)[0].records)[0]}
+  const projection=wearSyncProjection(sessions,hint)
+  expect(JSON.stringify(projection).length).toBeLessThan(48000)
+  expect(projection.sessions.some(s=>s.sessionId===hint.sessionId && s.baselines.includes(hint.baseline))).toBe(true)
+  expect(Object.keys(sessions)).toHaveLength(1024)
+})
 it('assigns stable unique targets without changing the prepared v1 baseline', () => {
   const S = fixture(), baseline = projectStandalone(S, 'session').baseline
   const identified = identifyWearTargets(S)

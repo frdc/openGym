@@ -136,7 +136,7 @@ export function bindWearBridge() {
     }).finally(() => { preparingTimer = null })
     return preparingTimer
   }
-  function snapshot() {
+  function snapshot(replayHint=null) {
     const store = useStore.getState(), ui = useUI.getState()
     const nextIdentity = `${store.ownerKey}:${store.activeSessionToken}:${ownerReady(store)}`
     if (nextIdentity !== identity) { identity = nextIdentity; contextToken = store.activeSessionToken || ''; serialized = ''; pendingStandalone = pendingStandaloneSessions.get(contextToken) || null }
@@ -147,7 +147,7 @@ export function bindWearBridge() {
     projection.localReady = !!ownerReady(store)
     const standalone = projection.active ? projectStandalone(store.S, contextToken) : null
     projection.standalone = pendingStandalone ? pendingStandalone.projection : standalone
-    if(store.wearSessions && ownerReady(store)) projection.standaloneSync=pendingWearReceipts.get(store.ownerKey) || wearSyncProjection(store.wearSessions)
+    if(store.wearSessions && ownerReady(store)) projection.standaloneSync=pendingWearReceipts.get(store.ownerKey) || wearSyncProjection(store.wearSessions,replayHint)
     projection.heartCapture = heart?.projection() || null
     projection.heartAuthorizedTokens = heart?.authorizedTokens() || []
     if (projection.current && (!completeHandler || ui.sheets.length || ui.work)) projection.current.canComplete = false
@@ -164,7 +164,7 @@ export function bindWearBridge() {
       if (manualSync.active && sync?.syncId !== manualSync.requestId) return
       await prepareStandaloneTimer()
       await heart?.adoptStandalone()
-      return plugin.publish({ state: snapshot(), ...(sync || {}) })
+      return plugin.publish({ state: snapshot(sync?.replay), ...(sync || {}) })
     })
     transport = run.catch(() => {})
     return run
@@ -188,9 +188,9 @@ export function bindWearBridge() {
       try { const response = await heart.receive(packet, nodeId); await plugin.replyHeart({ nodeId, response, inboxKey }) } catch { await plugin.replyHeart({ nodeId, inboxKey, response: { v: 1, requestId: packet?.requestId || '', token: packet?.token || '', status: 'error' } }).catch(() => {}) }
     }
     heartListener = await plugin.addListener('heart',onHeart)
-    const onCommand=async ({ nodeId, command, syncId, inboxKey }) => {
+    const onCommand=async ({ nodeId, command, syncId, inboxKey, replay }) => {
       if (closed) return
-      if (syncId) { await publish({ nodeId, syncId }).catch(() => {}); return }
+      if (syncId) { await publish({ nodeId, syncId, replay }).catch(() => {}); return }
       // Each node has a serialized controller, and commands from all nodes are globally serialized below.
       if (!controllers.has(nodeId)) controllers.set(nodeId, createWearController({
         readSnapshot: snapshot,

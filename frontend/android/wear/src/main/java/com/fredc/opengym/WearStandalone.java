@@ -41,6 +41,21 @@ final class WearStandalone {
     static synchronized boolean conflicted(Context context) { return engine(context).conflicted(); }
     static synchronized boolean available(Context context) { return engine(context).available(); }
     static synchronized boolean discard(Context context) { return engine(context).discard(); }
+    static synchronized JSONObject replayHint(Context context) { return engine(context).replayHint(); }
+    JSONObject replayHint() {
+        JSONObject doc=read();if(doc==null || pending(doc)==0) return null;
+        try {return new JSONObject().put("sessionId",doc.getString("sessionId")).put("baseline",doc.getString("baseline"));} catch(Exception e) {return null;}
+    }
+    static boolean authorized(JSONObject remote,String session,String baseline) {
+        if(remote==null || !remote.optBoolean("localReady")) return false;
+        JSONObject sync=remote.optJSONObject("standaloneSync");if(sync==null || sync.optInt("v")!=2) return false;
+        JSONArray sessions=sync.optJSONArray("sessions");if(sessions==null) return false;
+        for(int i=0;i<sessions.length();i++) {
+            JSONObject entry=sessions.optJSONObject(i);if(entry==null || !session.equals(entry.optString("sessionId"))) continue;
+            JSONArray bases=entry.optJSONArray("baselines");if(bases!=null) for(int j=0;j<bases.length();j++) if(baseline.equals(bases.optString(j))) return true;
+        }
+        return false;
+    }
 
     private JSONObject read() {
         try {
@@ -124,8 +139,15 @@ final class WearStandalone {
     private void receiveReceipt(JSONObject doc, JSONObject remote) throws Exception {
         JSONObject standalone = remote.optJSONObject("standalone");
         JSONObject receipt = standalone == null ? null : standalone.optJSONObject("receipt");
-        if (receipt == null || !doc.optString("sessionId").equals(remote.optString("contextToken"))
-                || !doc.optString("baseline").equals(receipt.optString("baseline"))
+        if(receipt!=null && doc.optString("sessionId").equals(remote.optString("contextToken"))) applyReceipt(doc,receipt);
+        JSONObject sync=remote.optJSONObject("standaloneSync");JSONArray receipts=sync!=null && sync.optInt("v")==2 ? sync.optJSONArray("receipts") : null;
+        if(receipts!=null) for(int i=0;i<receipts.length();i++) {
+            JSONObject item=receipts.optJSONObject(i);
+            if(item!=null && doc.optString("sessionId").equals(item.optString("sessionId"))) applyReceipt(doc,item);
+        }
+    }
+    private void applyReceipt(JSONObject doc,JSONObject receipt) throws Exception {
+        if (!doc.optString("baseline").equals(receipt.optString("baseline"))
                 || !doc.optString("streamId").equals(receipt.optString("streamId"))
                 || !integer(receipt.opt("seq"), 1, lastSeq(doc))) return;
         int seq = receipt.getInt("seq");
@@ -143,20 +165,22 @@ final class WearStandalone {
         try {
             // A boot-time phone snapshot is not an owner/session replacement.
             if (remote == null || remote.has("localReady") && !remote.optBoolean("localReady")) return true;
+            if(bytes(remote)>MAX_SNAPSHOT_BYTES) return false;
             JSONObject doc = read();
             if (doc == null) return store.read() == null && validSnapshot(remote) && save(fresh(remote));
-            if (validSnapshot(remote)) {
+            if (validSnapshot(remote) || remote.optBoolean("localReady")) {
                 receiveReceipt(doc, remote);
                 if (!save(doc)) return false;
                 // A transient owner during phone startup may have rejected this
                 // journal. Only the original session with its unchanged prepared
                 // baseline can make that stale-context rejection retryable again.
-                if ("stale-context".equals(doc.optString("conflict"))
-                        && doc.optString("sessionId").equals(remote.optString("contextToken"))
-                        && doc.optString("baseline").equals(remote.getJSONObject("standalone").optString("baseline"))
-                        && !older(remote, doc)) doc.remove("conflict");
+                boolean original=validSnapshot(remote) && doc.optString("sessionId").equals(remote.optString("contextToken"))
+                    && doc.optString("baseline").equals(remote.getJSONObject("standalone").optString("baseline"));
+                if (Set.of("stale-context","baseline-conflict","state-conflict").contains(doc.optString("conflict"))
+                        && (authorized(remote,doc.optString("sessionId"),doc.optString("baseline")) || original && "stale-context".equals(doc.optString("conflict"))) && !older(remote, doc)) doc.remove("conflict");
             }
             if (!doc.optString("conflict").isEmpty()) return true;
+            if(pending(doc)>0 && authorized(remote,doc.optString("sessionId"),doc.optString("baseline"))) return save(doc);
             if (!doc.optString("sessionId").equals(remote.optString("contextToken")) || !remote.optBoolean("active")) {
                 if (pending(doc) > 0) return conflict(doc, "stale-context");
                 return validSnapshot(remote) ? save(fresh(remote)) : save(null);
@@ -314,7 +338,7 @@ final class WearStandalone {
             if (!reply.optString("status").equals("ok")) {
                 if (matched.getInt("seq") <= doc.optInt("ack")) return false;
                 String code = reply.optString("code");
-                if (Set.of("baseline-conflict", "state-conflict", "stream-conflict", "event-conflict", "stale-context", "stale-target", "unsupported-set", "stale-unit").contains(code)) return conflict(doc, code);
+                if (Set.of("baseline-conflict", "state-conflict", "field-conflict", "target-conflict", "stream-conflict", "event-conflict", "stale-context", "stale-target", "unsupported-set", "stale-unit").contains(code)) return conflict(doc, code);
                 return false;
             }
             if (!integer(reply.opt("seq"), 1, MAX_EVENTS) || reply.getInt("seq") != matched.getInt("seq")) return false;

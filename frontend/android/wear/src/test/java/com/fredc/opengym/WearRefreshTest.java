@@ -23,6 +23,19 @@ public class WearRefreshTest {
     }
     private JSONObject request() throws Exception { return new JSONObject().put("v", 1).put("requestId", "refresh-1").put("contextToken", "session").put("sentAt", 1000); }
     private JSONObject update() throws Exception { return new JSONObject().put("syncId", "refresh-1").put("sentAt", 3000).put("state", new JSONObject().put("v", 1).put("contextToken", "session").put("localReady", true)); }
+    @Test public void obtainsExactAuthorizationBeforeReplayingAnOlderSessionAndThenConfirmsNewState() throws Exception {
+        Port port=new Port() {
+            boolean allowed;
+            public JSONObject replayHint() {return new JSONObject();}
+            public boolean authorized() {return allowed;}
+            public boolean receive(JSONObject state,long at) {receives++;allowed=true;return true;}
+        };
+        port.context="old-session";WearRefresh sync=new WearRefresh(port);sync.request("phone",request(),1000);
+        assertEquals(List.of("/opengym/v1/sync"),port.paths);assertEquals(0,port.replays);
+        assertTrue(sync.state("phone",update(),2000));assertEquals(1,port.replays);assertEquals(2,port.pending);
+        port.pending=0;sync.advance(2500);assertTrue(sync.state("phone",update(),3000));
+        assertEquals("ok",port.result.getString("status"));assertEquals(2,port.receives);
+    }
     @Test public void drainsTheJournalBeforeRequestingStateAndConfirmsOnlyAfterApplyingIt() throws Exception {
         Port port = new Port(); WearRefresh sync = new WearRefresh(port);
         sync.request("phone", request(), 1000);

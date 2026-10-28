@@ -95,7 +95,7 @@ public class WearBridgePlugin extends Plugin {
         new Handler(Looper.getMainLooper()).post(() -> {
             if (instance != plugin) { WearRequestLocks.finish(node, requestId); return; }
             JSObject event = new JSObject(); event.put("nodeId", node);
-            if (syncId != null) event.put("syncId", syncId); else event.put("command", command);
+            if (syncId != null) {event.put("syncId", syncId);event.put("replay",command.optJSONObject("replay"));} else event.put("command", command);
             plugin.notifyListeners("command", event);
         });
         return true;

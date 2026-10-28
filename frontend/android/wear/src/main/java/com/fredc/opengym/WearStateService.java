@@ -24,6 +24,11 @@ public class WearStateService extends WearableListenerService {
                 public int pending() { return WearStandalone.pending(c); }
                 public int heartPending() { return WearHeartStore.get(c).pending(); }
                 public boolean conflicted() { return WearStandalone.conflicted(c) || WearOutbox.read(c) != null; }
+                public JSONObject replayHint() {return WearStandalone.replayHint(c);}
+                public boolean authorized() {
+                    JSONObject hint=WearStandalone.replayHint(c);
+                    return hint!=null && WearStandalone.authorized(remote(c),hint.optString("sessionId"),hint.optString("baseline"));
+                }
                 public void replay(String node) { WearStateService.replay(c, node); WearHeartStore.get(c).snapshot(cached(c), node); }
                 public boolean receive(JSONObject state, long at) { return WearStateService.receive(c, state, at); }
                 public void send(String node, String path, JSONObject payload) { Wearable.getMessageClient(c).sendMessage(node, path, payload.toString().getBytes(StandardCharsets.UTF_8)); }
@@ -57,7 +62,9 @@ public class WearStateService extends WearableListenerService {
         if (node == null || node.isEmpty()) return;
         JSONObject packet = WearStandalone.packet(context);
         // A new phone/profile must never receive the previous session's journal.
-        if (packet == null || !packet.optString("contextToken").equals(remote(context).optString("contextToken"))) return;
+        JSONObject remote=remote(context);
+        if (packet == null || !packet.optString("contextToken").equals(remote.optString("contextToken"))
+            && !WearStandalone.authorized(remote,packet.optString("contextToken"),packet.optString("baseline"))) return;
         byte[] bytes = packet.toString().getBytes(StandardCharsets.UTF_8);
         if (bytes.length <= 65536) Wearable.getMessageClient(context).sendMessage(node, "/opengym/v1/command", bytes);
     }
@@ -89,7 +96,7 @@ public class WearStateService extends WearableListenerService {
         if ("/opengym/v1/reply".equals(event.getPath()) && event.getData().length <= 16384 && trusted(event.getSourceNodeId())) {
             try {
                 JSONObject reply = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
-                if (WearStandalone.acknowledge(this, reply)) { refresh(this); replay(this, event.getSourceNodeId()); refreshFlow(this).advance(System.currentTimeMillis()); }
+                if (WearStandalone.acknowledge(this, reply)) { WearStandalone.receive(this,remote(this));refresh(this); replay(this, event.getSourceNodeId()); refreshFlow(this).advance(System.currentTimeMillis()); }
             } catch (Exception ignored) { }
         }
         if ("/opengym/v1/heart-ack".equals(event.getPath()) && event.getData().length <= 16384 && trusted(event.getSourceNodeId())) {
