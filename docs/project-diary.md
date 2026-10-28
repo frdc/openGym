@@ -95,3 +95,20 @@ Evidências:
 - [Relatório de compatibilidade e prioridades](dev/2026-10-28-upstream-watch-sync-review.md): adaptar fila nativa no celular, conciliação por série, eventos atrasados para treinos salvos e casos de retomada/reinstalação. Conservar isolamento por dono/sessão, recibos atômicos e nossas curvas cardíacas. Health Connect é uma recuperação adicional, condicionada a permissão e amostras disponíveis.
 - Três reproduções sintéticas no helper atual confirmaram `baseline-conflict` após editar outra série, `state-conflict` entre lotes com edição no celular e `stale-context` após mover o treino ao histórico. Estado preservado nos três casos. São limitações reproduzidas, ainda não a causa confirmada do relato novo. Execução por Vitest: **3/3 aprovados**; tentativa direta por Node não executou o helper porque a cadeia de imports usa `import.meta.glob` do Vite.
 - Nenhum merge ou mudança funcional aplicada; nenhum aparelho ou dado pessoal foi alterado nesta análise. A incorporação exige adaptar os mecanismos, pois a original usa Swift/WatchConnectivity, servidor próprio e formato cardíaco diferente. A fila original também tem descarte por limite e deduplicação fora da transação, que não devem ser copiados para nossa garantia de preservação.
+
+## 2026-10-28 - Reconciliação por série, histórico tardio e inbox Android
+
+Contexto: usuário autorizou implementar os mecanismos selecionados da main original para melhorar a sincronização de séries e batimentos offline.
+
+Alterado:
+- Manifestos e recibos privados no envelope do dono, gravados junto ao estado. IDs estáveis distinguem entradas/séries repetidas; merge por campo conserva mudanças independentes e bloqueia alvos ambíguos ou valores incompatíveis.
+- Dados atrasados entram no treino histórico por ID e início, preservando o novo treino ativo e seus timers. Vínculos cardíacos identificam a entrada, série e lado; curvas finalizadas permanecem intactas.
+- Inbox nativa AtomicFile guarda diário e medições antes de chamar o WebView. Limites explícitos de 512 itens/8 MiB; retirada só do conteúdo exato após importação confirmada. Inbox e arquivos de estágio excluídos de backup/transferência Android.
+- Relógio negocia autorização exata e recibos históricos. A projeção anuncia 96 bases recentes mais a pedida, sem apagar manifestos antigos; o custo para uma base antiga é uma consulta adicional.
+
+Verificação:
+- Revisão independente encontrou vínculo cardíaco por timestamp após cópia de série e timer de superset perdido no segundo lote. Ambos foram reproduzidos antes das correções e passaram depois; cobertos também alvo substituído ao vivo, reordenação e timer independente do celular.
+- Resultado final: **361 arquivos/3.942 testes web**, **9 unitários do celular + 64 Wear**, **10 instrumentados Wear + 3 celular**, scripts de build **6/6**, traduções **17 idiomas/2.037 chaves**, builds e bundles aprovados. Notificação do teste de background precisou ser habilitada somente no emulador; os três testes do celular passaram novamente no APK final.
+- [Contrato, cenários e limites da evidência](dev/2026-10-28-wear-reconciliation-verification.md). Nenhum achado da revisão foi deixado para depois. Fontes na branch `codex/wear-standalone`; sem merge da main original ou mudança na visibilidade do repo.
+
+Próximo teste: atualizar os dois aparelhos quando reaparecerem no ADB, repetir série offline e comparar curva no histórico com outro treino aberto. Nesta execução só os emuladores receberam os APKs; nenhum dado pessoal foi limpo. O servidor do visualizador permanece fechado. APKs finais preservados nos caminhos habituais de `frontend/android/app` e `frontend/android/wear`.

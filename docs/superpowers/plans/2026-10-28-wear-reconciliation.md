@@ -28,34 +28,34 @@
 ### Task 1: Identidade e metadados atômicos
 **Files:** `wear-ledger.js/.test.js` (novo), store/useStore.js, cloud/sync-bridge.js, cloud/codec.js e testes, finish-workout.js e testes.
 **Interfaces:** `identifyWearTargets(S) -> S`; store publica `wearSessions`, `update(...,{wearSessionUpdates})`; codec mescla metadados do mesmo dono no draft.
-- [ ] Escrever testes de identidade única/duplicada e preservação ao fechar; metadados duráveis fora de exportações e atualização atômica; observar RED.
-- [ ] Implementar as interfaces e rodar testes focados (GREEN); commit.
+- [x] Escrever testes de identidade única/duplicada e preservação ao fechar; metadados duráveis fora de exportações e atualização atômica; observar RED.
+- [x] Implementar as interfaces e rodar testes focados (GREEN); commit.
 
 ### Task 2: Replay e merge por série/histórico
 **Files:** `wear-ledger.js/.test.js`; wear-standalone.js; history/sync-merge helpers existentes.
 **Interfaces:** `prepareWearLedger(S,sessionId,sessions) -> {S,updates,projection}`; `applyWearLedger(S,sessions,command,currentSessionId,nodeId) -> {S,updates,checkpoint,workoutId,activeRuntime}`; `wearSyncProjection(sessions)`.
-- [ ] Testes RED para três cenários reproduzidos, alvos removidos/ambíguos, mesmo campo, duplicatas, outro dono/sessão/unidade, A fechado/B ativo e curvas existentes.
-- [ ] Implementar replay isolado e merge, limites e recibos; testes GREEN; commit.
+- [x] Testes RED para três cenários reproduzidos, alvos removidos/ambíguos, mesmo campo, duplicatas, outro dono/sessão/unidade, A fechado/B ativo e curvas existentes.
+- [x] Implementar replay isolado e merge, limites e recibos; testes GREEN; commit.
 
 ### Task 3: Ponte e associação cardíaca
 **Files:** wear-bridge.js/.test.js; wear-heart-session.js/.test.js; wear-standalone.integration.test.js.
 **Interfaces:** preparação antes de publicar; importação com `wearSessionUpdates`; `heart.adoptCheckpoint(checkpoint,workoutId)` antes do ACK; publicação `standaloneSync`.
-- [ ] RED integrado com store real: finalizar A sem importar, iniciar B, receber ações e batimentos de A; falha de flush não publica recibo.
-- [ ] Implementar preparação serializada e importação; preservar fallback legado para mocks/filas sem manifesto; GREEN; commit.
+- [x] RED integrado com store real: finalizar A sem importar, iniciar B, receber ações e batimentos de A; falha de flush não publica recibo.
+- [x] Implementar preparação serializada e importação; preservar fallback legado para mocks/filas sem manifesto; GREEN; commit.
 
 ### Task 4: Inbox durável Android
 **Files:** `WearInbox.java`, unit tests (novos), WearBridgeService.java, WearBridgePlugin.java, `wear-inbox.js/.test.js` (novo), wear-bridge.js.
 **Interfaces:** native `drainInbox/ackInbox`; eventos transportam `inboxKey`; JS `createWearInbox` coordena chamadas e remoção exata somente após sucesso.
-- [ ] RED: reinício, duplicata, payload diferente com mesmo requestId, falha de disco, limite, batimentos antes do diário, troca de conta.
-- [ ] Implementar AtomicFile/injeção Store, conexão com serviço/plugin e dreno na retomada; GREEN; commit.
+- [x] RED: reinício, duplicata, payload diferente com mesmo requestId, falha de disco, limite, batimentos antes do diário, troca de conta.
+- [x] Implementar AtomicFile/injeção Store, conexão com serviço/plugin e dreno na retomada; GREEN; commit.
 
 ### Task 5: Relógio e negociação de replay
 **Files:** WearStandalone.java/Test, WearStateService.java, WearRefresh.java/Test.
 **Interfaces:** autorização exata por sessão/base em `standaloneSync`; recibos históricos; replay de A enquanto B está no celular sem apagar A; handshake manual preserva correlação.
-- [ ] RED nativo: nova base após edição independente, A fechado/B ativo, recibo perdido, manifesto diferente/ausente e falhas de gravação.
-- [ ] Implementar preservação/reenvio autorizado e novos conflitos permanentes por campo/alvo; GREEN; commit.
+- [x] RED nativo: nova base após edição independente, A fechado/B ativo, recibo perdido, manifesto diferente/ausente e falhas de gravação.
+- [x] Implementar preservação/reenvio autorizado e novos conflitos permanentes por campo/alvo; GREEN; commit.
 
 ### Task 6: Validação e entrega
-- [ ] Rodar suíte web, unitários Android, build mobile/APKs e cenários nativos em emulador/aparelhos acessíveis.
-- [ ] Revisão independente do conjunto; corrigir achados importantes com RED→GREEN e repetir verificações afetadas.
-- [ ] Atualizar contrato/diário, commit/push autorizados, informar resultado físico separadamente de compilação.
+- [x] Rodar suíte web, unitários Android, build mobile/APKs e cenários nativos em emulador/aparelhos acessíveis.
+- [x] Revisão independente do conjunto; corrigir achados importantes com RED→GREEN e repetir verificações afetadas.
+- [x] Atualizar contrato/diário, commit/push autorizados, informar resultado físico separadamente de compilação.
