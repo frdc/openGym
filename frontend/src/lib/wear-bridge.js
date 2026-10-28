@@ -163,7 +163,7 @@ export function bindWearBridge() {
       if (closed) return
       if (manualSync.active && sync?.syncId !== manualSync.requestId) return
       await prepareStandaloneTimer()
-      await heart?.adoptStandalone()
+      if(ownerReady(useStore.getState())) await heart?.adoptStandalone()
       return plugin.publish({ state: snapshot(sync?.replay), ...(sync || {}) })
     })
     transport = run.catch(() => {})

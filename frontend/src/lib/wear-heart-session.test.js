@@ -35,6 +35,11 @@ function fixture(initial={}) {
   const packet=()=>({v:1,requestId:'p',token:host.projection().token,measurement:{startedAt:command.startedAt,effortEndMs:1000,recoveryEndMs:31000,endReason:'next-set',points:[[0,100],[1000,150],[31000,120]]}})
   return {store,host,command,packet,plugin}
 }
+it('waits for confirmed authentication before accepting heart packets or creating bindings',async()=>{
+  const f=fixture();f.store.authReady=false
+  await expect(f.host.handle(f.command,'watch')).rejects.toThrow('unavailable')
+  expect(f.plugin.saveHeartBindings).not.toHaveBeenCalled()
+})
 it('deduplicates start, binds moved rows and preserves finalized history',async()=>{
   const f=fixture();await f.host.handle(f.command,'watch');await f.host.handle(f.command,'watch')
   const p=f.packet();expect(f.plugin.saveHeartBindings.mock.calls.at(-1)[0].bindings).toHaveProperty(p.token)

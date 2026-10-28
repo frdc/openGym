@@ -14,6 +14,7 @@ Autorização: após a análise da main original, o usuário pediu implementar. 
 - Inbox nativa Android: gravar comandos standalone e medições cardíacas antes de notificar a WebView. Até 512 itens / 8 MiB, sem descarte silencioso. Chave inclui nó, tipo e conteúdo; remover apenas a entrada exata depois de importação durável. Falha/fila cheia não dá sucesso ao relógio. Leituras são limitadas e priorizam diário antes das medições dependentes.
 - Drenar ao iniciar, ao carregar o dono, ao retomar o app e ao chegar trabalho. Eventos de outro dono/alvo inexistente permanecem retidos, sem serem aplicados na conta atual. ACK do transporte continua distinto do ACK de aplicação.
 - Manifestos limitados a 1024 bases / 16 MiB por dono; atingir limite impede publicação de outra base sem apagar dados anteriores. Sem limpeza automática de pendências ou medições dos aparelhos.
+- O transporte anuncia as 96 bases mais recentes e a base exata solicitada pelo relógio em `replay = {sessionId,baseline}`. Isso mantém os snapshots abaixo do limite nativo sem remover manifestos locais. Uma pendência antiga solicita autorização antes do replay, mantendo a correlação da sincronização manual.
 
 ## Verificação
 

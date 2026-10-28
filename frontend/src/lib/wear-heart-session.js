@@ -11,7 +11,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   let owner=null, bindings={}, disposed=false, chain=Promise.resolve(), standaloneDirty=false
   const results=new Map()
   const serial = fn => { const run=chain.then(fn); chain=run.catch(()=>{}); return run }
-  const check = key => { if(disposed || !getStore().localReady || getStore().ownerKey!==key) fail('stale-context') }
+  const check = key => { if(disposed || !getStore().localReady || getStore().ownerKey!==key) fail('stale-context');if(getStore().authReady===false) fail('unavailable') }
   async function load() {
     const s=getStore(); check(s.ownerKey)
     if(owner!==s.ownerKey) { const key=s.ownerKey; const saved=await plugin.getHeartBindings({ownerKey:key}); check(key); owner=key; bindings=structuredClone(saved.bindings||{}); standaloneDirty=false; results.clear() }
@@ -60,7 +60,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
       if(record.checkpoint) await adoptCheckpoint(key,record.checkpoint,session.workoutId,session.start,onlyToken)
   }
   async function reconcileNow() {
-    if(!getStore().localReady || !plugin.getHeartBindings) return
+    if(!getStore().localReady || getStore().authReady===false || !plugin.getHeartBindings) return
     const key=await load()
     await adoptStandalone(key)
     let dirty=false
@@ -106,7 +106,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
           delete bindings[retired[0]]
         }
         if(current) {const b=current[1], old=locate(s.S,b); if(old) await close(key,b,old.heartRate,Math.max(b.effortEndMs||0,command.startedAt-b.startedAt),'next-set')}
-        const token=crypto.randomUUID(), b={startedAt:command.startedAt,sessionId:s.activeSessionToken,workoutId:s.S.active.id,nodeId,contextToken:command.contextToken,phase:'effort',effortEndMs:null,...(row.heartRate?{previousHeartRate:structuredClone(row.heartRate)}:{})}
+        const token=crypto.randomUUID(), b={startedAt:command.startedAt,sessionId:s.activeSessionToken,workoutId:s.S.active.id,workoutStart:s.S.active.start,nodeId,contextToken:command.contextToken,phase:'effort',effortEndMs:null,...(row.heartRate?{previousHeartRate:structuredClone(row.heartRate)}:{})}
         bindings[token]=b
         // A durable private binding precedes publication of its public marker.
         await save(key);s.update(S=>{rowAt(S,command.target).heartRate=buildHeartRate({startedAt:b.startedAt})});await s.flushLocal();check(key)
