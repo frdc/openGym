@@ -112,3 +112,10 @@ Verificação:
 - [Contrato, cenários e limites da evidência](dev/2026-10-28-wear-reconciliation-verification.md). Nenhum achado da revisão foi deixado para depois. Fontes na branch `codex/wear-standalone`; sem merge da main original ou mudança na visibilidade do repo.
 
 Próximo teste: atualizar os dois aparelhos quando reaparecerem no ADB, repetir série offline e comparar curva no histórico com outro treino aberto. Nesta execução só os emuladores receberam os APKs; nenhum dado pessoal foi limpo. O servidor do visualizador permanece fechado. APKs finais preservados nos caminhos habituais de `frontend/android/app` e `frontend/android/wear`.
+
+## 2026-10-28 - Reconciliação instalada no celular e no relógio
+
+- A pedido do usuário, os APKs validados da entrega `0131fc37a` foram instalados no Galaxy S23 Ultra (SM-S918B) e no Galaxy Watch Ultra (SM-L705F), selecionados por modelo e serial antes da operação. O dispositivo `0123456789ABCDEF` permaneceu excluído.
+- Ambos os `adb install -r --user 0` retornaram Success; `firstInstallTime` permaneceu igual e `lastUpdateTime` avançou. SHA-256 dos APKs instalados conferidos com os artefatos validados. Nenhuma limpeza de dados ou de pendências foi executada.
+- MainActivity e WearActivity abertas com Status ok, com processos em execução após a atualização. Evidências limitadas a instalação, pacote e abertura ficam em `frontend/android/app/build/install-evidence-20261028/`, ignoradas pelo Git.
+- A sincronização de um treino offline e a integridade das curvas entre os aparelhos ainda precisam do teste de uso. Esta instalação não é evidência de um treino físico completo.
