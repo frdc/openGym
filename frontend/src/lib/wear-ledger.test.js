@@ -130,3 +130,25 @@ it('keeps repeated exercises distinct after the entries are reordered', () => {
   expect(result.S.active.entries.find(e=>e.logId===original).sets[0].done).toBe(true)
   expect(result.S.active.entries[0].sets[0].done).toBe(false)
 })
+it('imports consecutive superset batches and maps position and rest through a reorder',()=>{
+  for(const reorder of [false,true]) {
+    const S=fixture();S.restSec=90;S.active.entries[0].sg='pair';S.active.entries.push({id:'0026',sg:'pair',sets:[{r:8,w:20},{r:8,w:20}]})
+    const p=prepareWearLedger(S,'session',{}),command={v:1,action:'standalone-sync',contextToken:'session',streamId:'superset',baseline:p.projection.baseline,requestId:started(2,'complete').id,events:[started(1,'start'),started(2,'complete')]}
+    const first=applyWearLedger(p.S,p.updates,command,'session','watch');expect(first.S.active.cur).toBe(1)
+    const nextId=first.S.active.entries[0].logId
+    if(reorder) {first.S.active.entries.reverse();first.S.active.cur=0}
+    const second=applyWearLedger(first.S,first.updates,{...command,requestId:started(4,'complete',1).id,events:[started(3,'start',1),started(4,'complete',1)]},'session','watch')
+    expect(second.checkpoint.runtime.timer.leftMs).toBe(90000)
+    expect(second.activeRuntime).toBe(true)
+    expect(second.S.active.entries[second.S.active.cur].logId).toBe(nextId)
+    expect(second.S.active._wearStandaloneTimer.timer.leftMs).toBe(90000)
+    expect(second.checkpoint.steps[1].entryIdx).toBe(reorder?0:1)
+  }
+})
+it('does not treat a previously rejected phone timer override as a new imported timer baseline',()=>{
+  const p=prepared(),timer={timerToken:'phone-rest',endsAt:999999,leftMs:60000,paused:false,ready:false}
+  p.S.active._wearStandaloneTimer={sessionId:'session',timer:structuredClone(timer)}
+  const first=applyWearLedger(p.S,p.sessions,p.command,'session','watch');expect(first.activeRuntime).toBe(false)
+  const second=applyWearLedger(first.S,first.updates,{...p.command,requestId:started(4,'complete',1).id,events:[started(3,'start',1),started(4,'complete',1)]},'session','watch')
+  expect(second.activeRuntime).toBe(false);expect(second.S.active._wearStandaloneTimer.timer).toEqual(timer)
+})

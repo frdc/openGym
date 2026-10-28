@@ -1,12 +1,24 @@
 import { buildHeartRate } from './heart-rate.js'
 const fail = code => { throw Object.assign(new Error(code), { code }) }
 const rowAt = (S,t) => { const row=S.active?.entries?.[t?.entryIdx]?.sets?.[t?.setIdx]; return t?.side?row?.sides?.[t.side]:row }
-function locate(S,b) {
+function locateTarget(S,b) {
   const matches=w=>w?.id===b.workoutId && (b.workoutStart==null || w.start===b.workoutStart)
   const workouts = [...(matches(S.active)?[S.active]:[]),...(S.workouts||[]).filter(matches)]
-  for (const w of workouts) for (const e of w.entries||[]) for (const row of e.sets||[]) for (const set of [row,row.sides?.L,row.sides?.R]) if (set?.heartRate?.startedAt===b.startedAt) return set
-  return null
+  const found=[]
+  for (const w of workouts) for (const e of w.entries||[]) {
+    if(b.target?.entryLogId && e.logId!==b.target.entryLogId || b.target?.exerciseId && e.id!==b.target.exerciseId) continue
+    for (const row of e.sets||[]) {
+      if(b.target?.setLogId && row.logId!==b.target.setLogId) continue
+      const sides=b.target && Object.hasOwn(b.target,'side') ? [b.target.side || null] : [null,'L','R']
+      for(const side of sides) {
+        const set=side?row.sides?.[side]:row
+        if(set?.heartRate?.startedAt===b.startedAt) found.push({row:set,workoutStart:w.start,target:{entryLogId:e.logId,setLogId:row.logId,exerciseId:e.id,side}})
+      }
+    }
+  }
+  return found.length===1 ? found[0] : null
 }
+const locate=(S,b)=>locateTarget(S,b)?.row || null
 export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   let owner=null, bindings={}, disposed=false, chain=Promise.resolve(), standaloneDirty=false
   const results=new Map()
@@ -14,7 +26,14 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   const check = key => { if(disposed || !getStore().localReady || getStore().ownerKey!==key) fail('stale-context');if(getStore().authReady===false) fail('unavailable') }
   async function load() {
     const s=getStore(); check(s.ownerKey)
-    if(owner!==s.ownerKey) { const key=s.ownerKey; const saved=await plugin.getHeartBindings({ownerKey:key}); check(key); owner=key; bindings=structuredClone(saved.bindings||{}); standaloneDirty=false; results.clear() }
+    if(owner!==s.ownerKey) {
+      const key=s.ownerKey;const saved=await plugin.getHeartBindings({ownerKey:key});check(key);owner=key;bindings=structuredClone(saved.bindings||{});standaloneDirty=false;results.clear()
+      for(const b of Object.values(bindings)) if(!b.target?.entryLogId || !b.target?.setLogId) {
+        const found=locateTarget(s.S,b)
+        if(found?.target.entryLogId && found.target.setLogId) {b.target=found.target;b.workoutStart=found.workoutStart;standaloneDirty=true}
+      }
+    }
+    if(standaloneDirty) {await save(owner);standaloneDirty=false}
     return owner
   }
   async function save(key) { check(key); await plugin.saveHeartBindings({ownerKey:key,bindings:structuredClone(bindings)}); check(key) }
@@ -44,7 +63,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
       // Do not fill the native journal again on every historical reconciliation.
       if(!previous && !onlyToken && ['complete','empty'].includes(row?.heartRate?.status)) continue
       if(!previous && Object.keys(bindings).length>=200) fail('heart-queue-full')
-      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId,workoutStart,nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:record.effortEndMs==null?'effort':'recovery',effortEndMs:record.effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
+      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId,workoutStart,target:{entryLogId:entries[0]?.logId,setLogId:parent?.logId,exerciseId:entries[0]?.id,side:target.side || null},nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:record.effortEndMs==null?'effort':'recovery',effortEndMs:record.effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
       if(row?.heartRate?.recoveryEndMs!=null && (next.recoveryEndMs==null || row.heartRate.recoveryEndMs<=next.recoveryEndMs)) {
         next.closed=true;next.recoveryEndMs=row.heartRate.recoveryEndMs;next.endReason=row.heartRate.endReason
       }
@@ -106,7 +125,9 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
           delete bindings[retired[0]]
         }
         if(current) {const b=current[1], old=locate(s.S,b); if(old) await close(key,b,old.heartRate,Math.max(b.effortEndMs||0,command.startedAt-b.startedAt),'next-set')}
-        const token=crypto.randomUUID(), b={startedAt:command.startedAt,sessionId:s.activeSessionToken,workoutId:s.S.active.id,workoutStart:s.S.active.start,nodeId,contextToken:command.contextToken,phase:'effort',effortEndMs:null,...(row.heartRate?{previousHeartRate:structuredClone(row.heartRate)}:{})}
+        const entry=s.S.active.entries[command.target.entryIdx],parent=entry.sets[command.target.setIdx]
+        const target={entryLogId:entry.logId,setLogId:parent.logId,exerciseId:entry.id,side:command.target.side || null}
+        const token=crypto.randomUUID(), b={startedAt:command.startedAt,sessionId:s.activeSessionToken,workoutId:s.S.active.id,workoutStart:s.S.active.start,target,nodeId,contextToken:command.contextToken,phase:'effort',effortEndMs:null,...(row.heartRate?{previousHeartRate:structuredClone(row.heartRate)}:{})}
         bindings[token]=b
         // A durable private binding precedes publication of its public marker.
         await save(key);s.update(S=>{rowAt(S,command.target).heartRate=buildHeartRate({startedAt:b.startedAt})});await s.flushLocal();check(key)

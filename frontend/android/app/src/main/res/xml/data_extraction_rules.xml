@@ -7,8 +7,14 @@
     <cloud-backup>
         <exclude domain="file" path="opengym-media/" />
         <exclude domain="sharedpref" path="wear-heart-journal.xml" />
+        <exclude domain="file" path="wear-inbox.json" />
+        <exclude domain="file" path="wear-inbox.json.bak" />
+        <exclude domain="file" path="wear-inbox.json.new" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="wear-heart-journal.xml" />
+        <exclude domain="file" path="wear-inbox.json" />
+        <exclude domain="file" path="wear-inbox.json.bak" />
+        <exclude domain="file" path="wear-inbox.json.new" />
     </device-transfer>
 </data-extraction-rules>

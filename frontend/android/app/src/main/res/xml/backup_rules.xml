@@ -8,4 +8,7 @@
 <full-backup-content>
     <exclude domain="file" path="opengym-media/" />
     <exclude domain="sharedpref" path="wear-heart-journal.xml" />
+    <exclude domain="file" path="wear-inbox.json" />
+    <exclude domain="file" path="wear-inbox.json.bak" />
+    <exclude domain="file" path="wear-inbox.json.new" />
 </full-backup-content>

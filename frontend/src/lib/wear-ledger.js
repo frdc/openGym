@@ -38,7 +38,7 @@ export function prepareWearLedger(S, sessionId, sessions = {}) {
   if (own(previous?.records,projection.baseline)) return { S:identified, updates:null, projection }
   const base = { unit:identified.unit || 'kg', restSec:identified.restSec || 0, active:copy(identified.active) }
   const next = { ...(previous || { v:1,workoutId:base.active.id,start:base.active.start,records:{} }),
-    records:{ ...previous?.records, [projection.baseline]:{ base, phoneTimer:standaloneTimerSignature(base.active._wearStandaloneTimer?.timer) } } }
+    records:{ ...previous?.records, [projection.baseline]:{ base,phoneEntry:base.active.entries[base.active.cur || 0]?.logId, phoneTimer:standaloneTimerSignature(base.active._wearStandaloneTimer?.timer) } } }
   const updates = { [sessionId]:next }
   checkSize({ ...sessions,...updates })
   return { S:identified, updates, projection }
@@ -104,6 +104,11 @@ function mergeSet(before,after,current) {
 
 function adoptedCheckpoint(checkpoint,prepared,workout) {
   const adopted=copy(checkpoint)
+  adopted.steps=adopted.steps.map(step=>{
+    const entry=prepared.entries[step.entryIdx],set=entry.sets[step.setIdx]
+    try {const target=targetAt(workout,entry.logId,set.logId,entry.id);return {...step,entryIdx:target.entryIdx,setIdx:target.setIdx}}
+    catch {return null} // A removed future step cannot become an unrelated UI rest target.
+  })
   for (const binding of Object.values(adopted.hearts || {})) {
     const entry=prepared.entries[binding.target.entryIdx], set=entry.sets[binding.target.setIdx]
     const mapped=targetAt(workout,entry.logId,set.logId,entry.id)
@@ -140,18 +145,22 @@ export function applyWearLedger(S,sessions,command,currentSessionId,nodeId) {
     }
   }
   for (const entry of workout.entries) entry.topW=bestWeightForEntry(entry) || null
-  const activeRuntime=active && S.active.cur===record.base.active.cur && standaloneTimerSignature(S.active._wearStandaloneTimer?.timer)===record.phoneTimer
+  const expectedEntry=record.phoneEntry ?? record.base.active.entries[record.base.active.cur || 0]?.logId
+  const nextEntry=replayed.active.entries[replayed.active.cur || 0]?.logId
+  const nextPositions=workout.entries.map((e,i)=>({e,i})).filter(x=>x.e.logId===nextEntry)
+  const activeRuntime=active && nextPositions.length===1 && S.active.entries[S.active.cur || 0]?.logId===expectedEntry && standaloneTimerSignature(S.active._wearStandaloneTimer?.timer)===record.phoneTimer
   if (active) {
     delete workout._wearStandalone
     if (activeRuntime) {
-      workout.cur=replayed.active.cur
+      workout.cur=nextPositions[0].i
       workout._wearStandaloneTimer={sessionId:command.contextToken,timer:copy(checkpoint.runtime.timer)}
     }
   } else { workout.vol=workoutVolume(workout); stampWorkout(workout) }
   // Heart adoption locates the merged target, even after reordering or finish.
   const adopted=adoptedCheckpoint(checkpoint,replayed.active,workout)
   const updates={ [command.contextToken]:{...session,records:{...session.records,[command.baseline]:{...record,replay:replayed,checkpoint:adopted,
-    phoneTimer:active ? standaloneTimerSignature(workout._wearStandaloneTimer?.timer) : record.phoneTimer}}} }
+    phoneEntry:activeRuntime ? workout.entries[workout.cur || 0]?.logId : expectedEntry,
+    phoneTimer:activeRuntime ? standaloneTimerSignature(workout._wearStandaloneTimer?.timer) : record.phoneTimer}}} }
   checkSize({...sessions,...updates})
   return {S:next,updates,checkpoint:adopted,workoutId:session.workoutId,workoutStart:session.start,activeRuntime}
 }

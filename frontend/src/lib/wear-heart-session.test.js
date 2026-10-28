@@ -1,6 +1,25 @@
 import { it, expect, vi } from 'vitest'
 import { createWearHeartSession } from './wear-heart-session.js'
 import { projectStandalone, applyStandalone } from './wear-standalone.js'
+import { identifyWearTargets, prepareWearLedger, applyWearLedger } from './wear-ledger.js'
+it('never acknowledges a late heart packet against copied or ambiguously reidentified targets',async()=>{
+  const f=fixture();f.store.S.unit='kg';f.store.S.restSec=60;f.store.S.active.start=1000;f.store.S.active.entries[0].id='0025';f.store.S.active.entries[0].sets.forEach(s=>{s.r=8;s.w=30})
+  const p=prepareWearLedger(f.store.S,'s',{}),token='00000000-0000-4000-8000-000000000001'
+  const events=[{seq:1,id:token,action:'start',at:1000,step:0,heart:true},{seq:2,id:'00000000-0000-4000-8000-000000000002',action:'complete',at:2000,step:0}]
+  const result=applyWearLedger(p.S,p.updates,{v:1,action:'standalone-sync',contextToken:'s',streamId:'stream',baseline:p.projection.baseline,requestId:events[1].id,events},'s','watch')
+  f.store.S=result.S;f.store.wearSessions=result.updates
+  await f.host.adoptCheckpoint(result.checkpoint,result.workoutId,result.workoutStart)
+  f.store.S.active.entries[0].sets.unshift(structuredClone(f.store.S.active.entries[0].sets[0]));f.store.S=identifyWearTargets(f.store.S)
+  const before=structuredClone(f.store.S)
+  await expect(f.host.receive({v:1,requestId:'late',token,measurement:{startedAt:1000,effortEndMs:1000,recoveryEndMs:2000,endReason:'disabled',points:[[0,80],[1000,120],[2000,90]]}},'watch')).rejects.toThrow('stale-target')
+  expect(f.store.S).toEqual(before)
+})
+it('binds a live capture to its stable target before a replacement copy can inherit its timestamp',async()=>{
+  const f=fixture();f.store.S=identifyWearTargets(f.store.S)
+  await f.host.handle(f.command,'watch');const packet=f.packet()
+  const row=structuredClone(f.store.S.active.entries[0].sets[0]);row.logId=crypto.randomUUID();f.store.S.active.entries[0].sets[0]=row
+  await expect(f.host.receive(packet,'watch')).rejects.toThrow('stale-target')
+})
 it('restores validated offline capture bindings after restart and receives delayed measurements', async () => {
   const f = fixture()
   f.store.S.unit = 'kg'; f.store.S.restSec = 60

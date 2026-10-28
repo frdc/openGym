@@ -13,6 +13,12 @@ const modern = read('res/xml/data_extraction_rules.xml')
 const EXCLUDE = /<exclude\s+domain="file"\s+path="opengym-media\/"\s*\/>/
 
 describe('Android backup rules', () => {
+  it('keeps device-specific native inbox and AtomicFile staging files out of backup and transfer',()=>{
+    const cloud=modern.match(/<cloud-backup>([\s\S]*?)<\/cloud-backup>/)?.[1] || ''
+    const transfer=modern.match(/<device-transfer>([\s\S]*?)<\/device-transfer>/)?.[1] || ''
+    for(const content of [legacy,cloud,transfer]) for(const suffix of ['', '.bak','.new'])
+      expect(content).toContain(`<exclude domain="file" path="wear-inbox.json${suffix}" />`)
+  })
   it('the manifest names both rule files', () => {
     expect(manifest).toMatch(/android:fullBackupContent="@xml\/backup_rules"/)
     expect(manifest).toMatch(/android:dataExtractionRules="@xml\/data_extraction_rules"/)
