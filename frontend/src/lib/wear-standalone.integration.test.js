@@ -22,6 +22,7 @@ import { useStore, createWorkoutStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { bindWearBridge } from './wear-bridge.js'
 import { fakeStorage } from './cloud/test-fixtures.js'
+import { buildCompletedWorkout } from './finish-workout.js'
 
 let stop
 const latest = () => plugin.publish.mock.calls.at(-1)?.[0]?.state
@@ -39,6 +40,35 @@ beforeEach(async () => {
 })
 afterEach(async () => { stop?.(); useUI.getState().stopRest(); await runtime.fixture.close() })
 
+it('withholds receipts after failed local confirmation and retries without double completion',async()=>{
+  const original=latest(), savedFlush=useStore.getState().flushLocal, at=Date.now()-10000
+  const command=packet(original,[event(1,'start',at),event(2,'complete',at+1000)])
+  useStore.setState({flushLocal:async()=>{throw new Error('disk-full')}})
+  await runtime.command({nodeId:'watch',command})
+  expect(plugin.reply.mock.calls.at(-1)[0].response.status).toBe('error')
+  expect(latest().standaloneSync.receipts).toEqual([])
+  useStore.setState({flushLocal:savedFlush})
+  await runtime.command({nodeId:'watch',command})
+  expect(plugin.reply.mock.calls.at(-1)[0].response.status).toBe('ok')
+  expect(latest().standaloneSync.receipts[0].seq).toBe(2)
+  expect(useStore.getState().S.active.entries[0].sets.filter(s=>s.done)).toHaveLength(1)
+})
+
+it('withholds receipts until historical heart adoption is durable, including a remount',async()=>{
+  const original=latest(), at=Date.now()-10000
+  const events=[{...event(1,'start',at),heart:true},event(2,'complete',at+1000)]
+  plugin.saveHeartBindings.mockRejectedValue(new Error('native-disk-full'))
+  await runtime.command({nodeId:'watch',command:packet(original,events)})
+  expect(plugin.reply.mock.calls.at(-1)[0].response.status).toBe('error')
+  expect(latest().standaloneSync.receipts).toEqual([])
+  stop();stop=bindWearBridge();await settle()
+  expect(latest().standaloneSync.receipts).toEqual([])
+  plugin.saveHeartBindings.mockResolvedValue()
+  await runtime.command({nodeId:'watch',command:packet(original,events)})
+  expect(plugin.reply.mock.calls.at(-1)[0].response.status).toBe('ok')
+  expect(latest().heartAuthorizedTokens).toContain(events[0].id)
+})
+
 it('imports an offline workout, adds another exercise and retains its delayed heart measurements', async () => {
   const initial = latest(), at = Date.now() - 10000
   const events = [{ ...event(1, 'start', at), heart: true }, event(2, 'complete', at + 1000), event(3, 'start', at + 2000, 1), event(4, 'complete', at + 3000, 1)]
@@ -46,7 +76,8 @@ it('imports an offline workout, adds another exercise and retains its delayed he
   await runtime.command({ nodeId: 'watch', command: offline })
   expect(useStore.getState().S.active.entries[0].sets.map(s => s.done)).toEqual([true, true])
   useStore.getState().update(S => { S.active.entries.push({ id: '0026', sets: [{ r: 12, w: 20, done: false }] }); S.active.cur = 1 })
-  await vi.waitFor(() => expect(latest().standalone.receipt?.seq).toBe(4))
+  await vi.waitFor(() => expect(latest().standaloneSync.receipts.some(r=>r.seq===4)).toBe(true))
+  await vi.waitFor(()=>expect(latest().standalone.steps[0]?.entryIdx).toBe(1))
   expect(latest().standalone.steps[0]).toMatchObject({ entryIdx: 1, setIdx: 0, repsValue: 12 })
   await runtime.command({ nodeId: 'watch', command: offline })
   expect(plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 4 })
@@ -61,6 +92,32 @@ it('imports an offline workout, adds another exercise and retains its delayed he
   expect(plugin.reply.mock.calls.at(-1)[0].response.status).toBe('ok')
   expect(useStore.getState().S.active.entries[1].sets[0].done).toBe(true)
   expect(useStore.getState().S.active.entries[0].sets[0].heartRate.effort.peak).toBe(155)
+})
+
+it('imports A after finish into history with its late heart curve while preserving active B', async () => {
+  const original=latest(), at=Date.now()-10000
+  const events=[{...event(1,'start',at),heart:true},event(2,'complete',at+1000)]
+  useStore.getState().update(S=>{
+    S.workouts.push(buildCompletedWorkout(S.active,{end:at+5000}))
+    S.active={id:'next-workout',start:Date.now(),cur:0,entries:[{id:'0026',sets:[{r:8,w:20,done:false}]}]}
+  })
+  await useStore.getState().flushLocal()
+  await vi.waitFor(()=>expect(latest().contextToken).not.toBe(original.contextToken))
+  await vi.waitFor(()=>expect(useStore.getState().S.active.entries[0].logId).toBeTruthy())
+  const next=structuredClone(useStore.getState().S.active)
+  const prepared=useStore.getState().wearSessions[original.contextToken]
+  expect(useStore.getState().S.workouts[0]).toMatchObject({id:prepared.workoutId,start:prepared.start})
+  await runtime.command({nodeId:'watch',command:packet(original,events)})
+  expect(plugin.reply.mock.calls.at(-1)[0].response.code).toBeUndefined()
+  expect(plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({status:'ok',seq:2})
+  expect(useStore.getState().S.active).toEqual(next)
+  expect(useStore.getState().S.workouts[0].entries[0].sets[0]).toMatchObject({done:true,heartRate:{startedAt:at}})
+  await runtime.heart({nodeId:'watch',packet:{v:1,requestId:'history-heart',token:events[0].id,measurement:{startedAt:at,effortEndMs:1000,recoveryEndMs:2000,endReason:'disabled',points:[[0,80],[1000,130],[2000,90]]}}})
+  expect(plugin.replyHeart.mock.calls.at(-1)[0].response.status).toBe('ok')
+  expect(useStore.getState().S.workouts[0].entries[0].sets[0].heartRate.points).toEqual([[0,80],[1000,130],[2000,90]])
+  expect(useStore.getState().S.active).toEqual(next)
+  await runtime.command({nodeId:'watch',command:packet(original,events)})
+  expect(useStore.getState().S.workouts[0].entries[0].sets.filter(s=>s.done)).toHaveLength(1)
 })
 
 it('persists first start and completion through the real UI, then replays without restarting rest', async () => {
@@ -82,7 +139,7 @@ it('persists first start and completion through the real UI, then replays withou
   await runtime.command({ nodeId: 'watch', command: completion })
   expect(plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 2 })
   expect(useUI.getState().timer.endsAt).toBe(deadline)
-  expect(useStore.getState().S.active._wearStandalone.events).toHaveLength(2)
+  expect(latest().standaloneSync.receipts.some(r=>r.seq===2)).toBe(true)
   // Recreate the phone store from its committed archive, with a fresh bridge and UI timer.
   await runtime.fixture.flush()
   const archive = await runtime.fixture.saved()
@@ -94,7 +151,7 @@ it('persists first start and completion through the real UI, then replays withou
   stop = bindWearBridge(); await settle()
   await runtime.command({ nodeId: 'watch', command: completion })
   expect(plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 2 })
-  expect(useStore.getState().S.active._wearStandalone.events).toHaveLength(2)
+  expect(latest().standaloneSync.receipts.some(r=>r.seq===2)).toBe(true)
   expect(useUI.getState().timer?.endsAt).toBe(deadline)
 })
 
@@ -106,7 +163,7 @@ it('publishes a phone rest and accepts its offline pause into the real persisted
   await runtime.command({ nodeId: 'watch', command: packet(snapshot, [event(1, 'pause', Date.now())]) })
   expect(plugin.reply.mock.calls.at(-1)[0].response).toMatchObject({ status: 'ok', seq: 1 })
   expect(useUI.getState().timer).toMatchObject({ timerToken: phoneToken, paused: true })
-  expect(useStore.getState().S.active._wearStandalone.runtime.timer.paused).toBe(true)
+  expect(useStore.getState().S.active._wearStandaloneTimer.timer.paused).toBe(true)
   useUI.getState().resumeRest()
   await vi.waitFor(() => expect(latest().standalone.runtime.timer.paused).toBe(false))
   useUI.getState().stopRest()

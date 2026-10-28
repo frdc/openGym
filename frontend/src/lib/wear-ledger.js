@@ -144,7 +144,7 @@ export function applyWearLedger(S,sessions,command,currentSessionId,nodeId) {
   } else { workout.vol=workoutVolume(workout); stampWorkout(workout) }
   // Heart adoption locates the merged target, even after reordering or finish.
   const adopted=adoptedCheckpoint(checkpoint,replayed.active,workout)
-  const updates={ [command.contextToken]:{...session,records:{...session.records,[command.baseline]:{...record,replay:replayed,
+  const updates={ [command.contextToken]:{...session,records:{...session.records,[command.baseline]:{...record,replay:replayed,checkpoint:adopted,
     phoneTimer:active ? standaloneTimerSignature(workout._wearStandaloneTimer?.timer) : record.phoneTimer}}} }
   checkSize({...sessions,...updates})
   return {S:next,updates,checkpoint:adopted,workoutId:session.workoutId,workoutStart:session.start,activeRuntime}

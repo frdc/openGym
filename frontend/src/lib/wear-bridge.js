@@ -7,6 +7,7 @@ import { validateWearCommand } from './wear-protocol.js'
 import { createWearController } from './wear-session.js'
 import { applyStandalone, projectStandalone, reconcileStandaloneTimer, standaloneTimerSignature } from './wear-standalone.js'
 import { createWearSync } from './wear-sync.js'
+import { applyWearLedger, prepareWearLedger, wearSyncProjection } from './wear-ledger.js'
 
 let completeHandler = null, editHandler = null, notifyReady = () => {}
 let openHandler = null, syncHandler = null
@@ -14,6 +15,7 @@ let automaticOpen = null, requestedWorkout = null
 // A bridge remount is not a disk reload. Keep failed-write receipts hidden until
 // flushLocal confirms them, including across a route/root effect remount.
 const pendingStandaloneSessions = new Map()
+const pendingWearReceipts = new Map(), pendingLedgerSeeds = new Set()
 const observedPhoneTimers = new Map(), pendingTimerSeeds = new Set()
 // Local guest storage can hydrate before authentication restores the real owner.
 // That temporary profile cannot authoritatively end or replace a watch workout.
@@ -86,6 +88,11 @@ export function bindWearBridge() {
     if (preparingTimer) return preparingTimer
     preparingTimer = Promise.resolve().then(async () => {
       const store = useStore.getState(), sessionId = store.activeSessionToken
+      if(ownerReady(store) && pendingLedgerSeeds.has(store.ownerKey)) {
+        await store.flushLocal()
+        if(!matches({ownerKey:store.ownerKey,sessionToken:sessionId})) throw Object.assign(new Error('stale-context'),{code:'stale-context'})
+        pendingLedgerSeeds.delete(store.ownerKey)
+      }
       if (!ownerReady(store) || !sessionId || !store.S.active) return
       const timer = phoneTimer(store), signature = standaloneTimerSignature(timer)
       const observed = observedPhoneTimers.get(sessionId), seed = store.S.active._wearStandaloneTimer
@@ -96,7 +103,7 @@ export function bindWearBridge() {
       // evidence of a user skipping rest; a later observed timer change is.
       if (first && !timer && seed?.sessionId === sessionId) {
         if (seed.timer && !pendingStandaloneSessions.has(sessionId)) {
-          const checkpoint = store.S.active._wearStandalone
+          const checkpoint = store.S.active._wearStandalone || Object.values(store.wearSessions?.[sessionId]?.records || {}).map(r=>r.checkpoint).find(cp=>cp?.runtime?.timer?.timerToken===seed.timer.timerToken)
           useUI.getState().importWearRest?.(seed.timer, checkpoint?.steps?.[checkpoint.cursor - 1] || null)
           observedPhoneTimers.set(sessionId, standaloneTimerSignature(phoneTimer(store)))
         }
@@ -112,6 +119,19 @@ export function bindWearBridge() {
         if (!matches({ ownerKey: store.ownerKey, sessionToken: sessionId })) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
         pendingTimerSeeds.delete(sessionId)
       }
+      const latest=useStore.getState()
+      if(latest.wearSessions) {
+        const prepared=prepareWearLedger(latest.S,sessionId,latest.wearSessions)
+        if(prepared.S!==latest.S || prepared.updates) {
+          pendingLedgerSeeds.add(latest.ownerKey)
+          latest.update(S=>{S.active=prepared.S.active},false,{wearSessionUpdates:prepared.updates})
+        }
+        if(pendingLedgerSeeds.has(latest.ownerKey)) {
+          await useStore.getState().flushLocal()
+          if(!matches({ownerKey:latest.ownerKey,sessionToken:sessionId})) throw Object.assign(new Error('stale-context'),{code:'stale-context'})
+          pendingLedgerSeeds.delete(latest.ownerKey)
+        }
+      }
     }).finally(() => { preparingTimer = null })
     return preparingTimer
   }
@@ -126,6 +146,7 @@ export function bindWearBridge() {
     projection.localReady = !!ownerReady(store)
     const standalone = projection.active ? projectStandalone(store.S, contextToken) : null
     projection.standalone = pendingStandalone ? pendingStandalone.projection : standalone
+    if(store.wearSessions && ownerReady(store)) projection.standaloneSync=pendingWearReceipts.get(store.ownerKey) || wearSyncProjection(store.wearSessions)
     projection.heartCapture = heart?.projection() || null
     projection.heartAuthorizedTokens = heart?.authorizedTokens() || []
     if (projection.current && (!completeHandler || ui.sheets.length || ui.work)) projection.current.canComplete = false
@@ -141,13 +162,14 @@ export function bindWearBridge() {
       if (closed) return
       if (manualSync.active && sync?.syncId !== manualSync.requestId) return
       await prepareStandaloneTimer()
+      await heart?.adoptStandalone()
       return plugin.publish({ state: snapshot(), ...(sync || {}) })
     })
     transport = run.catch(() => {})
     return run
   }
   function changed() {
-    if (!pendingStandalone) void heart?.reconcile().catch(() => {})
+    if (!pendingStandalone && !pendingWearReceipts.has(useStore.getState().ownerKey)) void heart?.reconcile().catch(() => {})
     const old = revision; snapshot()
     if (old !== revision && !sending) void publish().catch(() => {})
     openNewWorkout()
@@ -201,6 +223,21 @@ export function bindWearBridge() {
               await prepareStandaloneTimer()
               if (!matches(expected)) throw Object.assign(new Error('stale-context'), { code: 'stale-context' })
               const currentStore = useStore.getState(), before = snapshot(), checkpoint = currentStore.S.active?._wearStandalone
+              if(currentStore.wearSessions) {
+                const result=applyWearLedger(currentStore.S,currentStore.wearSessions,command,currentStore.activeSessionToken,nodeId)
+                if(result.S!==currentStore.S) {
+                  if(!pendingWearReceipts.has(store.ownerKey)) pendingWearReceipts.set(store.ownerKey,before.standaloneSync)
+                  currentStore.update(S=>{ S.active=result.S.active; S.workouts=result.S.workouts },true,{wearSessionUpdates:result.updates})
+                }
+                await useStore.getState().flushLocal()
+                if(!matches(expected)) throw Object.assign(new Error('stale-context'),{code:'stale-context'})
+                await heart.adoptCheckpoint(result.checkpoint,result.workoutId,result.workoutStart)
+                if(!matches(expected)) throw Object.assign(new Error('stale-context'),{code:'stale-context'})
+                if(result.activeRuntime) useUI.getState().importWearRest?.(result.checkpoint.runtime.timer,result.checkpoint.steps[result.checkpoint.cursor-1] || null)
+                observedPhoneTimers.set(expected.sessionToken,standaloneTimerSignature(phoneTimer(useStore.getState())))
+                pendingWearReceipts.delete(store.ownerKey)
+                response={status:'ok',streamId:result.checkpoint.streamId,seq:command.events.at(-1).seq}
+              } else {
               if (checkpoint?.nodeId && checkpoint.nodeId !== nodeId) throw Object.assign(new Error('stream-conflict'), { code: 'stream-conflict' })
               const next = applyStandalone(currentStore.S, command, store.activeSessionToken)
               const importTimer = next !== currentStore.S || !!pendingStandalone
@@ -220,6 +257,7 @@ export function bindWearBridge() {
               pendingStandalone = null
               pendingStandaloneSessions.delete(expected.sessionToken)
               response = { status: 'ok', streamId: saved.streamId, seq: command.events.at(-1).seq }
+              }
             } catch (e) { response = { status: 'error', code: e.code || 'unavailable', streamId: command.streamId || '', seq: pendingStandalone?.projection?.ack?.seq || 0 } }
             await plugin.reply({ nodeId, response: { v: 1, requestId: command.requestId || '', ...response } })
             await publish()

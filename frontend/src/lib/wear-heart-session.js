@@ -2,7 +2,8 @@ import { buildHeartRate } from './heart-rate.js'
 const fail = code => { throw Object.assign(new Error(code), { code }) }
 const rowAt = (S,t) => { const row=S.active?.entries?.[t?.entryIdx]?.sets?.[t?.setIdx]; return t?.side?row?.sides?.[t.side]:row }
 function locate(S,b) {
-  const workouts = [...(S.active?.id===b.workoutId?[S.active]:[]),...(S.workouts||[]).filter(w=>w.id===b.workoutId)]
+  const matches=w=>w?.id===b.workoutId && (b.workoutStart==null || w.start===b.workoutStart)
+  const workouts = [...(matches(S.active)?[S.active]:[]),...(S.workouts||[]).filter(matches)]
   for (const w of workouts) for (const e of w.entries||[]) for (const row of e.sets||[]) for (const set of [row,row.sides?.L,row.sides?.R]) if (set?.heartRate?.startedAt===b.startedAt) return set
   return null
 }
@@ -13,7 +14,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   const check = key => { if(disposed || !getStore().localReady || getStore().ownerKey!==key) fail('stale-context') }
   async function load() {
     const s=getStore(); check(s.ownerKey)
-    if(owner!==s.ownerKey) { const key=s.ownerKey; const saved=await plugin.getHeartBindings({ownerKey:key}); check(key); owner=key; bindings=saved.bindings||{}; standaloneDirty=false; results.clear() }
+    if(owner!==s.ownerKey) { const key=s.ownerKey; const saved=await plugin.getHeartBindings({ownerKey:key}); check(key); owner=key; bindings=structuredClone(saved.bindings||{}); standaloneDirty=false; results.clear() }
     return owner
   }
   async function save(key) { check(key); await plugin.saveHeartBindings({ownerKey:key,bindings:structuredClone(bindings)}); check(key) }
@@ -24,19 +25,39 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
     const trimmed=(m.points||[]).some(p=>p[0]>end)
     await write(key,b,buildHeartRate({...m,effortEndMs:b.effortEndMs??m.effortEndMs,recoveryEndMs:end,endReason:reason,partial:trimmed||m.partial||m.status==='partial',...(trimmed?{effort:null,recovery:null}:{} )}))
   }
-  async function adoptStandalone(key) {
-    const s=getStore(), checkpoint=s.S.active?._wearStandalone
-    if(!checkpoint?.nodeId || checkpoint.sessionId!==s.activeSessionToken) return
+  async function adoptCheckpoint(key,checkpoint,workoutId,workoutStart,onlyToken=null) {
+    const s=getStore()
+    if(!checkpoint?.nodeId) return
+    const workouts=[s.S.active,...(s.S.workouts||[])].filter(w=>w?.id===workoutId && (workoutStart==null || w.start===workoutStart))
+    if(workouts.length!==1) return
+    const workout=workouts[0]
     let dirty=false
     for(const [token,record] of Object.entries(checkpoint.hearts||{})) {
-      const row=rowAt(s.S,record.target), previous=bindings[token]
+      if(onlyToken && onlyToken!==token) continue
+      const target=record.target
+      const entries=target.entryLogId ? workout.entries.filter(e=>e.logId===target.entryLogId) : [workout.entries[target.entryIdx]]
+      const rows=entries.length===1 ? target.setLogId ? entries[0]?.sets?.filter(r=>r.logId===target.setLogId) : [entries[0]?.sets?.[target.setIdx]] : []
+      const parent=rows?.length===1 ? rows[0] : null, row=target.side?parent?.sides?.[target.side]:parent, previous=bindings[token]
       if(!record.invalid && row?.heartRate?.startedAt!==record.startedAt) continue
       if(previous && (previous.nodeId!==checkpoint.nodeId || previous.sessionId!==checkpoint.sessionId || previous.startedAt!==record.startedAt)) fail('stale-target')
-      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId:s.S.active.id,nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:record.effortEndMs==null?'effort':'recovery',effortEndMs:record.effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
+      // Completed captures can reconstruct a retired retry binding on demand.
+      // Do not fill the native journal again on every historical reconciliation.
+      if(!previous && !onlyToken && ['complete','empty'].includes(row?.heartRate?.status)) continue
+      if(!previous && Object.keys(bindings).length>=200) fail('heart-queue-full')
+      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId,workoutStart,nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:record.effortEndMs==null?'effort':'recovery',effortEndMs:record.effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
+      if(row?.heartRate?.recoveryEndMs!=null && (next.recoveryEndMs==null || row.heartRate.recoveryEndMs<=next.recoveryEndMs)) {
+        next.closed=true;next.recoveryEndMs=row.heartRate.recoveryEndMs;next.endReason=row.heartRate.endReason
+      }
       if(JSON.stringify(next)!==JSON.stringify(previous)) { bindings[token]=next;dirty=true }
     }
     if(dirty) standaloneDirty=true
     if(standaloneDirty) { await save(key);standaloneDirty=false }
+  }
+  async function adoptStandalone(key,onlyToken=null) {
+    const s=getStore(), checkpoint=s.S.active?._wearStandalone
+    if(checkpoint?.sessionId===s.activeSessionToken) await adoptCheckpoint(key,checkpoint,s.S.active.id,s.S.active.start,onlyToken)
+    for(const session of Object.values(s.wearSessions||{})) for(const record of Object.values(session.records||{}))
+      if(record.checkpoint) await adoptCheckpoint(key,record.checkpoint,session.workoutId,session.start,onlyToken)
   }
   async function reconcileNow() {
     if(!getStore().localReady || !plugin.getHeartBindings) return
@@ -46,7 +67,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
     for(const b of Object.values(bindings)) {
       const row=locate(getStore().S,b)
       if(!row) { if(!b.invalid || !b.closed) {b.invalid=true;b.closed=true;dirty=true} continue }
-      if(b.sessionId!==getStore().activeSessionToken && !b.closed) {
+      if(b.sessionId!==getStore().activeSessionToken && !b.closed && !getStore().wearSessions?.[b.sessionId]) {
         b.closed=true;dirty=true
         const m=row.heartRate
         b.effortEndMs=m.effortEndMs??Math.max(0,Date.now()-b.startedAt)
@@ -61,6 +82,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
     result(command,nodeId) { return owner===getStore().ownerKey ? results.get(`${nodeId}:${command.contextToken}:${command.requestId}`) : null },
     authorizedTokens() { return owner===getStore().ownerKey ? Object.entries(bindings).filter(([,b])=>!b.invalid).map(([token])=>token) : [] },
     adoptStandalone() { return serial(async()=>{ if(plugin.getHeartBindings) await adoptStandalone(await load()) }) },
+    adoptCheckpoint(checkpoint,workoutId,workoutStart) { return serial(async()=>{ if(plugin.getHeartBindings) await adoptCheckpoint(await load(),checkpoint,workoutId,workoutStart) }) },
     projection() { if(owner!==getStore().ownerKey) return null; const c=capture(); return c?{token:c[0],startedAt:c[1].startedAt,phase:c[1].phase,effortEndMs:c[1].effortEndMs??null}:null },
     handle(command,nodeId) { return serial(async()=>{
       const key=await load(), request=`${nodeId}:${command.contextToken}:${command.requestId}`
@@ -105,6 +127,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
     receive(packet,nodeId) { return serial(async()=>{
       const key=await load()
       if(!packet || packet.v!==1 || typeof packet.requestId!=='string' || packet.requestId.length>100 || new TextEncoder().encode(JSON.stringify(packet)).length>16384) fail('invalid-packet')
+      if(!bindings[packet.token]) await adoptStandalone(key,packet.token)
       const b=bindings[packet.token], input=packet.measurement
       if(!b || b.invalid || b.nodeId!==nodeId || !input || input.startedAt!==b.startedAt || !Array.isArray(input.points) || input.points.length>300) fail('stale-target')
       const row=locate(getStore().S,b);if(!row) fail('stale-target')
