@@ -1,0 +1,20 @@
+# Reconciliação durável Wear
+
+Autorização: após a análise da main original, o usuário pediu implementar. Manter Java/Wear Data Layer, React e a persistência offline/Firebase existentes; não importar Swift ou o servidor original. Executar na branch de trabalho existente, sem novas aprovações de etapas.
+
+## Contrato
+
+- Continuar aceitando os pacotes v1. Antes de publicar uma sequência, gravar um manifesto privado do dono em `envelope.localMetadata.wearSessions`. Chave: sessão opaca; cada base preparada guarda estado inicial, passos e checkpoint de replay. O manifesto não entra em backups compartilháveis nem documentos Firestore.
+- Entradas e séries recebem `logId` UUID não autorizador, mantido em reordenações, histórico e sincronização de registros. IDs duplicados copiados ganham novas identidades em ambos os alvos ambíguos; nunca escolher o primeiro exercício de mesmo nome. IDs não alteram o fingerprint legado. O fechamento mantém entradas preparadas para o relógio mesmo sem séries marcadas no celular, permitindo importação posterior.
+- Replay acontece sobre a cópia preparada; aplicar ao treino atual ou histórico identificado por ID **e início**, apenas no dono que possui o manifesto. Encontrar cada alvo por identidade única. Estado do treino e checkpoint/recibo são gravados na mesma transação local. Duplicatas exatas não reaplicam ações.
+- Merge de três vias por campo: mudanças independentes são combinadas; o mesmo valor é idempotente; alterações incompatíveis do mesmo campo ficam como conflito, sem ACK destrutivo. Uma conclusão já marcada no celular pode receber os batimentos atrasados. Série removida, alvo ambíguo, unidade alterada ou captura distinta existente não são substituídos.
+- Importar descanso somente na sessão ativa correspondente, quando o telefone não tiver alterado seu próprio descanso/posição; importar histórico nunca reabre treino, modifica a sessão nova ou dispara alarmes passados. Recalcular volume/topW e atualizar o registro histórico pelas regras existentes.
+- Vincular capturas ao checkpoint importado mesmo no histórico. Pontos, fases e recibos cardíacos mantêm o contrato existente. Adotar vínculos antes de publicar recibos do diário; erro de gravação conserva as pendências.
+- Publicação acrescenta `standaloneSync = {v:2, sessions:[{sessionId,baselines}], receipts:[{sessionId,baseline,streamId,seq,requestId}]}` exclusivamente do dono carregado. O relógio preserva e reenvia sua base pendente quando o manifesto exato autoriza, inclusive com outro treino ativo no celular. Recibos históricos exigem correspondência do evento e stream. Conflitos reais por campo/alvo permanecem bloqueados.
+- Inbox nativa Android: gravar comandos standalone e medições cardíacas antes de notificar a WebView. Até 512 itens / 8 MiB, sem descarte silencioso. Chave inclui nó, tipo e conteúdo; remover apenas a entrada exata depois de importação durável. Falha/fila cheia não dá sucesso ao relógio. Leituras são limitadas e priorizam diário antes das medições dependentes.
+- Drenar ao iniciar, ao carregar o dono, ao retomar o app e ao chegar trabalho. Eventos de outro dono/alvo inexistente permanecem retidos, sem serem aplicados na conta atual. ACK do transporte continua distinto do ACK de aplicação.
+- Manifestos limitados a 1024 bases / 16 MiB por dono; atingir limite impede publicação de outra base sem apagar dados anteriores. Sem limpeza automática de pendências ou medições dos aparelhos.
+
+## Verificação
+
+Cobrir edição de outra série, conflito real do mesmo campo, reordenação, inserção/remoção, exercício repetido, treino finalizado sem marcações no celular, novo treino ativo, recebimento tardio de batimentos, duplicação, reinício, troca de dono, gravação interrompida e fila cheia. Incluir persistência real do store e transporte nativo testável. Builds dos dois APKs; instalação/teste físico somente em aparelhos acessíveis e identificados, excluindo `0123456789ABCDEF`.

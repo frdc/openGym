@@ -83,7 +83,7 @@ export function createWorkoutStore(options = {}) {
       delete S.coach
       S.customEx = healCustomEx(S.customEx)
       registerCustom(S.customEx || [])
-      set({ S, ownerKey: value.ownerKey, activeSessionToken: value.localMetadata?.activeSessionToken || null,
+      set({ S, ownerKey: value.ownerKey, activeSessionToken: value.localMetadata?.activeSessionToken || null, wearSessions: value.localMetadata?.wearSessions || {},
         localReady: true, ready: true, user: desiredUser ? { ...desiredUser, id: desiredUser.uid, name: desiredUser.displayName || desiredUser.email || '' } : null,
         recoveryCopies: value.recoveryCopies, adoptionDecision: value.adoptionDecision })
       remind()
@@ -91,7 +91,7 @@ export function createWorkoutStore(options = {}) {
     function hide() {
       envelope = null; importRead = null
       registerCustom([])
-      set({ S: freshState(), ownerKey: null, activeSessionToken: null, ready: false, localReady: false, user: null, recoveryCopies: [], adoptionDecision: null })
+      set({ S: freshState(), ownerKey: null, activeSessionToken: null, wearSessions: {}, ready: false, localReady: false, user: null, recoveryCopies: [], adoptionDecision: null })
     }
     function seedAdmission(value, copy) {
       if (value.localMetadata?.seededRecoveryIds?.includes(copy.recoveryId)) return value
@@ -205,7 +205,7 @@ export function createWorkoutStore(options = {}) {
       const stopNative = onAppActive(foreground, flush)
       if (stopNative) disposers.push(stopNative)
     }
-    function record(next, push, kind, replaceActive = false) {
+    function record(next, push, kind, replaceActive = false, wearSessionUpdates) {
       requireReady()
       const previous = get().S
       delete next.coach
@@ -214,11 +214,11 @@ export function createWorkoutStore(options = {}) {
       encodeState(next, { generation: envelope.cloudGeneration, unitVersion: envelope.unitProjectionVersion ?? envelope.lastConfirmedControl?.unitVersion ?? 1 })
       const sameSession = previous.active && next.active && previous.active.id === next.active.id && previous.active.editingWorkoutId === next.active.editingWorkoutId
       const activeSessionToken = next.active ? (!replaceActive && sameSession ? get().activeSessionToken : null) || newId() : null
-      set({ S: next, activeSessionToken })
-      void bridge.recordChange({ previous, next, kind, scheduleRemote: push, activeSessionToken, replaceActive }).catch(localFailure)
+      set({ S: next, activeSessionToken, ...(wearSessionUpdates ? { wearSessions: { ...get().wearSessions, ...clone(wearSessionUpdates) } } : {}) })
+      void bridge.recordChange({ previous, next, kind, scheduleRemote: push, activeSessionToken, replaceActive, wearSessionUpdates }).catch(localFailure)
     }
     return {
-      S: freshState(), user: null, ownerKey: null, activeSessionToken: null, ready: false, localReady: false, authReady: false,
+      S: freshState(), user: null, ownerKey: null, activeSessionToken: null, wearSessions: {}, ready: false, localReady: false, authReady: false,
       sync: compatibilityStatus(latestStatus), config: { allow_guest: true, coach: null }, needsMobileOnboarding: false, linkCode: null, coachLocal: null,
       recoveryCopies: [], adoptionDecision: null, keptRev: 0,
       boot() {
@@ -242,14 +242,14 @@ export function createWorkoutStore(options = {}) {
         })()
         return bootPromise
       },
-      update(producer, push = true, { kind = 'edit' } = {}) {
+      update(producer, push = true, { kind = 'edit', wearSessionUpdates } = {}) {
         requireReady()
         const previous = get().S, draft = clone(previous)
         producer(draft)
         // Domain helpers historically use optional undefined properties; S is JSON data.
         const next = localData(draft)
         next._ts = stampChange(previous, next, Date.now())
-        record(next, push, kind)
+        record(next, push, kind, false, wearSessionUpdates)
         const beforeMedia = referencedHashes({ workouts: previous.workouts })
         const remainingWorkouts = new Map((next.workouts || []).map(w => [entryKey('workouts', w), w]))
         const removed = (previous.workouts || []).some(w => {

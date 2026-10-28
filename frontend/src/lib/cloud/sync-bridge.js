@@ -327,7 +327,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (ctx.running) { await ctx.running; assertCurrent(ctx) }
     await startSync(ctx)
   }
-  async function recordChange({ previous, next, kind = 'edit', scheduleRemote = true, activeSessionToken, replaceActive = false }) {
+  async function recordChange({ previous, next, kind = 'edit', scheduleRemote = true, activeSessionToken, replaceActive = false, wearSessionUpdates }) {
     const ctx = active
     if (!ctx?.envelope || !status.get().localReady) throw failure('local-not-ready')
     const operation = codec.prepareOperation(previous, next, { ownerKey: ctx.owner.ownerKey, opId: newId(), kind,
@@ -335,7 +335,7 @@ export function createSyncBridge({ storage, codec = defaultCodec, remote, clock 
     if (operation) operation.unitProvenance = ctx.envelope.lastConfirmedControl ? 'confirmed' : 'unproven'
     if (activeSessionToken === undefined) activeSessionToken = next.active
       ? (previous.active && previous.active.id === next.active.id ? memory(ctx).localMetadata?.activeSessionToken : null) || newId() : null
-    ctx.intents.push({ previous: clone(previous), next: clone(next), operation, activeSessionToken, replaceActive })
+    ctx.intents.push({ previous: clone(previous), next: clone(next), operation, activeSessionToken, replaceActive, ...(wearSessionUpdates ? { wearSessionUpdates: clone(wearSessionUpdates) } : {}) })
     emit(ctx, { local: 'saving', cloud: authenticated(ctx) ? 'pending' : 'auth-required' }); publish(ctx)
     const saved = await persistIntents(ctx)
     if (valid(ctx) && scheduleRemote) void startSync(ctx)

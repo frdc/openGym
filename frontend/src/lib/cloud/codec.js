@@ -299,7 +299,7 @@ function mergeOperationDocuments(remoteByPath, operation, { control, domainConte
 }
 
 function assertOwner(envelope, ownerKey) { if (ownerKey !== envelope.ownerKey) throw new Error('owner-mismatch') }
-export function mergeLocalDraft(currentEnvelope, { previous, next, operation, activeSessionToken, replaceActive = false }) {
+export function mergeLocalDraft(currentEnvelope, { previous, next, operation, activeSessionToken, replaceActive = false, wearSessionUpdates }) {
   if (operation) assertOwner(currentEnvelope, operation.ownerKey)
   const out = copy(currentEnvelope)
   // Existing domain merge joins concurrent tabs; the running session belongs to this local profile.
@@ -331,6 +331,8 @@ export function mergeLocalDraft(currentEnvelope, { previous, next, operation, ac
     }
   }
   if (operation && !out.pendingOperations.some(x => x.opId === operation.opId)) out.pendingOperations.push(copy(operation))
+  if (wearSessionUpdates) out.localMetadata = { ...out.localMetadata,
+    wearSessions: { ...out.localMetadata?.wearSessions, ...copy(wearSessionUpdates) } }
   out.localRevision++
   return out
 }

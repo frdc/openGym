@@ -22,7 +22,7 @@ export const standaloneTimerSignature = timer => JSON.stringify(timer ? { timerT
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical)
   if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(Object.keys(value).sort().filter(k => k !== 'heartRate' && !k.startsWith('_')).map(k => [k, canonical(value[k])]))
+  return Object.fromEntries(Object.keys(value).sort().filter(k => k !== 'heartRate' && k !== 'logId' && !k.startsWith('_')).map(k => [k, canonical(value[k])]))
 }
 function fingerprint(S) {
   const text = JSON.stringify(canonical({ unit: S.unit || 'kg', restSec: S.restSec || 0, cur: S.active.cur || 0, phoneTimer: standaloneTimerSignature(S.active._wearStandaloneTimer?.timer), entries: S.active.entries.map(e => ({ id: e.id, sg: e.sg, target: e.target, sets: e.sets })) }))
