@@ -8,6 +8,7 @@ import { createWearController } from './wear-session.js'
 import { applyStandalone, projectStandalone, reconcileStandaloneTimer, standaloneTimerSignature } from './wear-standalone.js'
 import { createWearSync } from './wear-sync.js'
 import { applyWearLedger, prepareWearLedger, wearSyncProjection } from './wear-ledger.js'
+import { createWearInbox } from './wear-inbox.js'
 
 let completeHandler = null, editHandler = null, notifyReady = () => {}
 let openHandler = null, syncHandler = null
@@ -52,7 +53,7 @@ export function bindWearBridge() {
     return plugin.open({ state: snapshot() })
   }
   let closed = false, plugin, listener, revision = 0, identity = '', contextToken = '', serialized = '', state
-  let heart, heartListener, syncListener
+  let heart, heartListener, syncListener, inboxListener, inbox
   const manualSync = createWearSync({ request: request => plugin.sync({ request }) })
   const sync = async () => {
     const store = useStore.getState(), expected = { ownerKey: store.ownerKey, sessionToken: store.activeSessionToken }
@@ -173,6 +174,7 @@ export function bindWearBridge() {
     const old = revision; snapshot()
     if (old !== revision && !sending) void publish().catch(() => {})
     openNewWorkout()
+    if(initialized) void inbox?.run().catch(()=>{})
   }
   const offStore = useStore.subscribe(changed), offUI = useUI.subscribe(changed)
   notifyReady = changed
@@ -182,10 +184,11 @@ export function bindWearBridge() {
     plugin = registerPlugin('WearBridge')
     syncListener = await plugin.addListener('sync', event => manualSync.receive(event))
     heart = createWearHeartSession({ getStore: () => useStore.getState(), plugin, changed: () => { if (!closed) void publish().catch(() => {}) } })
-    heartListener = await plugin.addListener('heart', async ({ nodeId, packet }) => {
-      try { const response = await heart.receive(packet, nodeId); await plugin.replyHeart({ nodeId, response }) } catch { await plugin.replyHeart({ nodeId, response: { v: 1, requestId: packet?.requestId || '', token: packet?.token || '', status: 'error' } }).catch(() => {}) }
-    })
-    listener = await plugin.addListener('command', async ({ nodeId, command, syncId }) => {
+    const onHeart=async ({ nodeId, packet, inboxKey }) => {
+      try { const response = await heart.receive(packet, nodeId); await plugin.replyHeart({ nodeId, response, inboxKey }) } catch { await plugin.replyHeart({ nodeId, inboxKey, response: { v: 1, requestId: packet?.requestId || '', token: packet?.token || '', status: 'error' } }).catch(() => {}) }
+    }
+    heartListener = await plugin.addListener('heart',onHeart)
+    const onCommand=async ({ nodeId, command, syncId, inboxKey }) => {
       if (closed) return
       if (syncId) { await publish({ nodeId, syncId }).catch(() => {}); return }
       // Each node has a serialized controller, and commands from all nodes are globally serialized below.
@@ -259,7 +262,7 @@ export function bindWearBridge() {
               response = { status: 'ok', streamId: saved.streamId, seq: command.events.at(-1).seq }
               }
             } catch (e) { response = { status: 'error', code: e.code || 'unavailable', streamId: command.streamId || '', seq: pendingStandalone?.projection?.ack?.seq || 0 } }
-            await plugin.reply({ nodeId, response: { v: 1, requestId: command.requestId || '', ...response } })
+            await plugin.reply({ nodeId, inboxKey, response: { v: 1, requestId: command.requestId || '', ...response } })
             await publish()
           } else if (['heart-start', 'heart-cancel'].includes(command?.action)) {
             const cached = heart.result(command, nodeId)
@@ -281,7 +284,12 @@ export function bindWearBridge() {
       })
       commands = run.catch(() => {})
       await run.catch(() => {})
-    })
+    }
+    inbox=createWearInbox({plugin,ready:()=>!closed && ownerReady(useStore.getState()) && useStore.getState().ownerKey,
+      command:entry=>onCommand({nodeId:entry.nodeId,command:entry.payload,inboxKey:entry.key}),
+      heart:entry=>onHeart({nodeId:entry.nodeId,packet:entry.payload,inboxKey:entry.key})})
+    inboxListener=await plugin.addListener('inbox',()=>{void inbox.wake().catch(()=>{})})
+    listener = await plugin.addListener('command',onCommand)
     if (closed) { await listener.remove(); return }
     openHandler = open
     await heart.reconcile()
@@ -289,7 +297,8 @@ export function bindWearBridge() {
     initialized = true
     syncHandler = sync
     openNewWorkout()
+    await inbox.run()
   })().catch(() => {})
   let commands = Promise.resolve()
-  return () => { closed = true; if (automaticOpen === openNewWorkout) { automaticOpen = null; requestedWorkout = null } if (openHandler === open) openHandler = null; if (syncHandler === sync) syncHandler = null; manualSync.dispose(); offStore(); offUI(); notifyReady = () => {}; for (const c of controllers.values()) c.dispose(); heart?.dispose(); void syncListener?.remove(); void heartListener?.remove(); void listener?.remove(); void plugin?.clear().catch(() => {}) }
+  return () => { closed = true; if (automaticOpen === openNewWorkout) { automaticOpen = null; requestedWorkout = null } if (openHandler === open) openHandler = null; if (syncHandler === sync) syncHandler = null; manualSync.dispose(); inbox?.dispose(); offStore(); offUI(); notifyReady = () => {}; for (const c of controllers.values()) c.dispose(); heart?.dispose(); void inboxListener?.remove(); void syncListener?.remove(); void heartListener?.remove(); void listener?.remove(); void plugin?.clear().catch(() => {}) }
 }

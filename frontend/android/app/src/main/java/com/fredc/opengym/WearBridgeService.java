@@ -23,8 +23,13 @@ public class WearBridgeService extends WearableListenerService {
                 return;
             }
             if ("/opengym/v1/heart".equals(event.getPath())) {
-                // No success reply while the WebView is unavailable: watch retains its queue.
-                WearBridgePlugin.deliverHeart(event.getSourceNodeId(), payload);
+                WearInboxStore.get(this).offer(event.getSourceNodeId(),"heart",payload);
+                WearBridgePlugin.deliverInbox();
+                return;
+            }
+            if ("/opengym/v1/command".equals(event.getPath()) && "standalone-sync".equals(payload.optString("action"))) {
+                WearInboxStore.get(this).offer(event.getSourceNodeId(),"command",payload);
+                WearBridgePlugin.deliverInbox();
                 return;
             }
             String syncId = event.getPath().endsWith("/sync") ? payload.optString("requestId") : null;

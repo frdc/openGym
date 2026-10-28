@@ -2,10 +2,11 @@
 // Real owner store, persistence and UI timer; only the native transport/alarm boundary is fake.
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-const runtime = vi.hoisted(() => ({ fixture: null, command: null, heart: null }))
+const runtime = vi.hoisted(() => ({ fixture: null, command: null, heart: null, inbox:null }))
 const plugin = vi.hoisted(() => ({
   publish: vi.fn().mockResolvedValue(), reply: vi.fn().mockResolvedValue(), replyHeart: vi.fn().mockResolvedValue(), clear: vi.fn().mockResolvedValue(),
   getHeartBindings: vi.fn().mockResolvedValue({ bindings: {} }), saveHeartBindings: vi.fn().mockResolvedValue(),
+  drainInbox:vi.fn().mockResolvedValue({entries:[],next:''}),
   addListener: vi.fn(),
 }))
 vi.mock('../store/useStore.js', async original => {
@@ -31,7 +32,9 @@ const packet = (state, events) => ({ v: 1, action: 'standalone-sync', requestId:
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 beforeEach(async () => {
   vi.clearAllMocks()
-  plugin.addListener.mockImplementation(async (name, handler) => { if (name === 'command') runtime.command = handler; if (name === 'heart') runtime.heart = handler; return { remove: vi.fn() } })
+  plugin.drainInbox.mockResolvedValue({entries:[],next:''})
+  plugin.reply.mockResolvedValue();plugin.replyHeart.mockResolvedValue()
+  plugin.addListener.mockImplementation(async (name, handler) => { if (name === 'command') runtime.command = handler; if (name === 'heart') runtime.heart = handler; if(name==='inbox') runtime.inbox=handler; return { remove: vi.fn() } })
   runtime.fixture.begin()
   await runtime.fixture.prepare({ restSec: 90, active: { id: 'integration', start: Date.now(), cur: 0, entries: [{ id: '0025', target: { mode: 'reps' }, sets: [{ r: 10, w: 60, done: false }, { r: 10, w: 60, done: false }] }] } })
   useUI.setState({ timer: null, work: null, sheets: [] })
@@ -39,6 +42,19 @@ beforeEach(async () => {
   await vi.waitFor(() => expect(latest()?.standalone).toBeTruthy())
 })
 afterEach(async () => { stop?.(); useUI.getState().stopRest(); await runtime.fixture.close() })
+
+it('drains a native heart packet received before its journal and retains foreign work',async()=>{
+  const original=latest(),at=Date.now()-10000,events=[{...event(1,'start',at),heart:true},event(2,'complete',at+1000)]
+  let entries=[{key:'heart',nodeId:'watch',kind:'heart',payload:{v:1,requestId:'native-heart',token:events[0].id,measurement:{startedAt:at,effortEndMs:1000,recoveryEndMs:2000,endReason:'disabled',points:[[0,80],[1000,120],[2000,90]]}}},
+    {key:'journal',nodeId:'watch',kind:'command',payload:packet(original,events)},
+    {key:'foreign',nodeId:'watch',kind:'command',payload:{...packet(original,events),contextToken:'foreign-session'}}]
+  plugin.drainInbox.mockImplementation(async()=>({entries:structuredClone(entries),next:''}))
+  const retire=async({inboxKey,response})=>{if(response.status==='ok') entries=entries.filter(e=>e.key!==inboxKey)}
+  plugin.reply.mockImplementation(retire);plugin.replyHeart.mockImplementation(retire)
+  runtime.inbox()
+  await vi.waitFor(()=>expect(entries.map(e=>e.key)).toEqual(['foreign']))
+  expect(useStore.getState().S.active.entries[0].sets[0].heartRate.points).toEqual([[0,80],[1000,120],[2000,90]])
+})
 
 it('withholds receipts after failed local confirmation and retries without double completion',async()=>{
   const original=latest(), savedFlush=useStore.getState().flushLocal, at=Date.now()-10000

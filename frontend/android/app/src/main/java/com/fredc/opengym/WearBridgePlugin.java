@@ -11,6 +11,7 @@ import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.CapabilityClient;
 import com.google.android.gms.wearable.Wearable;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -59,6 +60,24 @@ public class WearBridgePlugin extends Plugin {
     @Override protected void handleOnResume() {
         JSObject state = latestState;
         if (state != null) WearWorkoutService.update(getContext(), state.optBoolean("active"));
+        deliverInbox();
+    }
+    static void deliverInbox() {
+        WearBridgePlugin plugin=instance;if(plugin==null) return;
+        new Handler(Looper.getMainLooper()).post(()->{if(instance==plugin) plugin.notifyListeners("inbox",new JSObject());});
+    }
+    @PluginMethod public void drainInbox(PluginCall call) {
+        try {
+            JSONArray entries=WearInboxStore.get(getContext()).list(call.getString("afterKey",""),64);
+            JSObject result=new JSObject();result.put("entries",entries);result.put("next",entries.length()==64?entries.getJSONObject(63).getString("key"):"");call.resolve(result);
+        } catch(Exception e) {call.reject("inbox unavailable");}
+    }
+    private boolean retire(PluginCall call,String kind,JSONObject response,String node) {
+        if(!"ok".equals(response.optString("status"))) return true;
+        String key=call.getString("inboxKey");if(key==null) return true;
+        try {if(WearInboxStore.get(getContext()).remove(key,node,kind,response.optString("requestId"))) return true;}
+        catch(Exception ignored) { }
+        call.reject("inbox confirmation failed");return false;
     }
     @Override protected void handleOnDestroy() {
         if (instance == this) {
@@ -112,6 +131,7 @@ public class WearBridgePlugin extends Plugin {
     @PluginMethod public void replyHeart(PluginCall call) {
         JSObject response = call.getObject("response"); String node = call.getString("nodeId");
         if (node == null || node.isEmpty() || response == null || response.optInt("v") != 1 || !WearHeartJournalGuard.validAck(response.optString("requestId"), response.optString("token"), response.optString("status"))) { call.reject("invalid acknowledgment"); return; }
+        if(!retire(call,"heart",response,node)) return;
         Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/heart-ack", response.toString().getBytes(StandardCharsets.UTF_8))
             .addOnCompleteListener(task -> WearRequestLocks.finish(node, response.optString("requestId")))
             .addOnSuccessListener(id -> call.resolve()).addOnFailureListener(error -> call.reject("wear unavailable"));
@@ -140,6 +160,7 @@ public class WearBridgePlugin extends Plugin {
     @PluginMethod public void reply(PluginCall call) {
         JSObject response = call.getObject("response"); String node = call.getString("nodeId");
         if (response == null || node == null) { call.reject("invalid reply"); return; }
+        if(!retire(call,"command",response,node)) return;
         Wearable.getMessageClient(getContext()).sendMessage(node, "/opengym/v1/reply", response.toString().getBytes(StandardCharsets.UTF_8))
             .addOnCompleteListener(task -> WearRequestLocks.finish(node, response.optString("requestId")))
             .addOnSuccessListener(id -> call.resolve()).addOnFailureListener(error -> call.reject("wear unavailable"));
