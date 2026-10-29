@@ -119,3 +119,16 @@ Próximo teste: atualizar os dois aparelhos quando reaparecerem no ADB, repetir 
 - Ambos os `adb install -r --user 0` retornaram Success; `firstInstallTime` permaneceu igual e `lastUpdateTime` avançou. SHA-256 dos APKs instalados conferidos com os artefatos validados. Nenhuma limpeza de dados ou de pendências foi executada.
 - MainActivity e WearActivity abertas com Status ok, com processos em execução após a atualização. Evidências limitadas a instalação, pacote e abertura ficam em `frontend/android/app/build/install-evidence-20261028/`, ignoradas pelo Git.
 - A sincronização de um treino offline e a integridade das curvas entre os aparelhos ainda precisam do teste de uso. Esta instalação não é evidência de um treino físico completo.
+
+## 2026-10-29 - Lentidão após reabrir relógio e diagnóstico de sincronização
+
+Contexto: usuário relatou Android muito lento depois de fechar o app do relógio e pedir abertura novamente pelo celular, além de falha de reconexão. Pediu repensar o fluxo e aceitou linhas de debug. Optou por testar os aparelhos depois; a nova versão não foi instalada neles.
+
+- Reproduções antes das correções: 25 eventos só de UI provocavam 26 drenos nativos; rajada com publicação retida gerava 30 envios antes da abertura; conciliação de captura iniciada no relógio/concluída no celular regravava a série a cada passagem. Receiver antigo no emulador confirmou um quarto pedido após três estados recebidos (esperado: continuar em um).
+- Ponte agora observa mudanças relevantes, mantém uma publicação ativa e a última atualização pendente, preservando o handshake manual. UI/ticks/status da nuvem não drenam inbox. Ações e batimentos permanecem na fila durável até confirmação gravada. Conciliação cardíaca mantém o limite confirmado e agrupa pedidos concorrentes.
+- Relógio usa desafio correlacionado com um pull em andamento e invalida callbacks ao sair. Receber estado atualiza/renderiza/reenvia pendências, sem pedir outro snapshot automaticamente. Primeira falha de publicação não impede sincronizações posteriores.
+- Na versão debug: **Opções → Diagnóstico da sincronização**, com RX/TX, idade/revisão do estado, ações/capturas pendentes, ACK e etapa/último erro. Tag logcat **OpenGymSync** registra contagens/durações/códigos, sem payload, conta, exercício, token ou leituras cardíacas. Layout de treino/descanso preservado; título do diagnóstico conferido em captura real do emulador.
+- Validação: **362 arquivos/3.952 testes web**, **9 JVM celular + 68 Wear**, **11 instrumentados Wear + 3 celular**, seis testes dos scripts, 17 idiomas/2.037 chaves, builds web/mobile e ambos os APKs aprovados. Arquivos web realmente embutidos no APK e assinaturas conferidos. Revisão independente sem achados críticos/importantes/menores.
+- [Relatório, fluxo e orientação para o próximo teste](dev/2026-10-29-wear-sync-flow-verification.md). Evidências ficam em `frontend/android/app/build/sync-flow-evidence-20261029/` e `frontend/android/wear/build/sync-evidence-20261029/`, ignoradas pelo Git. APKs finais nos caminhos habituais dos módulos app/wear.
+
+Limite: foram corrigidos ciclos reproduzidos, mas a melhora de latência, reconexão e abertura no S23 Ultra/Watch Ultra ainda não foi medida. O usuário adiou esse teste. Nenhuma limpeza de dados/pendências foi feita; o servidor do visualizador permaneceu fechado.
