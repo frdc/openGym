@@ -54,6 +54,25 @@ function fixture(initial={}) {
   const packet=()=>({v:1,requestId:'p',token:host.projection().token,measurement:{startedAt:command.startedAt,effortEndMs:1000,recoveryEndMs:31000,endReason:'next-set',points:[[0,100],[1000,150],[31000,120]]}})
   return {store,host,command,packet,plugin}
 }
+it('does not revert a phone-confirmed effort boundary or rewrite the workout on repeated reconciliation',async()=>{
+  const f=fixture(), token='00000000-0000-4000-8000-000000000001'
+  f.store.S.active.entries[0].sets[0]={done:true,at:2000,heartRate:{startedAt:1000,points:[]}}
+  f.store.S.active._wearStandalone={sessionId:'s',nodeId:'watch',hearts:{[token]:{target:{entryIdx:0,setIdx:0},startedAt:1000,effortEndMs:null}}}
+  const update=vi.spyOn(f.store,'update')
+  await f.host.reconcile();const writes=update.mock.calls.length
+  await f.host.reconcile();await f.host.reconcile()
+  expect(update).toHaveBeenCalledTimes(writes)
+  expect(f.store.S.active.entries[0].sets[0].heartRate.effortEndMs).toBe(1000)
+})
+it('coalesces a burst of reconciliation requests while native loading is blocked',async()=>{
+  const f=fixture();let release
+  f.plugin.getHeartBindings=vi.fn(()=>new Promise(resolve=>{release=()=>resolve({bindings:{}})}))
+  const read=vi.fn(()=>f.store),host=createWearHeartSession({getStore:read,plugin:f.plugin})
+  const work=Array.from({length:50},()=>host.reconcile())
+  await vi.waitFor(()=>expect(release).toBeTypeOf('function'));release();await Promise.all(work)
+  expect(read.mock.calls.length).toBeLessThan(100)
+  host.dispose()
+})
 it('waits for confirmed authentication before accepting heart packets or creating bindings',async()=>{
   const f=fixture();f.store.authReady=false
   await expect(f.host.handle(f.command,'watch')).rejects.toThrow('unavailable')

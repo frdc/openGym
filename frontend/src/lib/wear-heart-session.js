@@ -21,13 +21,14 @@ function locateTarget(S,b) {
 const locate=(S,b)=>locateTarget(S,b)?.row || null
 export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   let owner=null, bindings={}, disposed=false, chain=Promise.resolve(), standaloneDirty=false
+  let adoptedSources=null,reconciling=null,reconcileAgain=false
   const results=new Map()
   const serial = fn => { const run=chain.then(fn); chain=run.catch(()=>{}); return run }
   const check = key => { if(disposed || !getStore().localReady || getStore().ownerKey!==key) fail('stale-context');if(getStore().authReady===false) fail('unavailable') }
   async function load() {
     const s=getStore(); check(s.ownerKey)
     if(owner!==s.ownerKey) {
-      const key=s.ownerKey;const saved=await plugin.getHeartBindings({ownerKey:key});check(key);owner=key;bindings=structuredClone(saved.bindings||{});standaloneDirty=false;results.clear()
+      const key=s.ownerKey;const saved=await plugin.getHeartBindings({ownerKey:key});check(key);owner=key;bindings=structuredClone(saved.bindings||{});standaloneDirty=false;adoptedSources=null;results.clear()
       for(const b of Object.values(bindings)) if(!b.target?.entryLogId || !b.target?.setLogId) {
         const found=locateTarget(s.S,b)
         if(found?.target.entryLogId && found.target.setLogId) {b.target=found.target;b.workoutStart=found.workoutStart;standaloneDirty=true}
@@ -63,7 +64,8 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
       // Do not fill the native journal again on every historical reconciliation.
       if(!previous && !onlyToken && ['complete','empty'].includes(row?.heartRate?.status)) continue
       if(!previous && Object.keys(bindings).length>=200) fail('heart-queue-full')
-      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId,workoutStart,target:{entryLogId:entries[0]?.logId,setLogId:parent?.logId,exerciseId:entries[0]?.id,side:target.side || null},nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:record.effortEndMs==null?'effort':'recovery',effortEndMs:record.effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
+      const effortEndMs=row?.heartRate?.effortEndMs ?? record.effortEndMs ?? previous?.effortEndMs ?? null
+      const next={...previous,startedAt:record.startedAt,sessionId:checkpoint.sessionId,workoutId,workoutStart,target:{entryLogId:entries[0]?.logId,setLogId:parent?.logId,exerciseId:entries[0]?.id,side:target.side || null},nodeId:checkpoint.nodeId,contextToken:checkpoint.sessionId,phase:effortEndMs==null?'effort':'recovery',effortEndMs,closed:!!record.closed||!!previous?.closed,invalid:!!record.invalid||!!previous?.invalid,...(record.recoveryEndMs!=null?{recoveryEndMs:record.recoveryEndMs,endReason:record.endReason}:{})}
       if(row?.heartRate?.recoveryEndMs!=null && (next.recoveryEndMs==null || row.heartRate.recoveryEndMs<=next.recoveryEndMs)) {
         next.closed=true;next.recoveryEndMs=row.heartRate.recoveryEndMs;next.endReason=row.heartRate.endReason
       }
@@ -74,9 +76,11 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
   }
   async function adoptStandalone(key,onlyToken=null) {
     const s=getStore(), checkpoint=s.S.active?._wearStandalone
+    if(!onlyToken && adoptedSources?.owner===key && adoptedSources.sessions===s.wearSessions && adoptedSources.checkpoint===checkpoint) return
     if(checkpoint?.sessionId===s.activeSessionToken) await adoptCheckpoint(key,checkpoint,s.S.active.id,s.S.active.start,onlyToken)
     for(const session of Object.values(s.wearSessions||{})) for(const record of Object.values(session.records||{}))
       if(record.checkpoint) await adoptCheckpoint(key,record.checkpoint,session.workoutId,session.start,onlyToken)
+    if(!onlyToken) adoptedSources={owner:key,sessions:s.wearSessions,checkpoint}
   }
   async function reconcileNow() {
     if(!getStore().localReady || getStore().authReady===false || !plugin.getHeartBindings) return
@@ -97,7 +101,7 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
     if(dirty) await save(key)
     if(dirty) changed()
   }
-  return {
+  const host={
     result(command,nodeId) { return owner===getStore().ownerKey ? results.get(`${nodeId}:${command.contextToken}:${command.requestId}`) : null },
     authorizedTokens() { return owner===getStore().ownerKey ? Object.entries(bindings).filter(([,b])=>!b.invalid).map(([token])=>token) : [] },
     adoptStandalone() { return serial(async()=>{ if(plugin.getHeartBindings) await adoptStandalone(await load()) }) },
@@ -174,7 +178,19 @@ export function createWearHeartSession({getStore,plugin,changed=()=>{}}) {
       await save(key);changed()
       return {v:1,requestId:packet.requestId,status:'ok',token:packet.token}
     }) },
-    reconcile() {return serial(reconcileNow)},
-    dispose() {disposed=true;bindings={};results.clear()},
+    reconcile() {
+      if(disposed) return Promise.resolve()
+      if(reconciling) {reconcileAgain=true;return reconciling}
+      reconciling=serial(async()=>{
+        reconcileAgain=false;await reconcileNow()
+        if(reconcileAgain && !disposed) {reconcileAgain=false;await reconcileNow()}
+      }).finally(()=>{
+        reconciling=null
+        if(reconcileAgain && !disposed) {reconcileAgain=false;void host.reconcile().catch(()=>{})}
+      })
+      return reconciling
+    },
+    dispose() {disposed=true;bindings={};adoptedSources=null;results.clear()},
   }
+  return host
 }
