@@ -17,6 +17,9 @@ import java.util.UUID;
 
 @CapacitorPlugin(name = "WearBridge")
 public class WearBridgePlugin extends Plugin {
+    static void trace(android.content.Context context,String stage,long value) {
+        if((context.getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0) android.util.Log.d("OpenGymSync","phone "+stage+" value="+value);
+    }
     private volatile JSObject latestState;
     @PluginMethod public void sync(PluginCall call) {
         JSObject request = call.getObject("request");
@@ -45,6 +48,7 @@ public class WearBridgePlugin extends Plugin {
         JSObject state = call.getObject("state");
         if (state == null || !state.optBoolean("active") || state.toString().getBytes(StandardCharsets.UTF_8).length > 131072) { call.reject("invalid state"); return; }
         final long sentAt = System.currentTimeMillis();
+        trace(getContext(),"open-request",0);
         Wearable.getCapabilityClient(getContext()).getCapability("opengym_watch_v1", CapabilityClient.FILTER_REACHABLE).addOnSuccessListener(capability -> {
             JSObject latest = latestState;
             if (latest == null || !WearBridgeGuard.currentOpenRequest(latest.optString("contextToken"), latest.optLong("revision"), latest.optBoolean("active"), state.optString("contextToken"), state.optLong("revision"))) { call.reject("stale context"); return; }
@@ -72,6 +76,7 @@ public class WearBridgePlugin extends Plugin {
     @PluginMethod public void drainInbox(PluginCall call) {
         try {
             JSONArray entries=WearInboxStore.get(getContext()).list(call.getString("afterKey",""),64);
+            trace(getContext(),"inbox-read",entries.length());
             JSObject result=new JSObject();result.put("entries",entries);result.put("next",entries.length()==64?entries.getJSONObject(63).getString("key"):"");call.resolve(result);
         } catch(Exception e) {call.reject("inbox unavailable");}
     }
@@ -126,6 +131,7 @@ public class WearBridgePlugin extends Plugin {
     @PluginMethod public void saveHeartBindings(PluginCall call) {
         String key = WearHeartJournalGuard.ownerKey(call.getString("ownerKey"));
         JSObject bindings = call.getObject("bindings");
+        trace(getContext(),"bindings-write",bindings==null?0:bindings.length());
         if (key == null || bindings == null || !WearHeartJournalGuard.validJournal(bindings.length(), bindings.toString().getBytes(StandardCharsets.UTF_8).length)) { call.reject("invalid journal"); return; }
         // Acknowledgments must follow the durable commit, never asynchronous apply().
         if (!getContext().getSharedPreferences("wear-heart-journal", android.content.Context.MODE_PRIVATE).edit().putString(key, bindings.toString()).commit()) { call.reject("journal write failed"); return; }
@@ -140,15 +146,18 @@ public class WearBridgePlugin extends Plugin {
             .addOnSuccessListener(id -> call.resolve()).addOnFailureListener(error -> call.reject("wear unavailable"));
     }
     @PluginMethod public void publish(PluginCall call) {
+        final long began=android.os.SystemClock.elapsedRealtime();
         JSObject state = call.getObject("state");
         if (state == null || state.toString().getBytes(StandardCharsets.UTF_8).length > 131072) { call.reject("invalid state"); return; }
         latestState = state;
+        trace(getContext(),"state-bytes",state.toString().getBytes(StandardCharsets.UTF_8).length);
         WearWorkoutService.update(getContext(), state.optBoolean("active"));
         PutDataMapRequest request = PutDataMapRequest.create("/opengym/v1/state");
         request.getDataMap().putString("json", state.toString());
         request.getDataMap().putLong("sentAt", System.currentTimeMillis());
         Wearable.getDataClient(getContext()).putDataItem(request.asPutDataRequest().setUrgent())
             .addOnSuccessListener(item -> {
+                trace(getContext(),"publish-ms",android.os.SystemClock.elapsedRealtime()-began);
                 String node = call.getString("nodeId"), syncId = call.getString("syncId");
                 JSObject packet = new JSObject(); packet.put("state", state); packet.put("syncId", syncId == null ? "" : syncId); packet.put("sentAt", System.currentTimeMillis());
                 byte[] bytes = packet.toString().getBytes(StandardCharsets.UTF_8);
@@ -156,6 +165,7 @@ public class WearBridgePlugin extends Plugin {
                     .addOnCompleteListener(task -> WearRequestLocks.finish(node, syncId));
                 call.resolve();
             }).addOnFailureListener(error -> {
+                trace(getContext(),"publish-failed-ms",android.os.SystemClock.elapsedRealtime()-began);
                 WearRequestLocks.finish(call.getString("nodeId"), call.getString("syncId"));
                 call.reject("wear unavailable");
             });

@@ -18,16 +18,19 @@ public class WearBridgeService extends WearableListenerService {
             if (!trusted) return;
             JSONObject payload = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
             if (payload.optInt("v") != 1) return;
+            WearBridgePlugin.trace(this,"incoming-bytes",event.getData().length);
             if ("/opengym/v1/refresh-result".equals(event.getPath())) {
                 WearBridgePlugin.deliverSync(event.getSourceNodeId(), payload);
                 return;
             }
             if ("/opengym/v1/heart".equals(event.getPath())) {
+                WearBridgePlugin.trace(this,"heart-rx",1);
                 WearInboxStore.get(this).offer(event.getSourceNodeId(),"heart",payload);
                 WearBridgePlugin.deliverInbox();
                 return;
             }
             if ("/opengym/v1/command".equals(event.getPath()) && "standalone-sync".equals(payload.optString("action"))) {
+                WearBridgePlugin.trace(this,"journal-rx",1);
                 WearInboxStore.get(this).offer(event.getSourceNodeId(),"command",payload);
                 WearBridgePlugin.deliverInbox();
                 return;
@@ -42,6 +45,6 @@ public class WearBridgeService extends WearableListenerService {
                 JSONObject response = new JSONObject(); response.put("v", 1); response.put("requestId", payload.optString("requestId")); response.put("status", "error"); response.put("code", "unavailable");
                 Wearable.getMessageClient(this).sendMessage(event.getSourceNodeId(), "/opengym/v1/reply", response.toString().getBytes(StandardCharsets.UTF_8));
             }
-        } catch (Exception ignored) { /* malformed or disconnected: no mutation */ }
+        } catch (Exception ignored) {WearBridgePlugin.trace(this,"receive-failed",0);}
     }
 }

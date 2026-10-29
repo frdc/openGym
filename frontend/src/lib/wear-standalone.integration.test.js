@@ -7,6 +7,7 @@ const plugin = vi.hoisted(() => ({
   publish: vi.fn().mockResolvedValue(), reply: vi.fn().mockResolvedValue(), replyHeart: vi.fn().mockResolvedValue(), clear: vi.fn().mockResolvedValue(),
   getHeartBindings: vi.fn().mockResolvedValue({ bindings: {} }), saveHeartBindings: vi.fn().mockResolvedValue(),
   drainInbox:vi.fn().mockResolvedValue({entries:[],next:''}),
+  open:vi.fn().mockResolvedValue({requested:true}),
   addListener: vi.fn(),
 }))
 vi.mock('../store/useStore.js', async original => {
@@ -21,7 +22,7 @@ vi.mock('./rest-alert.js', () => ({ armRestAlert: vi.fn().mockResolvedValue(true
 vi.mock('./sound.js', () => ({ beep: vi.fn(), chime: vi.fn(), vibrate: vi.fn(), alertBuzz: vi.fn() }))
 import { useStore, createWorkoutStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
-import { bindWearBridge } from './wear-bridge.js'
+import { bindWearBridge,openWearApp } from './wear-bridge.js'
 import { fakeStorage } from './cloud/test-fixtures.js'
 import { buildCompletedWorkout } from './finish-workout.js'
 
@@ -42,6 +43,20 @@ beforeEach(async () => {
   await vi.waitFor(() => expect(latest()?.standalone).toBeTruthy())
 })
 afterEach(async () => { stop?.(); useUI.getState().stopRest(); await runtime.fixture.close() })
+
+it('reopens with a phone-completed watch capture without a persistence feedback loop',async()=>{
+  const original=latest(),at=Date.now()-10000
+  await runtime.command({nodeId:'watch',command:packet(original,[{...event(1,'start',at),heart:true}])})
+  const update=useStore.getState().update;let writes=0
+  useStore.setState({update:(...args)=>{if(++writes>12) throw new Error('reconcile-feedback-loop');return update(...args)}})
+  try {
+    useStore.getState().update(S=>{const row=S.active.entries[0].sets[0];row.done=true;row.at=at+1000})
+    await vi.waitFor(()=>expect(useStore.getState().S.active.entries[0].sets[0].heartRate.effortEndMs).toBe(1000))
+    stop();stop=bindWearBridge();await settle();await openWearApp();await settle()
+    expect(writes).toBeLessThan(8);expect(plugin.open).toHaveBeenCalledOnce()
+    expect(useStore.getState().S.active.entries[0].sets[0].heartRate).toMatchObject({startedAt:at,effortEndMs:1000})
+  } finally {useStore.setState({update})}
+})
 
 it('drains a native heart packet received before its journal and retains foreign work',async()=>{
   const original=latest(),at=Date.now()-10000,events=[{...event(1,'start',at),heart:true},event(2,'complete',at+1000)]

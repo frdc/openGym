@@ -71,4 +71,7 @@
     <string name="resume_effort">Resume set</string>
     <string name="standalone_explanation">Your sets and rest timer are saved on this watch. Open the phone app to sync. If the phone workout changed, this copy is kept here for review.</string>
     <string name="standalone_discard">Discard the workout changes still stored on this watch?</string>
+    <string name="sync_diagnostics">Sync diagnostics</string>
+    <string name="sync_diagnostics_title">Debug</string>
+    <string name="sync_diagnostics_format">Phone: %1$s\nRX %2$d · TX %3$d\nState: %4$s · r%5$d\nActions: %6$d · Heart: %7$d\nACK: %8$d\nStage: %9$s\nLast error: %10$s</string>
 </resources>

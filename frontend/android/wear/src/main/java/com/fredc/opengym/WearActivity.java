@@ -38,6 +38,8 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     private JSONObject state = new JSONObject();
     private String phone = "", syncId = "", pending = "";
     private long confirmedAt, pendingAt, lastSync;
+    private final WearSyncPull syncPull=new WearSyncPull();
+    private TextView syncDiagnostics;
     private boolean foreground, options, pendingEdit;
     private String optionsPage = "";
     private String heartRestoreAttempt = "";
@@ -90,7 +92,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             if (incoming.toString().equals(state.toString())) return;
             state = incoming;
             // Online fallback controls still require a fresh round trip; local work is durable.
-            confirmedAt = 0; render(); sync();
+            confirmedAt = 0; render(); WearStateService.replay(WearActivity.this,phone);
         }
     };
     private final Runnable tick = new Runnable() {
@@ -100,7 +102,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             if (!pending.isEmpty() && now - pendingAt >= 8000) { failedCommand(); sync(); }
             if (now - lastSync >= 5000) sync();
             if (!options && draft == null && (showingRest != isResting() || showingHeartRunning != WearHeartService.running)) render();
-            updateTimer(); updateControls(); updateHeart(); handler.postDelayed(this, 500);
+            updateTimer(); updateControls(); updateHeart(); updateSyncDiagnostics(); handler.postDelayed(this, 500);
         }
     };
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -135,6 +137,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     }
     @Override public void onResume() {
         super.onResume(); foreground = true; confirmedAt = 0; heartRestoreAttempt = "";
+        syncPull.reset();WearSyncDiagnostics.note(this,"visible","");
         getSystemService(android.app.NotificationManager.class).cancel(WearRemoteOpen.ID);
         Wearable.getMessageClient(this).addListener(this);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, new IntentFilter("com.fredc.opengym.WEAR_STATE"), Context.RECEIVER_NOT_EXPORTED);
@@ -142,7 +145,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         state = WearStateService.cached(this); WearOngoing.update(this, state); render(); sync(); handler.post(tick);
     }
     @Override public void onPause() {
-        foreground = false; backdrop.motion(false); updateWorkoutScreen(); stopHeartPulse(); if(heartReading!=null)heartReading.setTextColor(Color.GRAY); confirmedAt = 0; handler.removeCallbacks(tick); Wearable.getMessageClient(this).removeListener(this); unregisterReceiver(receiver); super.onPause();
+        foreground = false;syncPull.reset();WearSyncDiagnostics.note(this,"paused",""); backdrop.motion(false); updateWorkoutScreen(); stopHeartPulse(); if(heartReading!=null)heartReading.setTextColor(Color.GRAY); confirmedAt = 0; handler.removeCallbacks(tick); Wearable.getMessageClient(this).removeListener(this); unregisterReceiver(receiver); super.onPause();
     }
     @Override public void onDestroy() { backdrop.motion(false); super.onDestroy(); }
     @Override public void onUserInteraction() { super.onUserInteraction(); brightenWorkoutScreen(); }
@@ -190,31 +193,36 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
     }
     private void sync() {
         if (!foreground || ambient) return;
+        final String requestId=UUID.randomUUID().toString();
+        if(!syncPull.request(requestId,SystemClock.elapsedRealtime())) return;
+        syncId=requestId;WearSyncDiagnostics.note(this,"discover","");
         lastSync = SystemClock.elapsedRealtime();
         Wearable.getCapabilityClient(this).getCapability("opengym_phone_v1", CapabilityClient.FILTER_REACHABLE).addOnSuccessListener(capability -> {
-            if (!foreground) return;
+            if (!foreground || !syncPull.matches(requestId)) return;
             // Exactly one phone; do not route a workout to an arbitrary device.
-            if (capability.getNodes().size() != 1) { phone = ""; confirmedAt = 0; updateControls(); return; }
-            phone = capability.getNodes().iterator().next().getId(); syncId = UUID.randomUUID().toString();
+            if (capability.getNodes().size() != 1) {syncPull.finish(requestId);WearSyncDiagnostics.note(this,"discover",capability.getNodes().isEmpty()?"no-phone":"multiple-phones"); phone = ""; confirmedAt = 0; updateControls(); return; }
+            phone = capability.getNodes().iterator().next().getId();WearSyncDiagnostics.note(this,"phone-found","");
             try {
-                JSONObject request = new JSONObject(); request.put("v", 1); request.put("requestId", syncId);
+                JSONObject request = new JSONObject(); request.put("v", 1); request.put("requestId", requestId);
                 var timerPrefs = WearTimer.prefs(this);
                 String key = timerPrefs.getString("key", "");
                 boolean handled = timerPrefs.getBoolean("armed", false) || key.equals(timerPrefs.getString("fired", ""));
                 request.put("alarmKey", handled ? key : "");
                 request.put("replay",WearStandalone.replayHint(this));
-                Wearable.getMessageClient(this).sendMessage(phone, "/opengym/v1/sync", request.toString().getBytes(StandardCharsets.UTF_8)).addOnFailureListener(e -> { confirmedAt = 0; updateControls(); });
-            } catch (Exception ignored) { }
-        }).addOnFailureListener(e -> { phone = ""; confirmedAt = 0; updateControls(); });
+                WearSyncDiagnostics.note(this,"sync-send","");
+                Wearable.getMessageClient(this).sendMessage(phone, "/opengym/v1/sync", request.toString().getBytes(StandardCharsets.UTF_8)).addOnFailureListener(e -> {if(!syncPull.finish(requestId)) return;WearSyncDiagnostics.note(this,"sync-send","send-failed"); confirmedAt = 0; updateControls(); });
+            } catch (Exception ignored) {syncPull.finish(requestId);WearSyncDiagnostics.note(this,"sync-send","send-failed");}
+        }).addOnFailureListener(e -> {if(!syncPull.finish(requestId)) return;WearSyncDiagnostics.note(this,"discover","discovery-failed"); phone = ""; confirmedAt = 0; updateControls(); });
     }
     @Override public void onMessageReceived(MessageEvent event) {
         if (!foreground || !event.getSourceNodeId().equals(phone) || event.getData().length > WearProtocol.STATE_MESSAGE_BYTES) return;
         try {
             JSONObject packet = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
             if ("/opengym/v1/state".equals(event.getPath())) {
-                if (!syncId.equals(packet.optString("syncId"))) return;
+                if (!syncPull.matches(packet.optString("syncId"))) return;
                 JSONObject incoming = packet.getJSONObject("state");
-                if (!WearStateService.receive(this, incoming, packet.optLong("sentAt", System.currentTimeMillis()))) return;
+                if (!WearStateService.receive(this, incoming, packet.optLong("sentAt", System.currentTimeMillis()))) {syncPull.finish(packet.optString("syncId"));confirmedAt=0;WearSyncDiagnostics.note(this,"state","state-rejected");return;}
+                syncPull.finish(packet.optString("syncId"));
                 state = WearStateService.cached(this); confirmedAt = SystemClock.elapsedRealtime(); restoreHeartSession(); render(); drainOutbox();
                 WearHeartStore.get(this).snapshot(state, phone);
                 WearStateService.replay(this, phone);
@@ -233,7 +241,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
                     pending = ""; pendingEdit = false; draft = null; confirmedAt = 0;
                     feedback = "ok".equals(packet.optString("status")) ? R.string.saved : R.string.unconfirmed;
                     render(); sync();
-                } else if (syncId.equals(packet.optString("requestId"))) { confirmedAt = 0; feedback = R.string.open_phone; render(); }
+                } else if (syncPull.finish(packet.optString("requestId"))) {WearSyncDiagnostics.note(this,"sync-send","unavailable"); confirmedAt = 0; feedback = R.string.open_phone; render(); }
             }
         } catch (Exception ignored) { }
     }
@@ -582,7 +590,7 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         if (content == null) return;
         updateWorkoutScreen();
         applyWorkoutLanguage(); phaseLabel = null;
-        stopHeartPulse(); content.removeAllViews(); complete = startSet = pause = plus = skip = cancelHeart = enableHeart = reconnect = manualComplete = null; heartReading = heartBpm = rest = null; connectionIndicator = null;
+        stopHeartPulse(); content.removeAllViews(); complete = startSet = pause = plus = skip = cancelHeart = enableHeart = reconnect = manualComplete = null; heartReading = heartBpm = rest = null;syncDiagnostics=null; connectionIndicator = null;
         repsChip = loadChip = confirmEdit = decrease = increase = cancelEdit = null;
         content.setTag(null);
         backdrop.motion(foreground && !ambient && android.animation.ValueAnimator.areAnimatorsEnabled());
@@ -754,14 +762,17 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
         content.removeAllViews(); content.addView(panel,new LinearLayout.LayoutParams(-1,0,1));
     }
     private void renderOptions() {
-        pageHeader(getString("heart".equals(optionsPage) ? R.string.heart_settings : "alerts".equals(optionsPage) ? R.string.alert_settings : R.string.options), () -> {
+        pageHeader(getString("diagnostics".equals(optionsPage)?R.string.sync_diagnostics_title:"heart".equals(optionsPage) ? R.string.heart_settings : "alerts".equals(optionsPage) ? R.string.alert_settings : R.string.options), () -> {
             if (optionsPage.isEmpty()) options = false; else optionsPage = "";
             render();
         });
         if (optionsPage.isEmpty()) {
             Button back=content.findViewWithTag("back"); back.setText(getString(R.string.back)); WearStyle.labelAbove(back,"back");
         }
-        if ("heart".equals(optionsPage)) {
+        if("diagnostics".equals(optionsPage) && WearSyncDiagnostics.enabled(this)) {
+            syncDiagnostics=text("",12);syncDiagnostics.setTag("sync-diagnostics");updateSyncDiagnostics();
+            reconnect=option(R.string.refresh,"↻","reconnect",this::sync);footerSpace();
+        } else if ("heart".equals(optionsPage)) {
             heartReading = text("", 14);
             enableHeart = option(WearHeartService.running ? R.string.heart_disable : R.string.heart_enable, "♥", "toggle-heart", this::toggleHeart);
             JSONObject current = state.optJSONObject("current");
@@ -806,8 +817,16 @@ public class WearActivity extends ComponentActivity implements MessageClient.OnM
             });
             option(R.string.alert_settings, "◷", "alerts-settings", () -> { optionsPage = "alerts"; render(); });
             reconnect = option(R.string.refresh, "↻", "reconnect", this::sync);
+            if(WearSyncDiagnostics.enabled(this)) option(R.string.sync_diagnostics,"≡","sync-diagnostics-open",()->{optionsPage="diagnostics";render();});
             footerSpace();
         }
+    }
+    private void updateSyncDiagnostics() {
+        if(syncDiagnostics==null) return;
+        JSONObject value=WearSyncDiagnostics.live.snapshot(SystemClock.elapsedRealtime(),state.optInt("standalonePending"),WearHeartStore.get(this).pending());
+        String age=value.optInt("stateAgeSec",-1)<0?"—":value.optInt("stateAgeSec")+"s";
+        String label=getString(R.string.sync_diagnostics_format,phone.isEmpty()?"—":"✓",value.optInt("received"),value.optInt("sent"),age,value.optLong("revision"),value.optInt("actions"),value.optInt("hearts"),value.optInt("ackSeq"),value.optString("stage"),value.optString("error"));
+        if(!label.contentEquals(syncDiagnostics.getText())) syncDiagnostics.setText(label);
     }
     private void updateControls() {
         updateWorkoutScreen();

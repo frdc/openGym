@@ -69,4 +69,6 @@
     <string name="resume_effort">Retomar série</string>
     <string name="standalone_explanation">As séries e o descanso estão salvos neste relógio. Abra o app no celular para sincronizar. Se o treino mudou no celular, esta cópia fica guardada aqui para revisão.</string>
     <string name="standalone_discard">Descartar as alterações do treino ainda guardadas neste relógio?</string>
+    <string name="sync_diagnostics">Diagnóstico da sincronização</string>
+    <string name="sync_diagnostics_format">Celular: %1$s\nRX %2$d · TX %3$d\nEstado: %4$s · r%5$d\nAções: %6$d · Batimentos: %7$d\nACK: %8$d\nEtapa: %9$s\nÚltimo erro: %10$s</string>
 </resources>

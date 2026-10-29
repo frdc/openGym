@@ -48,6 +48,7 @@ public class WearStateService extends WearableListenerService {
         if (sentAt < previousSentAt || !WearProtocol.acceptSnapshot(old.optString("contextToken"), old.optLong("revision"), old.optString("publisherId"), state.optString("contextToken"), state.optLong("revision"), state.optString("publisherId"))) return false;
         if (!context.getSharedPreferences("wear-state", MODE_PRIVATE).edit().putString("json", state.toString()).putLong("sentAt", sentAt).commit()) return false;
         boolean applied = WearStandalone.receive(context, state);
+        if(applied) WearSyncDiagnostics.stateReceived(context,state.optLong("revision"));else WearSyncDiagnostics.note(context,"state","state-rejected");
         refresh(context);
         return applied;
     }
@@ -66,7 +67,10 @@ public class WearStateService extends WearableListenerService {
         if (packet == null || !packet.optString("contextToken").equals(remote.optString("contextToken"))
             && !WearStandalone.authorized(remote,packet.optString("contextToken"),packet.optString("baseline"))) return;
         byte[] bytes = packet.toString().getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= 65536) Wearable.getMessageClient(context).sendMessage(node, "/opengym/v1/command", bytes);
+        if (bytes.length <= 65536) {
+            WearSyncDiagnostics.note(context,"replay-send","");
+            Wearable.getMessageClient(context).sendMessage(node, "/opengym/v1/command", bytes).addOnFailureListener(e->WearSyncDiagnostics.note(context,"replay-send","send-failed"));
+        }
     }
     boolean trusted(String nodeId) {
         try { return Tasks.await(Wearable.getCapabilityClient(this).getCapability("opengym_phone_v1", CapabilityClient.FILTER_REACHABLE), 3, TimeUnit.SECONDS).getNodes().stream().anyMatch(n -> n.getId().equals(nodeId)); }
@@ -96,11 +100,11 @@ public class WearStateService extends WearableListenerService {
         if ("/opengym/v1/reply".equals(event.getPath()) && event.getData().length <= 16384 && trusted(event.getSourceNodeId())) {
             try {
                 JSONObject reply = new JSONObject(new String(event.getData(), StandardCharsets.UTF_8));
-                if (WearStandalone.acknowledge(this, reply)) { WearStandalone.receive(this,remote(this));refresh(this); replay(this, event.getSourceNodeId()); refreshFlow(this).advance(System.currentTimeMillis()); }
+                if (WearStandalone.acknowledge(this, reply)) {WearSyncDiagnostics.acknowledged(this,reply.optInt("seq"),"ok".equals(reply.optString("status"))?"":reply.optString("code","unavailable")); WearStandalone.receive(this,remote(this));refresh(this); replay(this, event.getSourceNodeId()); refreshFlow(this).advance(System.currentTimeMillis()); }
             } catch (Exception ignored) { }
         }
         if ("/opengym/v1/heart-ack".equals(event.getPath()) && event.getData().length <= 16384 && trusted(event.getSourceNodeId())) {
-            try { WearHeartStore.get(this).acknowledge(event.getSourceNodeId(), new JSONObject(new String(event.getData(), StandardCharsets.UTF_8))); } catch (Exception ignored) { }
+            try {JSONObject reply=new JSONObject(new String(event.getData(), StandardCharsets.UTF_8)); WearHeartStore.get(this).acknowledge(event.getSourceNodeId(),reply);WearSyncDiagnostics.note(this,"heart-ack","ok".equals(reply.optString("status"))?"":"heart-rejected");} catch (Exception ignored) { }
         }
         if ("/opengym/v1/open".equals(event.getPath()) && event.getData().length > 0 && event.getData().length <= WearProtocol.STATE_MESSAGE_BYTES && trusted(event.getSourceNodeId())) {
             try { WearRemoteOpen.request(this, new JSONObject(new String(event.getData(), StandardCharsets.UTF_8))); } catch (Exception ignored) { }
