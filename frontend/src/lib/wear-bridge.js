@@ -9,6 +9,7 @@ import { applyStandalone, projectStandalone, reconcileStandaloneTimer, standalon
 import { createWearSync } from './wear-sync.js'
 import { applyWearLedger, prepareWearLedger, wearSyncProjection } from './wear-ledger.js'
 import { createWearInbox } from './wear-inbox.js'
+import { createWearPublisher } from './wear-publisher.js'
 
 let completeHandler = null, editHandler = null, notifyReady = () => {}
 let openHandler = null, syncHandler = null
@@ -79,7 +80,17 @@ export function bindWearBridge() {
     void Promise.resolve().then(() => open(expected)).catch(() => {})
   }
   automaticOpen = openNewWorkout
-  let transport = Promise.resolve(), sending = false
+  let sending = false,watchedStore=null,watchedUI=null,standaloneCache=null,manifestCache=null
+  const publisher=createWearPublisher({
+    dropped:request=>plugin?.releaseRequest?.({nodeId:request.nodeId,requestId:request.syncId}),
+    send:async sync=>{
+      if(closed || !plugin || manualSync.active && sync?.syncId!==manualSync.requestId) return
+      await prepareStandaloneTimer()
+      if(ownerReady(useStore.getState())) await heart?.adoptStandalone()
+      if(closed) return
+      return plugin.publish({state:snapshot(sync?.replay),...(sync || {})})
+    },
+  })
   const controllers = new Map()
   const phoneTimer = (store, ui = useUI.getState()) => {
     const timer = ui.timer?.context?.ownerKey === store.ownerKey && ui.timer?.context?.activeSessionToken === store.activeSessionToken ? ui.timer : null
@@ -145,9 +156,15 @@ export function bindWearBridge() {
     const projection = projectWearState({ S: store.S, timer, contextToken, revision: 0, ready: ownerReady(store) && !!store.activeSessionToken, editingReady: !!editHandler && !ui.sheets.length && !ui.work })
     projection.publisherId = publisherId
     projection.localReady = !!ownerReady(store)
-    const standalone = projection.active ? projectStandalone(store.S, contextToken) : null
+    const inputs=[store.S.active,store.S.unit,store.S.restSec,contextToken,projection.active]
+    if(!standaloneCache || inputs.some((v,i)=>v!==standaloneCache.inputs[i])) standaloneCache={inputs,value:projection.active?projectStandalone(store.S,contextToken):null}
+    const standalone=standaloneCache.value
     projection.standalone = pendingStandalone ? pendingStandalone.projection : standalone
-    if(store.wearSessions && ownerReady(store)) projection.standaloneSync=pendingWearReceipts.get(store.ownerKey) || wearSyncProjection(store.wearSessions,replayHint)
+    if(store.wearSessions && ownerReady(store)) {
+      const hint=JSON.stringify(replayHint)
+      if(!manifestCache || manifestCache.sessions!==store.wearSessions || manifestCache.hint!==hint) manifestCache={sessions:store.wearSessions,hint,value:wearSyncProjection(store.wearSessions,replayHint)}
+      projection.standaloneSync=pendingWearReceipts.get(store.ownerKey) || manifestCache.value
+    }
     projection.heartCapture = heart?.projection() || null
     projection.heartAuthorizedTokens = heart?.authorizedTokens() || []
     if (projection.current && (!completeHandler || ui.sheets.length || ui.work)) projection.current.canComplete = false
@@ -159,25 +176,25 @@ export function bindWearBridge() {
   }
   function publish(sync = null) {
     if (closed || !plugin) return Promise.resolve()
-    const run = transport.then(async () => {
-      if (closed) return
-      if (manualSync.active && sync?.syncId !== manualSync.requestId) return
-      await prepareStandaloneTimer()
-      if(ownerReady(useStore.getState())) await heart?.adoptStandalone()
-      return plugin.publish({ state: snapshot(sync?.replay), ...(sync || {}) })
-    })
-    transport = run.catch(() => {})
-    return run
+    return publisher.publish(sync,sync?sync.syncId===manualSync.requestId?'manual':`pull:${sync.nodeId}`:'state')
   }
-  function changed() {
-    if (!pendingStandalone && !pendingWearReceipts.has(useStore.getState().ownerKey)) void heart?.reconcile().catch(() => {})
+  function changed(force=false) {
+    const store=useStore.getState(),ui=useUI.getState()
+    const inputs=[store.ownerKey,store.activeSessionToken,ownerReady(store),store.S.active,store.S.workouts,store.wearSessions,store.S.unit,store.S.restSec,store.S.lang,store.S.vibrate]
+    const dataChanged=force || !watchedStore || inputs.some((v,i)=>v!==watchedStore[i])
+    const timer=phoneTimer(store,ui),uiKey=JSON.stringify([!!ui.sheets.length,!!ui.work,standaloneTimerSignature(timer),!!timer?.ready])
+    if(!dataChanged && uiKey===watchedUI) return
+    const ownerChanged=!watchedStore || inputs.slice(0,3).some((v,i)=>v!==watchedStore[i])
+    watchedStore=inputs;watchedUI=uiKey
+    if(force) standaloneCache=null
+    if (dataChanged && !pendingStandalone && !pendingWearReceipts.has(store.ownerKey)) void heart?.reconcile().catch(() => {})
     const old = revision; snapshot()
     if (old !== revision && !sending) void publish().catch(() => {})
     openNewWorkout()
-    if(initialized) void inbox?.run().catch(()=>{})
+    if(initialized && ownerChanged) void inbox?.wake().catch(()=>{})
   }
-  const offStore = useStore.subscribe(changed), offUI = useUI.subscribe(changed)
-  notifyReady = changed
+  const offStore = useStore.subscribe((next,previous)=>changed(!next || !previous)), offUI = useUI.subscribe(()=>changed())
+  notifyReady = ()=>changed(true)
   void (async () => {
     if (!(await isAndroid()) || closed) return
     const { registerPlugin } = await import('@capacitor/core')
@@ -291,14 +308,15 @@ export function bindWearBridge() {
     inboxListener=await plugin.addListener('inbox',()=>{void inbox.wake().catch(()=>{})})
     listener = await plugin.addListener('command',onCommand)
     if (closed) { await listener.remove(); return }
+    changed()
     openHandler = open
-    await heart.reconcile()
-    await publish()
     initialized = true
     syncHandler = sync
+    await heart.reconcile().catch(()=>{})
+    await publish().catch(()=>{})
     openNewWorkout()
     await inbox.run()
   })().catch(() => {})
   let commands = Promise.resolve()
-  return () => { closed = true; if (automaticOpen === openNewWorkout) { automaticOpen = null; requestedWorkout = null } if (openHandler === open) openHandler = null; if (syncHandler === sync) syncHandler = null; manualSync.dispose(); inbox?.dispose(); offStore(); offUI(); notifyReady = () => {}; for (const c of controllers.values()) c.dispose(); heart?.dispose(); void inboxListener?.remove(); void syncListener?.remove(); void heartListener?.remove(); void listener?.remove(); void plugin?.clear().catch(() => {}) }
+  return () => { closed = true;publisher.dispose(); if (automaticOpen === openNewWorkout) { automaticOpen = null; requestedWorkout = null } if (openHandler === open) openHandler = null; if (syncHandler === sync) syncHandler = null; manualSync.dispose(); inbox?.dispose(); offStore(); offUI(); notifyReady = () => {}; for (const c of controllers.values()) c.dispose(); heart?.dispose(); void inboxListener?.remove(); void syncListener?.remove(); void heartListener?.remove(); void listener?.remove(); void plugin?.clear().catch(() => {}) }
 }

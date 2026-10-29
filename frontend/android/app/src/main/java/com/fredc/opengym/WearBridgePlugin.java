@@ -66,6 +66,9 @@ public class WearBridgePlugin extends Plugin {
         WearBridgePlugin plugin=instance;if(plugin==null) return;
         new Handler(Looper.getMainLooper()).post(()->{if(instance==plugin) plugin.notifyListeners("inbox",new JSObject());});
     }
+    @PluginMethod public void releaseRequest(PluginCall call) {
+        WearRequestLocks.finish(call.getString("nodeId"),call.getString("requestId"));call.resolve();
+    }
     @PluginMethod public void drainInbox(PluginCall call) {
         try {
             JSONArray entries=WearInboxStore.get(getContext()).list(call.getString("afterKey",""),64);

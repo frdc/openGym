@@ -11,6 +11,36 @@ import { bindWearBridge, registerWearCompletion, registerWearEditing, openWearAp
 const standaloneEvents = () => [{ seq: 1, id: '00000000-0000-4000-8000-000000000001', action: 'start', at: 1000, step: 0 }, { seq: 2, id: '00000000-0000-4000-8000-000000000002', action: 'complete', at: 2000, step: 0 }]
 const standaloneCommand = state => ({ v: 1, action: 'standalone-sync', requestId: standaloneEvents()[1].id, contextToken: state.contextToken, streamId: 'stream', baseline: state.standalone.baseline, events: standaloneEvents() })
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+it('ignores UI-only countdown ticks instead of draining native inbox on every render',async()=>{
+  f.plugin.drainInbox=vi.fn().mockResolvedValue({entries:[],next:''})
+  const stop=bindWearBridge()
+  try {
+    await tick();await tick();const initial=f.plugin.drainInbox.mock.calls.length
+    for(let i=0;i<25;i++) {f.ui.toast=`toast-${i}`;for(const notify of f.uiListeners) notify();await tick()}
+    expect(f.plugin.drainInbox).toHaveBeenCalledTimes(initial)
+  } finally {stop();delete f.plugin.drainInbox}
+})
+it('coalesces a blocked snapshot burst so reopening does not wait behind repeated identical publications',async()=>{
+  const stop=bindWearBridge();let release
+  try {
+    await tick();await tick()
+    f.plugin.publish.mockClear().mockImplementationOnce(()=>new Promise(resolve=>{release=resolve}))
+    for(let i=0;i<30;i++) {f.store.S={...f.store.S,vibrate:i%2===0};for(const notify of f.storeListeners) notify()}
+    await tick();expect(release).toBeTypeOf('function')
+    const open=openWearApp();release();await open
+    expect(f.plugin.publish.mock.calls.length).toBeLessThanOrEqual(2)
+  } finally {release?.();stop();f.plugin.publish.mockResolvedValue()}
+})
+it('keeps explicit synchronization available after the first native publication failed',async()=>{
+  f.plugin.publish.mockRejectedValue(new Error('wear-disconnected'))
+  f.plugin.sync=vi.fn().mockResolvedValue({nodeId:'watch'})
+  const stop=bindWearBridge()
+  try {
+    await tick();await tick();f.plugin.publish.mockResolvedValue()
+    const attempt=syncWearApp();attempt.catch(()=>{})
+    await tick();expect(f.plugin.sync).toHaveBeenCalledOnce()
+  } finally {stop();delete f.plugin.sync}
+})
 it('pulls watch work before publishing the explicit refresh and waits for its result', async () => {
   heartFixture()
   const handlers = {}
